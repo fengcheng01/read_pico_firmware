@@ -11,6 +11,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 /// 默认深睡。浅睡：按键回原页；拿起唤醒默认关。软睡：SOFT_SLEEP 拉低 EN，再短按开机。关机：EN=0，长按开机。
@@ -45,3 +46,67 @@ void app_settings_set_book_px(uint8_t px);
 bool app_settings_book_shake(void);
 /// 保存实验性晃动翻页开关。/ Persist the experimental shake page-turn switch.
 void app_settings_set_book_shake(bool on);
+/// 本地时区偏移，四分之一小时为单位，默认 +32（UTC+8）。/ Local timezone offset in quarter-hours, default +32 (UTC+8).
+int8_t app_settings_tz_qh(void);
+/// 保存时区；越界值被拒绝。/ Persist the timezone; out-of-range values are rejected.
+void app_settings_set_tz_qh(int8_t qh);
+/// 正文行距加成 0/15/30%，默认 0。/ Body extra leading of 0/15/30 percent, initially 0.
+uint8_t app_settings_book_leading(void);
+void app_settings_set_book_leading(uint8_t percent);
+/// 正文左右边距档 0/1/2，每档 16px，默认 0。/ Body side-margin tier 0/1/2, 16 px each, initially 0.
+uint8_t app_settings_book_margin(void);
+void app_settings_set_book_margin(uint8_t tier);
+/// 行辅助线 0=关 1=实线 2=虚线，每行文字下方，默认关。/ Per-line guide rule 0=off 1=solid 2=dashed under each text line, initially off.
+uint8_t app_settings_book_guide(void);
+void app_settings_set_book_guide(uint8_t style);
+/// 段首行缩进两字符，默认开。/ Two-em first-line indent, on by default.
+bool app_settings_book_indent(void);
+void app_settings_set_book_indent(bool on);
+/// 段落间距档 0=标准 1=加大，默认标准。/ Paragraph gap tier 0=standard 1=relaxed, initially standard.
+uint8_t app_settings_book_para(void);
+void app_settings_set_book_para(uint8_t tier);
+/// 自动翻页 0=关 1=20秒 2=40秒 3=90秒，默认关。/ Auto page turn 0=off 1=20 s 2=40 s 3=90 s, initially off.
+uint8_t app_settings_book_auto(void);
+void app_settings_set_book_auto(uint8_t tier);
+/// 正文左右分区点击翻页，默认开。/ Body left/right tap-zone page turns, on by default.
+bool app_settings_book_tap(void);
+void app_settings_set_book_tap(bool on);
+/// 正文夜间模式（白字黑底），默认关。/ Body night mode (white on black), off by default.
+bool app_settings_book_night(void);
+void app_settings_set_book_night(bool on);
+/// 锁屏样式 0=静态 1=时钟 2=日历 3=黄历，默认静态。/ Lock style 0=static 1=clock 2=calendar 3=almanac, initially static.
+uint8_t app_settings_lock_style(void);
+void app_settings_set_lock_style(uint8_t style);
+/// 正文对齐 0=左 1=居中 2=两端对齐（段末行除外），默认左。/ Body alignment 0=left 1=center 2=justified (last line excepted), initially left.
+uint8_t app_settings_book_align(void);
+void app_settings_set_book_align(uint8_t align);
+/// 阅读页脚状态栏：时钟/电量百分比/进度条，默认只开进度条。/ Reader footer status bar: clock/battery percent/progress bar, bar-only by default.
+bool app_settings_footer_clock(void);
+void app_settings_set_footer_clock(bool on);
+bool app_settings_footer_battery(void);
+void app_settings_set_footer_battery(bool on);
+bool app_settings_footer_bar(void);
+void app_settings_set_footer_bar(bool on);
+/// 空闲自动锁屏分钟数，0=关，可选 0/5/10/30，默认关。/ Idle auto-lock minutes, 0=off with 0/5/10/30 choices, initially off.
+uint8_t app_settings_idle_lock_min(void);
+void app_settings_set_idle_lock_min(uint8_t minutes);
+/// 阅读同步：服务器基址，默认 kosync 官方。/ Progress sync: server base URL, defaulting to the official kosync.
+const char* app_settings_sync_url(void);
+void app_settings_set_sync_url(const char* url);
+/// 阅读同步用户名。/ Progress-sync username.
+const char* app_settings_sync_user(void);
+void app_settings_set_sync_user(const char* user);
+/// 阅读同步密钥（密码 MD5 十六进制），不存明文。/ Progress-sync key (MD5 hex of the password), never plain text.
+const char* app_settings_sync_key(void);
+void app_settings_set_sync_key(const char* key);
+/// 传书 STA 会话期间自动上传进度，默认关。/ Auto-push progress during STA transfer sessions, off by default.
+bool app_settings_sync_auto(void);
+void app_settings_set_sync_auto(bool on);
+/// 读取锁屏密码到 out（4 位数字或空串）；返回是否设有密码。/ Copy the lock PIN (4 digits or empty) to out; true when armed.
+bool app_settings_lock_pin(char* out, size_t cap);
+/// 保存或清除（空串）锁屏密码；非法输入返回 false。/ Save or clear (empty) the lock PIN; invalid input returns false.
+bool app_settings_set_lock_pin(const char* pin);
+/// 清残影周期：差分刷多少次后升一次全像素 GC16，0=关；档位 0/3/5/10/14/20/30，默认 14（原编译期档）。
+/// Ghost-cleanup period: promote one full-pixel GC16 after this many soft updates, 0=off; tiers 0/3/5/10/14/20/30, initially 14 (the old compile-time tier).
+uint8_t app_settings_gc_every(void);
+void app_settings_set_gc_every(uint8_t every);

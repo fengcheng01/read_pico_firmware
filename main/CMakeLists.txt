@@ -6,6 +6,9 @@ set(main_requires
     continuous_du
     e0470_epaper_waveform
     read_pico_pmu
+    esp_netif
+    esp_http_client
+    mbedtls
     fatfs
     wear_levelling
     bootloader_support
@@ -26,18 +29,43 @@ idf_component_register(
         "settings.c"
         "app/app_loop.c"
         "app/app_registry.c"
+        "app/app_sleep_hooks.c"
         "ui/ui_kit.c"
         "ui/ui_gesture.c"
         "ui/ui_wifi_qr.c"
         "ui/datamatrix.c"
         "ui/ui_menu.c"
         "apps/app_home.c"
+        "apps/app_os_home.c"
+        "apps/app_os_today.c"
+        "apps/app_os_settings.c"
+        "apps/app_os_time.c"
+        "apps/app_os_reading.c"
+        "apps/app_os_sleep.c"
+        "apps/app_os_pin.c"
+        "apps/app_os_storage.c"
+        "apps/app_os_tools.c"
+        "os/os_device_pico.c"
+        "os/os_time.c"
+        "os/os_time_pico.c"
+        "os/os_sync.c"
+        "os/os_sync_pico.c"
+        "os/os_lunar.c"
+        "os/os_crash.c"
+        "os/os_crash_pico.c"
+        "ui/product/ui_product.c"
+        "book/book_entry.c"
+        "book/book_home.c"
+        "book/book_cover.c"
+        "book/book_stats.c"
+        "book/book_stats_store.c"
         "apps/app_refresh.c"
         "apps/app_reading.c"
         "apps/app_book.c"
         "apps/app_transfer.c"
         "book/book_store.c"
         "book/book_progress.c"
+        "book/book_marks.c"
         "book/book_source.c"
         "book/book_txt.c"
         "book/book_epub.c"
@@ -61,10 +89,14 @@ idf_component_register(
         "factory/pmu_selftest.c"
         "factory/vcom_setup.c"
     REQUIRES ${main_requires}
-    INCLUDE_DIRS "." "app" "apps" "font" "ui" "factory" "book"
+    INCLUDE_DIRS "." "app" "apps" "font" "ui" "ui/product" "os" "factory" "book"
     EMBED_FILES
         "assets/lock_4bpp.bin"
         "assets/loading_4bpp.bin"
         "assets/builtin.ttf"
         "assets/reading.md"
 )
+
+# 固定长度字符串与 SNTP 初始化在 -Werror=format-truncation/missing-braces 下有理论告警。
+# Fixed-length strings and SNTP initializers have theoretical warnings under -Werror.
+target_compile_options(${COMPONENT_LIB} PRIVATE -Wno-error=format-truncation -Wno-error=missing-braces)

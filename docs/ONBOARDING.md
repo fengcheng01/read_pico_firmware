@@ -28,10 +28,10 @@ This document is for **first-time human developers and AI agents**. After readin
 ## 1. 项目定位 / What this is
 
 - **产品**：小纸 Pico（英文/日文文案：Read Pico；型号 RDP-G01-W；内部代号 Read/0，仅限内部使用，不得出现在对外文案）。深圳 MindReset 出品的 4.7 英寸墨水屏开发板。
-- **本仓库**：随板出厂的**官方示例 / 出厂演示固件**。它有两个角色：
+- **本分支**：以随板出厂的官方演示固件为基线，增量开发阅读优先产品；普通开机入口为“正在读”，见 [阅读首页契约](READING_HOME.md)。原有基础仍有两个角色：
   1. 用户通过功能菜单逐项检查硬件（屏、触摸、传感器、电源、TF 卡、蜂鸣器）。
   2. 开发者以它的板级支持包（BSP）与芯片驱动为起点写自己的固件。
-- **不是**：通用阅读器产品固件。页面是"演示 + 自检"，不追求功能完备。
+- **当前产品层**：正在读/书架/今日/设置四根导航、书封首页与三行书架、阅读工具与设置分组；原演示经设置中的诊断目录访问。今日 RTC/待办、所有设置下级 UI、系统恢复和第二机型仍未完成，不是完整通用 OS。/ Product layer: four roots, cover home/three-card shelf, reading tools and grouped Settings; demos live under Settings diagnostics. RTC/todos, all Settings child UIs, system recovery and the second target remain unfinished, not a complete multi-device OS.
 - **许可**：主体 Apache-2.0；`components/epdiy` 为 LGPL-3.0-or-later（上游 epdiy v2.0.0 的裁剪 fork）；内置字体 ChillDuanSans 为 SIL OFL-1.1。复用/分发前看各组件 `LICENSE`。
 - **仓库关系**：上游为 `MindReset/read_pico_firmware`。在 fork 上工作时把上游加为 `upstream` 远端；向上游提 PR 前请阅读 [CONTRIBUTING.md](../CONTRIBUTING.md)。
 - **配套生态**：Dot Open Platform <https://github.com/MindReset/dot_open_platform>。
@@ -251,7 +251,7 @@ flowchart TD
   H -- 否 --> X["日志 No touch controller<br/>app_main return，停在开机图"]
   H -- 是 --> I{pmu_ready 且 VCOM 未标定?}
   I -- 是 --> J["vcom_setup_run()<br/>出厂标定拦截页"]
-  I -- 否 --> K["app_loop_run(first_app)<br/>自检续跑→自检页，否则→概览"]
+  I -- 否 --> K["app_loop_run(first_app)<br/>自检续跑→自检页，否则→正在读"]
   J --> K
 ```
 
@@ -596,8 +596,8 @@ Read AGENTS.md, then docs/ONBOARDING.md, then docs/HANDOFF.md. Do not duplicate 
 
 ### 图书与传书的契约扩展 / Book and transfer contract extensions
 
-`owns_keys` 只在菜单关闭时接管三键；图书工具条提供强刷，中键长按或把手打开演示菜单。传书组件不依赖页面；由 `app_transfer` 注入存储根、限额、容量回调。文件提交、删除或进度清理重试后通过书源 revision 请求下次进图书时重扫；文件变更回调只清对应路径进度。传书与阅读互斥，停止HTTP并等待退出后才切图书页，进度API由调用端串行化。
-`owns_keys` captures three keys outside the menu; Books provides toolbar refresh; holding the middle key or using the handle opens the demo menu. Transfer receives storage policy from its page. File commits, deletions and metadata retries invalidate the shelf through a storage revision; an injected callback clears progress only for the affected path. Transfer and reading are exclusive; HTTP is stopped and joined before entering Books, serializing progress API callers.
+`owns_keys` 只在菜单关闭时接管三键；图书工具条提供强刷，中键长按或把手打开四根产品导航。诊断由设置访问，不改主循环派发。传书组件不依赖页面；由 `app_transfer` 注入存储根、限额、容量回调。文件提交、删除或进度清理重试后通过书源 revision 请求下次进图书时重扫；文件变更回调只清对应路径进度。传书与阅读互斥，停止HTTP并等待退出后才切图书页，进度API由调用端串行化。
+`owns_keys` captures three keys outside the menu; Books provides toolbar refresh; middle-key hold/handle opens four-root product navigation. Settings exposes diagnostics without changing loop dispatch. Transfer receives storage policy from its page. File commits/deletions/metadata retries invalidate the shelf through revision; an injected callback clears only affected progress. HTTP stops and joins before reading, serializing progress callers.
 
 
 传书页通过 `display_set_bulk_io` 在页内提高扫描预填余量，退出恢复默认；大文件进度用低频FOLLOW DU，结束/离页清残影。欠载恢复必须保留目标前缓冲，不能调用 `epd_hl_set_all_white` 丢掉整页。相关回归：`tools/run_display_host_test.sh`。

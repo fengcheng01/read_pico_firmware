@@ -6,6 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 English: Extract real static helpers without linking hardware page dependencies.
 """
 from pathlib import Path
+import os
 import subprocess
 import tempfile
 
@@ -46,7 +47,6 @@ unit = r'''
 #define ESP_OK 0
 #define ESP_ERR_NO_MEM 1
 #define ESP_ERR_NOT_FOUND 2
-#define ESP_ERR_INVALID_SIZE 3
 #define MALLOC_CAP_SPIRAM 1
 #define MALLOC_CAP_8BIT 2
 #define ESP_LOGI(...) ((void)0)
@@ -57,7 +57,8 @@ typedef struct {int x,y,width,height;} EpdRect;
 static EpdRect ui_bar_rect(int i,int count){int width=(508-(count-1)*12)/count;return(EpdRect){40+i*(width+12),1096,width,96};}
 static bool ui_rect_hit(EpdRect r,int x,int y){return x>=r.x&&x<r.x+r.width&&y>=r.y&&y<r.y+r.height;}
 typedef struct {char name[256],path[288];uint32_t size;bool is_flash,has_progress;uint8_t pct;uint32_t recent;bool selected,removed,search_match;} shelf_entry_t;
-#define BOOK_ROWS 7
+#define BOOK_ROWS 3
+#define BULK_ROWS 7
 #define UI_BTN_H 84
 static EpdRect ui_row_rect(int i,int count,int y,int height){EpdRect r=ui_bar_rect(i,count);r.y=y;r.height=height;return r;}
 static char s_query[65],s_search_draft[65],s_batch_message[128];
@@ -65,6 +66,7 @@ static bool s_batch_confirm,s_batch_delete;
 static bool read_pico_search_match(const char* name,const char* query){return !*query||strstr(name,query)!=NULL;}
 static int book_chapter_count(void){return 1;}
 #define BOOK_TOC_ROWS 10
+#define BOOK_PCT_ROWS 10
 static int s_filter;
 static bool s_recent_sort;
 static shelf_entry_t* s_shelf;
@@ -73,7 +75,8 @@ static int s_count,s_visible_count;
 static char s_message[128],s_shelf_warning[128],s_storage[128];
 static bool s_pending_invalidated,test_oom,test_degraded;
 static unsigned s_store_revision;
-typedef struct {char path[288];bool is_flash;} book_store_root_t;
+#include "book_store.h"
+// 根结构用真实头文件，避免与 book_entry 的 ABI 分叉。/ Real header for the root struct; no ABI fork with book_entry.
 typedef struct {uint32_t file_size;uint16_t chapter;uint32_t byte_off;uint8_t px,pct;uint32_t last_open_s;} book_progress_t;
 typedef struct book_progress_watch {char path[288];atomic_bool invalidated;struct book_progress_watch* next;} book_progress_watch_t;
 static book_progress_watch_t* test_watches;
@@ -84,11 +87,12 @@ static book_store_root_t test_roots[2];
 static int test_root_count=1;
 static void* heap_caps_realloc(void* p,size_t n,int caps){(void)caps;return test_oom?NULL:realloc(p,n);}
 static void* heap_caps_malloc(size_t n,int caps){(void)caps;return malloc(n);}
-static bool book_store_flash_ready(void){return true;}
-static bool book_store_roots_degraded(void){return test_degraded;}
-static uint64_t book_store_free_bytes(const book_store_root_t* root){(void)root;return 1000000;}
-static int book_store_roots(book_store_root_t out[2],int* n){*n=test_root_count;memcpy(out,test_roots,sizeof(test_roots));return 0;}
-static bool book_progress_load(const char* p,uint32_t n,book_progress_t* out){(void)p;(void)n;*out=(book_progress_t){0};return false;}
+bool book_store_flash_ready(void){return true;}
+bool book_store_roots_degraded(void){return test_degraded;}
+int book_store_read_roots(book_store_root_t out[2],int*n){*n=test_root_count;memcpy(out,test_roots,sizeof(test_roots));return 0;}
+uint64_t book_store_free_bytes(const book_store_root_t* root){(void)root;return 1000000;}
+int book_store_roots(book_store_root_t out[2],int* n){*n=test_root_count;memcpy(out,test_roots,sizeof(test_roots));return 0;}
+bool book_progress_load(const char* p,uint32_t n,book_progress_t* out){(void)p;(void)n;*out=(book_progress_t){0};return false;}
 static void loading(app_ctx_t* ctx,const char* text){(void)ctx;(void)text;}
 typedef struct pending_progress {char path[288];book_progress_t value;bool dirty,progress_saved;book_progress_watch_t* watch;struct pending_progress* next;} pending_progress_t;
 static pending_progress_t* s_pending;
@@ -100,7 +104,8 @@ static char s_path[288], s_resume_path[288];
 #define BOOK_STORE_PATH_MAX 288
 static unsigned test_open_calls;
 static char test_open_path[288];
-static bool open_book(app_ctx_t* ctx,const char* path){(void)ctx;test_open_calls++;strcpy(test_open_path,path);return true;}
+static bool test_open_success=true;
+static bool open_book(app_ctx_t* ctx,const char* path){(void)ctx;test_open_calls++;strcpy(test_open_path,path);return test_open_success;}
 static char* s_text;
 static int s_unsaved,s_px=48;
 static uint32_t s_file_size=1000;
@@ -125,14 +130,14 @@ static int test_save_error,test_last_error,test_save_calls,test_last_calls;
 static size_t book_layout_page_count(void){return 3;}
 static size_t book_layout_page_start_offset(size_t page){return page*100;}
 static unsigned percent(size_t page){return (unsigned)page*20;}
-static int book_progress_save(const char* p,const book_progress_t* value){(void)p;(void)value;test_save_calls++;return test_save_error;}
-static int book_progress_set_last_path(const char* p){test_last_calls++;if(!test_last_error)snprintf(test_last_path,sizeof(test_last_path),"%s",p);return test_last_error;}
+int book_progress_save(const char* p,const book_progress_t* value){(void)p;(void)value;test_save_calls++;return test_save_error;}
+int book_progress_set_last_path(const char* p){test_last_calls++;if(!test_last_error)snprintf(test_last_path,sizeof(test_last_path),"%s",p);return test_last_error;}
 static void save_progress(void);
 static void invalidate_prep(void){}
 static shelf_entry_t s_managed;
 static bool s_delete_confirm,s_file_removed,s_clear_confirm;
 static char s_manage_message[128];
-typedef enum {SHELF,READING,TOC,MANAGE,BULK,SEARCH} book_view_t;
+typedef enum {SHELF,READING,TOC,LAYOUT,MANAGE,BULK,SEARCH} book_view_t;
 static book_view_t s_view,s_search_parent;
 #define UI_KEY_1 1
 #define UI_KEY_2 2
@@ -161,10 +166,10 @@ static app_redraw_t action_at(app_ctx_t* ctx,uint16_t x,uint16_t y){(void)x;(voi
 static app_redraw_t paint_control(app_ctx_t* ctx,EpdRect rect){(void)ctx;(void)rect;return APP_REDRAW_AREA;}
 static int test_delete_error,test_forget_error,test_notify_count,test_delete_calls;
 static bool test_removed,test_mixed;
-static int book_store_delete(const char* path,bool* removed){(void)path;test_delete_calls++;*removed=test_removed;return test_mixed ? (strstr(path,"book001") ? -1 : 0) : test_delete_error;}
-static int book_progress_forget(const char* path){for(book_progress_watch_t* w=test_watches;w;w=w->next)if(!strcmp(w->path,path))atomic_store(&w->invalidated,true);return test_forget_error;}
-static void book_store_notify_changed(void){test_notify_count++;}
-static unsigned book_store_revision(void){return (unsigned)test_notify_count;}
+int book_store_delete(const char* path,bool* removed){(void)path;test_delete_calls++;*removed=test_removed;return test_mixed ? (strstr(path,"book001") ? -1 : 0) : test_delete_error;}
+int book_progress_forget(const char* path){for(book_progress_watch_t* w=test_watches;w;w=w->next)if(!strcmp(w->path,path))atomic_store(&w->invalidated,true);return test_forget_error;}
+void book_store_notify_changed(void){test_notify_count++;}
+unsigned book_store_revision(void){return (unsigned)test_notify_count;}
 static void free_book(void){s_text=NULL;s_path[0]=0;free_image();}
 static char test_wrapped[512];
 #define UI_PX_CAPTION 28
@@ -173,10 +178,37 @@ static char test_wrapped[512];
 static int ui_content_width(void){return 604;}
 static int ttf_text_width_px(int px,const char* text){int width=0;for(;*text;text++)if(((unsigned char)*text&0xc0)!=0x80)width+=px;return width;}
 static void ui_text(uint8_t* fb,int x,int y,int px,const char* text,int align,bool inv){(void)fb;(void)x;(void)y;(void)px;(void)align;(void)inv;assert(strlen(test_wrapped)+strlen(text)<sizeof(test_wrapped));strcat(test_wrapped,text);}
+
+static bool s_ended;
+static unsigned s_mark_count;
+static bool s_ended;
+__attribute__((unused)) static void covers_reset(void){}
+__attribute__((unused)) static int book_marks_next(const char* path, unsigned long cap){(void)path;(void)cap;return -1;}
+__attribute__((unused)) static void marks_reload(void){ s_mark_count = 0; }
+static uint8_t s_toc_tab;
+static int toc_row_count(void){
+    if(s_view!=TOC)return s_visible_count;
+    if(s_toc_tab==1)return (int)s_mark_count+1;
+    if(s_toc_tab==2)return 10;
+    return (int)book_chapter_count();
+}
+__attribute__((unused)) static int book_marks_list(void* p0, void* p1, void* p2, void* p3){(void)p0;(void)p1;(void)p2;(void)p3;return 0;}
+__attribute__((unused)) static int book_marks_add(void* p0, void* p1, void* p2, void* p3){(void)p0;(void)p1;(void)p2;(void)p3;return 0;}
+__attribute__((unused)) static int book_marks_remove_at(void* p0, size_t p1){(void)p0;(void)p1;return 0;}
+__attribute__((unused)) static int book_marks_forget(void* p0){(void)p0;return 0;}
+__attribute__((unused)) static int app_settings_gc_every(void){return 0;}
+__attribute__((unused)) static void app_settings_set_gc_every(unsigned e){(void)e;}
+static bool book_sleep_prepare(void){return true;}
+static bool app_sleep_prepare_register(bool (*fn)(void)){(void)fn;return true;}
+static void app_sleep_prepare_unregister(bool (*fn)(void)){(void)fn;}
+static void book_stats_flush(void){}
 '''
+unit += (source.parents[1] / "book/book_entry.h").read_text().replace('#include "book_store.h"', '').replace('#pragma once', '')
+unit += 'static book_entry_request_t s_entry;\nstatic bool s_entry_active;\n'
 for name in ("copy_text", "shelf_matches", "compare_books", "sort_shelf", "shelf_reserve", "delete_retry_find", "delete_retry_reserve", "delete_retry_discard", "scan_shelf",
-             "pending_find", "pending_reserve", "pending_restore", "pending_discard", "pending_mark_latest", "pending_drop_invalidated", "pending_flush", "save_progress", "retry_progress", "layout_name", "manage_panel", "manage_rect", "batch_rect", "leaves", "selected_count", "clear_selection", "toggle_selection", "select_page", "search_keys", "search_begin", "refresh_search_matches", "search_finish", "search_action", "refresh_capacity", "manage_apply", "manage_action", "batch_apply", "batch_action", "resume_choice", "free_image", "close_image", "open_image", "gesture_event", "on_key", "draw_wrapped_name", "on_enter", "book_on_exit"):
+             "pending_find", "pending_reserve", "pending_restore", "pending_discard", "pending_mark_latest", "pending_drop_invalidated", "pending_flush", "save_progress", "retry_progress", "layout_name", "manage_panel", "manage_rect", "batch_rect", "view_rows", "leaves", "selected_count", "clear_selection", "toggle_selection", "select_page", "search_keys", "search_begin", "refresh_search_matches", "search_finish", "search_action", "refresh_capacity", "manage_apply", "manage_action", "batch_apply", "batch_action", "resume_choice", "free_image", "close_image", "open_image", "gesture_event", "on_key", "draw_wrapped_name", "on_enter", "book_on_exit"):
     unit += function(name) + "\n"
+unit += function("apply_entry") + "\n"
 unit += r'''
 int main(void) {
     app_ctx_t image_ctx={0};
@@ -214,6 +246,34 @@ int main(void) {
     strcpy(s_resume_path,"/sdcard/books/large.epub");
     assert(on_key(&resume_ctx,UI_KEY_2)==APP_REDRAW_PAGE && resume_ctx.request_menu && !s_resume_path[0] && test_open_calls==1);
 
+    char root0[64];snprintf(root0,sizeof(root0),"%s",test_roots[0].path);
+    char ep_large[128],ep_missing[128];
+    snprintf(ep_large,sizeof(ep_large),"%s/large.epub",root0);
+    snprintf(ep_missing,sizeof(ep_missing),"%s/missing.txt",root0);
+    // 明确首页进入只打开一次；普通菜单进入仍等待续读询问。/ Explicit home entry opens once; ordinary menu entry still awaits confirmation.
+    unsigned before_open=test_open_calls;
+    on_enter(&resume_ctx);assert(s_resume_pending&&!s_entry_active&&test_open_calls==before_open);
+    assert(book_entry_request(BOOK_ENTRY_OPEN,ep_large));
+    on_enter(&resume_ctx);assert(s_entry_active&&!s_resume_pending&&test_open_calls==before_open);
+    s_shelf=calloc(1,sizeof(*s_shelf));assert(s_shelf);s_count=1;
+    strcpy(s_shelf[0].path,ep_large);
+    apply_entry(&resume_ctx);assert(book_entry_status()==BOOK_ENTRY_OPENED&&test_open_calls==before_open+1);
+    apply_entry(&resume_ctx);assert(test_open_calls==before_open+1);
+    book_on_exit(&resume_ctx);
+    assert(book_entry_request(BOOK_ENTRY_OPEN,ep_missing));
+    on_enter(&resume_ctx);apply_entry(&resume_ctx);assert(book_entry_status()==BOOK_ENTRY_NOT_FOUND&&s_message[0]);
+    book_on_exit(&resume_ctx);
+    assert(book_entry_request(BOOK_ENTRY_SHELF,NULL));on_enter(&resume_ctx);
+    apply_entry(&resume_ctx);assert(book_entry_status()==BOOK_ENTRY_SHELF_READY&&test_open_calls==before_open+1);
+    book_on_exit(&resume_ctx);
+    assert(book_entry_request(BOOK_ENTRY_OPEN,ep_large));on_enter(&resume_ctx);
+    book_on_exit(&resume_ctx);assert(book_entry_status()==BOOK_ENTRY_CANCELLED&&test_open_calls==before_open+1);
+    assert(book_entry_request(BOOK_ENTRY_OPEN,ep_large));on_enter(&resume_ctx);
+    s_shelf=calloc(1,sizeof(*s_shelf));assert(s_shelf);s_count=1;
+    strcpy(s_shelf[0].path,ep_large);test_open_success=false;
+    apply_entry(&resume_ctx);assert(book_entry_status()==BOOK_ENTRY_FAILED&&test_open_calls==before_open+2);
+    test_open_success=true;book_on_exit(&resume_ctx);s_scan_pending=false;s_resume_pending=false;
+
     shelf_entry_t a={.search_match=true,.name="Same.txt",.path="/sdcard/books/A/Same.txt"};
     shelf_entry_t b={.search_match=true,.name="Same.txt",.path="/sdcard/books/B/Same.txt"};
     assert(compare_books(&a,&b)<0);
@@ -226,6 +286,9 @@ int main(void) {
     for(int i=0;i<65;i++){char path[340];snprintf(path,sizeof(path),"%s/book%03d.txt",test_roots[0].path,i);FILE* f=fopen(path,"w");assert(f);fputs("x",f);fclose(f);}
     app_ctx_t ctx={0};scan_shelf(&ctx);
     assert(s_count==65&&s_visible_count==65&&s_shelf_capacity>=65);
+    s_view=SHELF;assert(view_rows()==3&&leaves()==22);
+    s_view=BULK;assert(view_rows()==7&&leaves()==10);
+    ctx.leaf=9;assert(on_key(&ctx,UI_KEY_2)==APP_REDRAW_PAGE&&s_view==SHELF&&ctx.leaf==21);
     ctx.leaf=3;s_view=MANAGE;s_clear_confirm=false;s_file_removed=false;
     EpdRect back=manage_rect(0,3);manage_action(&ctx,back.x+1,back.y+1);
     assert(s_view==SHELF&&ctx.leaf==3);
@@ -315,5 +378,16 @@ with tempfile.TemporaryDirectory() as tmp:
     c = Path(tmp) / "test.c"
     exe = Path(tmp) / "test"
     c.write_text(unit, encoding="utf-8")
-    subprocess.run(["gcc", "-std=c11", "-Wall", "-Wextra", "-Werror", "-Wno-unused-variable", "-fsanitize=address,undefined", str(c), "-o", str(exe)], check=True)
+    Path("build-host").mkdir(exist_ok=True)
+    Path("build-host/book_ui_unit.c").write_text(unit, encoding="utf-8")
+    root = source.parents[2]
+    sdk_flags = []
+    if os.uname().sysname == "Darwin":
+        developer = Path(subprocess.check_output(["xcode-select", "-p"], text=True).strip())
+        sdk = Path(os.environ.get("PREVIEW_MACOS_SDK", developer / "Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"))
+        if sdk.exists():
+            sdk_flags = ["-isysroot", str(sdk)]
+    subprocess.run([os.environ.get("CC", "cc"), "-std=gnu11", "-Wall", "-Wextra", "-Werror", "-Wno-unused-variable", "-fsanitize=address,undefined", *sdk_flags,
+                    "-I" + str(root / "tools/book_storage_stubs"), "-I" + str(root / "main/book"),
+                    str(c), str(root / "main/book/book_entry.c"), "-o", str(exe)], check=True)
     subprocess.run([str(exe)], check=True)

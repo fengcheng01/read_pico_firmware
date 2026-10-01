@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CHARSET = ROOT / "main/font/charset.txt"
 OUT = ROOT / "main/assets/builtin.ttf"
 SCAN_DIRS = [
+    ROOT / "main/os",
     ROOT / "main/ui",
     ROOT / "main/app",
     ROOT / "main/apps",

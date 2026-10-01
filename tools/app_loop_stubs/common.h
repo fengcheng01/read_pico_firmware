@@ -41,6 +41,7 @@ bool read_pico_pmu_ready(void);
 bool read_pico_pmu_take_key_short(void);
 void enter_lock_and_sleep(EpdiyHighlevelState*, int64_t*, void*);
 const char* app_settings_font_path(void);
+uint8_t app_settings_idle_lock_min(void);
 bool ttf_font_path_is_builtin(const char*);
 bool ttf_font_ready(void);
 bool ttf_font_is_builtin(void);
@@ -53,3 +54,5 @@ void read_pico_sd_start_probe(void);
 
 int epd_rotated_display_width(void);
 void epd_fill_triangle(int,int,int,int,int,int,uint8_t,uint8_t*);
+void epd_fill_rect(EpdRect,uint8_t,uint8_t*);
+void epd_draw_rect(EpdRect,uint8_t,uint8_t*);

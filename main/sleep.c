@@ -11,6 +11,7 @@
 #include "sleep.h"
 
 #include "app.h"
+#include "app_sleep_hooks.h"
 #include "display.h"
 #include "driver/gpio.h"
 #include "esp_log.h"
@@ -18,12 +19,15 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "os_lunar.h"
+#include "os_time.h"
 #include "pmu_selftest.h"
 #include "read_pico_board.h"
 #include "read_pico_pmu.h"
 #include "sc7a20h_lab.h"
 #include "settings.h"
 #include "ui_kit.h"
+#include "ui/product/ui_product.h"
 
 static const char* TAG = "read_pico";
 
@@ -222,14 +226,152 @@ void app_enter_host_sleep(app_sleep_mode_t mode) {
     while (true) vTaskDelay(pdMS_TO_TICKS(1000));
 }
 
+// 时钟锁屏：大字时间 + 日期；时间未校准时由调用方回退静态图。
+// Clock lock face: large time plus date; an uncalibrated clock falls back to the static image.
+static void draw_lock_clock(uint8_t* fb) {
+    const os_time_info_t* info = os_time_info();
+    char clock[16], date[48];
+    os_time_format_clock(clock, sizeof(clock));
+    os_time_format_date(date, sizeof(date));
+    ui_text(fb, UI_LOCK_WIDTH / 2, 380, 176, clock, EPD_DRAW_ALIGN_CENTER, false);
+    ui_text(fb, UI_LOCK_WIDTH / 2, 620, 44, date, EPD_DRAW_ALIGN_CENTER, false);
+    ui_text(fb, UI_LOCK_WIDTH / 2, 700, 26, "已锁定 · 短按电源键唤醒", EPD_DRAW_ALIGN_CENTER, false);
+}
+// 当月日历锁屏：周标题 + 六行网格，今日加框；时间未校准时由调用方回退。
+// Monthly calendar face: weekday header and six rows with today boxed; uncalibrated time falls back.
+static void draw_lock_calendar(uint8_t* fb) {
+    const os_time_info_t* info = os_time_info();
+    static const char* names[] = {"一", "二", "三", "四", "五", "六", "日"};
+    int lead = (info->weekday + 6) % 7 - (int)(info->day - 1) % 7;
+    int first = ((lead % 7) + 7) % 7;
+    int days = info->month == 2 ? (info->year % 4 == 0 && (info->year % 100 != 0 || info->year % 400 == 0) ? 29 : 28)
+              : (info->month == 4 || info->month == 6 || info->month == 9 || info->month == 11) ? 30 : 31;
+    char title[48];
+    snprintf(title, sizeof(title), "%u年%u月", info->year, info->month);
+    ui_text(fb, UI_LOCK_WIDTH / 2, 150, 60, title, EPD_DRAW_ALIGN_CENTER, false);
+    int grid_x = 60, grid_w = UI_LOCK_WIDTH - 2 * 60, cell = grid_w / 7;
+    for (int i = 0; i < 7; ++i)
+        ui_text(fb, grid_x + i * cell + cell / 2, 280, 34, names[i], EPD_DRAW_ALIGN_CENTER, false);
+    for (int row = 0; row < 6; ++row)
+        ui_hairline(fb, 360 + row * 108, grid_x, grid_w, UI_GRAY_LIGHT);
+    for (int day = 1; day <= days; ++day) {
+        int cell_index = first + day - 1;
+        int col = cell_index % 7, row = cell_index / 7;
+        if (row >= 6) break;
+        char label[8];
+        snprintf(label, sizeof(label), "%d", day);
+        int cx = grid_x + col * cell + cell / 2, cy = 360 + row * 108 + 44;
+        if ((unsigned)day == info->day) ui_draw_selected_round_rect(fb, (EpdRect){cx - 34, cy - 38, 68, 76}, 10);
+        ui_text_vc(fb, cx, cy, 40, label, EPD_DRAW_ALIGN_CENTER, false);
+    }
+    char now[24];
+    os_time_format_clock(now, sizeof(now));
+    ui_text(fb, UI_LOCK_WIDTH / 2, 1030, 36, now, EPD_DRAW_ALIGN_CENTER, false);
+}
+// 黄历锁屏：农历日大字 + 干支年/农历月 + 公历日期与时间；农历来自公开年表，
+// 「宜读书」为固定文案，不是逐日宜忌数据。
+// Almanac lock face: the lunar day large, ganzhi year/lunar month, plus solar
+// date and clock; lunar data comes from the public table, and 宜读书 is fixed
+// copy, never a per-day do/don't list.
+static void draw_lock_almanac(uint8_t* fb) {
+    const os_time_info_t* info = os_time_info();
+    os_lunar_date_t lunar;
+    if (!os_lunar_from_solar(info->year, info->month, info->day, &lunar)) {
+        ui_draw_full_image(fb, lock_4bpp_bin_start);
+        return;
+    }
+    static const char* weekdays[] = {"日", "一", "二", "三", "四", "五", "六"};
+    char solar[64], ganzhi[8], line[96], clock[16];
+    snprintf(solar, sizeof(solar), "%u年%u月%u日 · 周%s",
+             info->year, info->month, info->day, weekdays[info->weekday % 7]);
+    os_lunar_year_ganzhi(lunar.year, ganzhi);
+    ui_text(fb, UI_LOCK_WIDTH / 2, 216, 40, solar, EPD_DRAW_ALIGN_CENTER, false);
+    ui_text(fb, UI_LOCK_WIDTH / 2, 320, 150, os_lunar_day_name(lunar.day), EPD_DRAW_ALIGN_CENTER, false);
+    snprintf(line, sizeof(line), "%s%s年 · %s", ganzhi, os_lunar_zodiac(lunar.year),
+             os_lunar_month_name(lunar.month, lunar.leap));
+    ui_text(fb, UI_LOCK_WIDTH / 2, 548, 56, line, EPD_DRAW_ALIGN_CENTER, false);
+    ui_hairline(fb, 672, 140, UI_LOCK_WIDTH - 280, UI_GRAY_LIGHT);
+    ui_text(fb, UI_LOCK_WIDTH / 2, 726, 36, "宜读书", EPD_DRAW_ALIGN_CENTER, false);
+    os_time_format_clock(clock, sizeof(clock));
+    ui_text(fb, UI_LOCK_WIDTH / 2, 838, 44, clock, EPD_DRAW_ALIGN_CENTER, false);
+    ui_text(fb, UI_LOCK_WIDTH / 2, 960, 26, "已锁定 · 短按电源键唤醒", EPD_DRAW_ALIGN_CENTER, false);
+}
+// 按设置画锁屏面；时钟/日历/黄历需要有效时间，否则回退静态图。/ Paint the configured face; clock/calendar/almanac need valid time or fall back to the static image.
+static void draw_lock_face(uint8_t* framebuffer) {
+    uint8_t style = app_settings_lock_style();
+    if (style) {
+        os_time_invalidate();
+        os_time_poll(esp_timer_get_time() / 1000);
+        bool valid = os_time_info()->state == OS_TIME_VALID;
+        if (style == 1 && valid) { draw_lock_clock(framebuffer); return; }
+        if (style == 2 && valid) { draw_lock_calendar(framebuffer); return; }
+        if (style == 3 && valid) { draw_lock_almanac(framebuffer); return; }
+    }
+    ui_draw_full_image(framebuffer, lock_4bpp_bin_start);
+}
+
+/* ---- 锁屏密码 / Lock PIN ---- */
+// 键盘绘制与命中共用 ui_product；挑战循环只负责输入与校验。
+// The keypad draw/hit lives in ui_product; the challenge loop only feeds and verifies input.
+bool app_lock_pin_challenge(EpdiyHighlevelState* hl, cst836u_handle_t tp) {
+    char pin[8];
+    if (!app_settings_lock_pin(pin, sizeof(pin)) || !pin[0]) return true;
+    char input[8] = {0};
+    char message[64] = {0};
+    unsigned count = 0;
+    uint8_t* fb = epd_hl_get_framebuffer(hl);
+    epd_poweron();
+    epd_clear();
+    epd_hl_set_all_white(hl);
+    for (;;) {
+        ui_product_lock_keypad(fb, "输入锁屏密码", message, count, false);
+        epd_hl_update_screen(hl, MODE_GC16, 25);
+        int key = -1;
+        for (;;) {
+            vTaskDelay(pdMS_TO_TICKS(20));
+            read_pico_pmu_drain_events();
+            cst836u_touch_t touch;
+            if (cst836u_read(tp, &touch) != ESP_OK || !touch.touched || touch.count != 1) continue;
+            key = ui_product_lock_keypad_hit(touch.x, touch.y);
+            if (key < 0) continue;
+            // 同键抬起才算一次输入；滑离键位的取消。/ Count on release over the same key; sliding off cancels.
+            while (cst836u_read(tp, &touch) == ESP_OK && touch.touched && touch.count == 1) {
+                if (ui_product_lock_keypad_hit(touch.x, touch.y) != key) key = -1;
+                vTaskDelay(pdMS_TO_TICKS(20));
+            }
+            if (key >= 0) break;
+        }
+        message[0] = 0;
+        if (key == 10) count = 0;
+        else if (key == 11) {
+            if (count) --count;
+        } else if (count < 4) {
+            input[count++] = (char)('0' + key);
+        }
+        if (count == 4) {
+            input[4] = 0;
+            if (!strcmp(input, pin)) {
+                epd_hl_set_all_white(hl);
+                epd_clear();
+                return true;
+            }
+            snprintf(message, sizeof(message), "密码错误，请重试");
+            count = 0;
+        }
+    }
+}
+
 void enter_lock_and_sleep(
     EpdiyHighlevelState* hl, int64_t* ignore_until_ms, sc7a20h_handle_t acc
 ) {
+    // 先统一保存（正文进度、统计检查点），再画锁屏下电；失败不阻塞睡眠。
+    // Save uniformly first (reader progress, stats checkpoints), then paint the lock face; failures never block sleep.
+    app_sleep_prepare_run();
     uint8_t* framebuffer = epd_hl_get_framebuffer(hl);
     epd_poweron();
     epd_clear();
     epd_hl_set_all_white(hl);
-    ui_draw_full_image(framebuffer, lock_4bpp_bin_start);
+    draw_lock_face(framebuffer);
     epd_hl_update_screen_from_white(hl, MODE_GC16, 25);
 
     app_lock_wait_key_idle(800);

@@ -1,4 +1,4 @@
-# Read Pico Demo Firmware
+# Read Pico Reading Firmware (In Development)
 
 **Languages:** [English](./README.md) | [简体中文](./README.zh-CN.md) | [日本語](./README.ja-JP.md)
 
@@ -11,14 +11,20 @@
 
 Read Pico is an ESP32-S3 development board in the Read series with a 4.7" monochrome e-paper panel,
 made by Shenzhen MindReset Technology Co., Ltd. for developers building open-source
-e-paper firmware. This repository contains the factory firmware shipped with the board.
+e-paper firmware. This branch develops a reading-first product on the official factory demo firmware.
 
 The firmware provides separate demo and diagnostic pages for the display, touch,
 accelerometer, power, keys, TF card, fonts, sleep and wake. Use them to check the
 hardware and as reference implementations for your own firmware.
 
 The board support, PMU protocol host and chip drivers are independent components
-that can be reused. This is a hardware demo, not a finished reader product.
+that can be reused. The product UI now has four roots, a cover-first home and three-card shelf, compact reading tools and grouped Settings, backed by real saved history and explicit resume.
+RTC/todos, restyling every Settings child and system-wide recovery remain incomplete; this is not a complete OS release.
+
+Normal boot opens Now reading; daily roots are Now reading / Library / Today / Settings, with original tests under Settings → Diagnostics.
+Explicit home resume skips a second prompt, root-bar Library enters directly, while menu Library still asks.
+See [product UI, maintenance boundaries and verification](docs/READING_HOME.md).
+No second-device driver or flashable image is supplied without developer documentation.
 
 Agent-facing layout, `app_desc_t` contract, glossary and comment style are in
 [AGENTS.md](AGENTS.md).
@@ -68,13 +74,30 @@ The panel VCOM is calibrated at the factory and stored in the PMU. The firmware
 reads it once at boot to configure the driver; it is neither stored locally nor
 user-editable.
 
+## Desktop UI Preview
+
+With Python 3.9+ and a C compiler (Xcode or Command Line Tools on macOS), run:
+
+```sh
+python3 tools/preview/serve.py
+```
+
+Open <http://127.0.0.1:8765> for the redesigned home→shelf→reading/size/tools→return flow, Settings, empty/error states and original tests. No ESP-IDF or board is required. Product screens use native C drawing; host book state supplies four fixture titles sharing one bundled sample and real pagination, without user files or persistent progress. This is not a complete ESP32-S3 emulator; file lifecycle, peripherals, physical refresh and power still need device tests. See [coverage, limits and checks](tools/preview/README.md).
+
 ## Pages
 
-The function menu lists pages in the order defined in
-[main/app/app_registry.c](main/app/app_registry.c).
+The single catalog lives in [main/app/app_registry.c](main/app/app_registry.c).
+Global navigation lists only four roots; existing features below are grouped under Settings.
 
 | Page | Content |
 | --- | --- |
+| Now reading | Normal boot home, real saved progress, three recent books, resume and shelf/import actions |
+| Today | Large clock and date (PMU RTC + timezone, explicit when uncalibrated), today/7-day reading minutes, current-book progress; todos stay explicitly unavailable |
+| Time & timezone | Settings subpage; clock state, 15-minute timezone steps, auto SNTP sync during STA transfer |
+| Settings | Reading, transfer, time, sleep, storage and separate diagnostic entries |
+| Reading settings | Default size (36–72 in steps of 4), body-font entry and the shake experiment switch |
+| Sleep settings | Post-lock mode: light/deep/off; pickup wake; lock style (static/clock/calendar/almanac) and the 4-digit lock PIN |
+| Storage status | TF and internal library capacities, read-only probing with manual recheck; an abnormal-reset summary from the internal crash.log (no backtrace) |
 | Overview | Boot I2C scan, IDs, battery and charging status, build time |
 | EPD Refresh | Full-screen GC16, partial DU, 16-gray and fast 8-gray ladders, each with measured refresh time |
 | Reading | Built-in text, DU / GL16 / GC16 page turns, font size adjustment in the header |
@@ -84,12 +107,18 @@ The function menu lists pages in the order defined in
 | Power | Battery voltage, level and charging status; EPD rails, temperature, faults and read-only SY7636A configuration |
 | PMU | Protocol status, events, configuration and commands |
 | Power Key | `key_raw_events`, press/release levels and DOWN/UP/SHORT/LONG events |
-| Sleep | Light sleep with key or pickup wake, deep sleep and power off |
-| Storage | TF card capacity and mount status, remount, format and buzzer |
+| Sleep (diagnostic) | The original page that actually enters light/deep/off |
+| Storage (diagnostic) | TF card capacity and mount status, remount, format and buzzer |
 | Font | Select TTF files from the card, preview typesetting and cycle font weight |
 | IOE | Port-0 levels and interrupts, touch-reset pulse from the bottom bar |
 | Device | Device probes and command ACKs; power-cut items are recorded in the backend only |
 | Books | UTF-8 / GBK TXT and EPUB from TF or internal storage, chapters, font size and per-book progress; swipe to turn, hold text for TOC and hold a shelf row for details, progress reset or confirmed deletion; filter storage sources, sort by name or recent reading, and search by pinyin, initials or English; single-book actions use a popup, while management supports batch selection, progress reset/deletion and rescan; experimental shake-to-turn defaults off. EPUB navigation supports NCX and nav documents. |
+| Reader typography | The toolbar Typography menu: font, leading, margins, first-line indent, paragraph gap, the per-line guide rule (solid/dashed), alignment (left/center/justified), tap zones, auto page turn and the ghost-cleanup period (off/3/5/10/14/20/30); Night inverts the body |
+| Bookmarks & jumping | TOC tabs for chapters, bookmarks (16 per book, tap to jump, long-press to delete, cleaned with deletion) and 10%–100% percent jumps |
+| End-of-book picks | Paging past the last page suggests up to three same-source books (recency first) |
+| Reader status bar | Footer clock/battery percent/progress bar toggles; Today always shows battery |
+| Idle lock | Auto-lock after off/5/10/30 idle minutes; auto page turns defer it |
+| Progress sync | Inside Transfer: kosync protocol (KOReader-compatible) with manual/auto push and manual pull of the last book |
 | Transfer | Device hotspot or existing WiFi, with browser TXT/EPUB upload and complete TTF font uploads to TF; TF card preferred, internal storage limited to 1 MB per file. Scan the hotspot QR to join, or select a 2.4 GHz network and enter its password on the touchscreen. Web provisioning remains available. The browser lists and searches books in the current upload destination, confirms replacement or deletion, and supports upload cancellation and retry. Saved WiFi can be forgotten on the device. Leaving the page stops networking. |
 
 In Books, KEY1 / KEY2 / KEY3 select previous page / toolbar / next page. The toolbar includes full refresh. Hold KEY2 for 500 ms to open the demo menu. Other pages retain KEY2 full GC16 refresh and KEY3 menu. Menu rows select on release; slide away to cancel.

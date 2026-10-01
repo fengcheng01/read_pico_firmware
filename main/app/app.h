@@ -144,6 +144,9 @@ void app_present(app_ctx_t* ctx, const app_desc_t* app, app_redraw_t redraw);
 /// 之后 ms 毫秒内忽略电源键短按，避免开机或自检的残留事件立刻把屏锁掉。
 /// / Ignore short power-key presses for ms so boot/self-test leftovers do not lock.
 void app_lock_ignore_for(int64_t ms);
+/// 页面声明“刚发生了无触摸的活动”（如自动翻页），推迟空闲自动锁屏；每轮消费一次。
+/// / A page reports touchless activity (auto page turns) to defer idle auto-lock; consumed each tick.
+void app_loop_stay_awake(void);
 
 #ifdef __cplusplus
 }

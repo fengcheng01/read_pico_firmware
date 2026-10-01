@@ -39,6 +39,9 @@
 
 // 差分刷（DU/GL16）连续多少次后，下一次自动升为全像素 GC16 压掉累积的灰底。
 // 跟随 DU（E0470_FOLLOW_WAVEFORM）不计数也不升级。0 = 关闭。
+// 运行期档位在设置 gc_every（默认取本值）；本宏仅作出厂默认与文档。
 // After this many DU/GL16 updates, the next one is a full-pixel GC16.
-// FOLLOW DU does not count. 0 disables the upgrade.
+// FOLLOW DU does not count. 0 disables the upgrade. The runtime tier lives in
+// the gc_every setting (defaulting to this value); this macro is only the
+// factory default and documentation.
 #define APP_GC16_EVERY 14

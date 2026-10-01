@@ -39,3 +39,15 @@ size_t book_layout_page_for_offset(size_t off);
 /// 返回页首偏移；已完成页数索引是待排页起点（完成后为文本末尾），更大索引返回文本长度。
 /// Return a page start; index equal to completed count marks the pending page (EOF when complete), larger indexes return text length.
 size_t book_layout_page_start_offset(size_t page);
+/// 行距加成百分比（0..60），作用于后续 build 与 draw；改变后需重建分页。/ Extra leading percent (0..60) for later builds and draws; rebuild pagination after changing.
+void book_layout_set_leading(int percent);
+/// 夜间反色绘制（白字黑底、图片灰度翻转）；只影响 draw，不需要重建。/ Night-inverted drawing (white on black, flipped image grays); draw-only, no rebuild needed.
+void book_layout_set_night(bool on);
+/// 段首两字符缩进；影响 build，改变后需重建。/ Two-em paragraph indent; build-affecting, rebuild after changing.
+void book_layout_set_indent(bool on);
+/// 段落间距档 0=标准 1=加大；影响 build，改变后需重建。/ Paragraph gap tier 0=standard 1=relaxed; build-affecting, rebuild after changing.
+void book_layout_set_paragraph(int tier);
+/// 行辅助线 0=关 1=实线 2=虚线；只影响 draw，不需要重建。/ Per-line guide rule 0=off 1=solid 2=dashed; draw-only, no rebuild needed.
+void book_layout_set_guide(int style);
+/// 正文对齐 0=左 1=居中 2=两端对齐；只影响 draw（断行不变），不需要重建。/ Body alignment 0=left 1=center 2=justified; draw-only (line breaks unchanged), no rebuild needed.
+void book_layout_set_align(int align);

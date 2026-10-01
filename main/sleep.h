@@ -11,6 +11,7 @@
 
 #include <stdint.h>
 
+#include "cst836u.h"
 #include "epd_highlevel.h"
 #include "sc7a20h.h"
 #include "settings.h"
@@ -39,6 +40,12 @@ app_wake_source_t app_last_wake_source(void);
 /// 软睡或关机，拉掉 EN 后停住，不会返回。
 /// Soft sleep or power-off: drop EN and halt; does not return.
 void app_enter_host_sleep(app_sleep_mode_t mode);
+
+/// 开机阻塞校验；未设密码直接通过，输错留在本页，正确后清屏返回。
+/// 键盘绘制/命中见 ui_product 的 ui_product_lock_keypad*。
+/// Blocking boot gate; unarmed passes at once, wrong entries stay, success clears and returns.
+/// Keypad draw/hit live in ui_product as ui_product_lock_keypad*.
+bool app_lock_pin_challenge(EpdiyHighlevelState* hl, cst836u_handle_t tp);
 
 #ifdef __cplusplus
 }

@@ -53,6 +53,7 @@ bool read_pico_pmu_ready(void) {return lock_due;}
 bool read_pico_pmu_take_key_short(void) {return true;}
 void enter_lock_and_sleep(EpdiyHighlevelState*h,int64_t*t,void*a) {(void)h;(void)t;(void)a;lock_due=false;time_offset+=1000000;}
 const char* app_settings_font_path(void) {return "builtin";}
+uint8_t app_settings_idle_lock_min(void) {return 0;}
 bool ttf_font_path_is_builtin(const char*p) {(void)p;return !font_due&&!saved_sd_font;}
 bool ttf_font_ready(void) {return true;}
 bool ttf_font_is_builtin(void) {return !font_due&&!sd_font;}

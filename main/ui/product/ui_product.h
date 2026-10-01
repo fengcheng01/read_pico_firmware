@@ -1,0 +1,50 @@
+/*
+ * SPDX-FileCopyrightText: 2026 mindreset
+ * SPDX-License-Identifier: Apache-2.0
+ * 中文：产品页的纯绘图、共同触区与显式导航请求；不访问设备 IO。
+ * English: Pure product drawing, shared hit geometry and explicit navigation requests; no device IO.
+ * 冻结：导航请求只能在输入回调调用，render 仅调用绘图接口。
+ * Frozen: Navigation requests run only in input callbacks; render calls drawing APIs only.
+ */
+#pragma once
+#include "ui_kit.h"
+#include "book_cover.h"
+#include "os_catalog.h"
+#include "app.h"
+
+#define UI_PRODUCT_SHELF_ROWS 3
+
+/// 最多绘制指定行数，超长文本 UTF-8 边界省略；用于文件名回退。/ Draw bounded lines, ellipsizing at UTF-8 boundaries; for filename fallbacks.
+void ui_product_title(uint8_t* fb, EpdRect rect, const char* title, int px, int max_lines);
+/// 首页底部书架与导入；菜单把手独立保留。/ Home library/import footer; retain the independent menu handle.
+void ui_product_home_bar(uint8_t* fb, bool transfer_enabled);
+/// 返回稳定 ID，禁用控件不产生动作。/ Return a stable ID; disabled controls produce no action.
+os_app_id_t ui_product_home_bar_hit(uint16_t x, uint16_t y, bool transfer_enabled);
+/// 统一产品页标题；不读取硬件或文件。/ Shared product header without hardware or file reads.
+void ui_product_header(uint8_t* fb, const char* title, const char* detail);
+/// 四根入口导航及命中；把手触区独立保留。/ Four-root navigation and hit testing; retain a separate handle target.
+void ui_product_root_bar(uint8_t* fb, os_app_id_t active);
+os_app_id_t ui_product_root_hit(uint16_t x, uint16_t y);
+/// 请求产品根页；书架为明确进入请求，不触发默认续读。/ Request a root page; Library uses an explicit shelf entry without default resume.
+bool ui_product_navigate(app_ctx_t* ctx, os_app_id_t id);
+/// 文件名排版封面，不假称 EPUB 真实封面。/ Typographic filename cover, never advertised as an extracted EPUB cover.
+void ui_product_cover(uint8_t* fb, EpdRect rect, const char* title, int px);
+/// 三行书封列表与翻页管理行的共享绘图/触区。/ Shared three-row cover list and paging/management geometry.
+EpdRect ui_product_shelf_rect(int row);
+EpdRect ui_product_shelf_nav_rect(int index);
+/// cover 为 146×188 灰度位图（BOOK_COVER_W/H），NULL 回退文件名排版。
+/// / cover is a 146×188 grayscale bitmap (BOOK_COVER_W/H); NULL falls back to the typographic cover.
+void ui_product_shelf_card(uint8_t* fb, EpdRect rect, const char* title, const char* meta,
+                           unsigned percent, bool has_progress, bool pressed, const uint8_t* cover);
+/// 保持六项阅读动作的共同工具条与触区；night 显示反色标记。/ Shared toolbar and hit geometry retaining all six reading actions; night labels the inverted state.
+EpdRect ui_product_tool_rect(int index);
+void ui_product_reader_tools(uint8_t* fb, const char* title, int px, bool night, int pressed);
+/// 正文与字体告知/进度页脚共用几何；status 为页脚左侧可选状态（时钟/电量），bar 控制进度条。
+/// Shared body/font notice/footer geometry; status is the optional left footer cluster (clock/battery) and bar toggles the track.
+EpdRect ui_product_reader_body(bool builtin);
+void ui_product_reader_chrome(uint8_t* fb, const char* title, unsigned page, unsigned pages,
+                             unsigned percent, bool builtin, const char* status, bool bar);
+/// 锁屏密码键盘绘制/命中；digits 为已输位数，back 额外画返回按钮，命中 0..9 数字、10 清空、11 退格。
+/// Lock-PIN keypad draw/hit; digits are entered dots, back adds a return button, hits return 0..9 digits, 10 clear, 11 backspace.
+void ui_product_lock_keypad(uint8_t* fb, const char* title, const char* message, unsigned digits, bool back);
+int ui_product_lock_keypad_hit(uint16_t x, uint16_t y);

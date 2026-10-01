@@ -6,6 +6,8 @@
  *
  * Draw and hit-test for the full-screen menu and the bar handle. Items
  * come from the app registry.
+ * 冻结：全局菜单仅四个产品根入口，诊断经设置访问；返回真实目录索引。
+ * Frozen: Four product roots only; diagnostics live under Settings; return actual catalog indices.
  */
 
 #include "ui_menu.h"
@@ -17,17 +19,17 @@
 
 #define UI_MENU_LIST_TOP UI_CONTENT_TOP
 #define UI_MENU_ROW_H \
-    ((UI_CONTENT_BOTTOM - UI_MENU_LIST_TOP) / UI_MENU_ITEMS_PER_PAGE)
+    ((UI_CONTENT_BOTTOM - UI_MENU_LIST_TOP) / 4)
 
 int ui_menu_leaf_count(void) {
-    const int n = app_count();
+    const int n = app_product_count();
     if (n <= 0) return 1;
     return (n + UI_MENU_ITEMS_PER_PAGE - 1) / UI_MENU_ITEMS_PER_PAGE;
 }
 
 static int leaf_range(int leaf, int* out_count) {
     const int first = leaf * UI_MENU_ITEMS_PER_PAGE;
-    int count = app_count() - first;
+    int count = app_product_count() - first;
     if (count > UI_MENU_ITEMS_PER_PAGE) count = UI_MENU_ITEMS_PER_PAGE;
     if (count < 0) count = 0;
     *out_count = count;
@@ -36,7 +38,7 @@ static int leaf_range(int leaf, int* out_count) {
 
 int ui_menu_leaf_for_app(const app_desc_t* app) {
     const int index = app_index_of(app);
-    if (index < 0) return 0;
+    if (index < 0 || index >= app_product_count()) return 0;
     return index / UI_MENU_ITEMS_PER_PAGE;
 }
 
@@ -60,23 +62,11 @@ static EpdRect menu_nav_rect(bool next) {
     return ui_bar_rect(next ? 1 : 0, 2);
 }
 
-static void draw_menu_arrow(
-    uint8_t* framebuffer, int cx, int cy, bool up, uint8_t color
-) {
-    if (up) {
-        epd_fill_triangle(cx, cy - 11, cx - 14, cy + 10, cx + 14, cy + 10, color, framebuffer);
-    } else {
-        epd_fill_triangle(cx, cy + 11, cx - 14, cy - 10, cx + 14, cy - 10, color, framebuffer);
-    }
-}
-
 void ui_draw_menu_handle(uint8_t* framebuffer, bool menu_open) {
     EpdRect btn = menu_btn_rect();
-    ui_draw_selected_round_rect(framebuffer, btn, UI_BTN_RADIUS);
-    draw_menu_arrow(
-        framebuffer, btn.x + btn.width / 2, btn.y + btn.height / 2,
-        !menu_open, UI_GRAY_BLACK
-    );
+    ui_clear_rect_fast(framebuffer, btn);
+    ui_text_vc(framebuffer, btn.x + btn.width / 2, btn.y + btn.height / 2,
+               44, menu_open ? "×" : "≡", EPD_DRAW_ALIGN_CENTER, false);
 }
 
 bool ui_menu_row_rect(int leaf, int row, EpdRect* out) {
@@ -127,21 +117,17 @@ void ui_draw_menu_page(uint8_t* framebuffer, const app_desc_t* current, int leaf
     leaf_range(leaf, &count);
     const int leaves = ui_menu_leaf_count();
 
-    char line[80];
     ui_clear_page(framebuffer);
-    snprintf(
-        line, sizeof(line),
-        "第 %d / %d 页　Page %d / %d",
-        leaf + 1, leaves, leaf + 1, leaves
-    );
-    ui_draw_header(framebuffer, "演示项目 Demo Projects", line);
+    ui_draw_header(framebuffer, "导航", "阅读优先 · 诊断在设置中");
 
     for (int row = 0; row < count; row++) {
         ui_draw_menu_row_pressed(framebuffer, current, leaf, row, false);
     }
 
-    ui_draw_button(framebuffer, menu_nav_rect(false), "上一页 Prev", leaf > 0);
-    ui_draw_button(framebuffer, menu_nav_rect(true), "下一页 Next", leaf + 1 < leaves);
+    if (leaves > 1) {
+        ui_draw_button(framebuffer, menu_nav_rect(false), "上一页 Prev", leaf > 0);
+        ui_draw_button(framebuffer, menu_nav_rect(true), "下一页 Next", leaf + 1 < leaves);
+    }
     ui_draw_menu_handle(framebuffer, true);
 }
 

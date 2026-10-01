@@ -54,9 +54,15 @@
 #define MEDIA_POLL_INTERVAL_MS 500
 
 static int64_t s_lock_ignore_until_ms;
+static int64_t s_active_ms = -1;
+static bool s_stay_awake;
 
 void app_lock_ignore_for(int64_t ms) {
     s_lock_ignore_until_ms = esp_timer_get_time() / 1000 + ms;
+}
+
+void app_loop_stay_awake(void) {
+    s_stay_awake = true;
 }
 
 void app_present(app_ctx_t* ctx, const app_desc_t* app, app_redraw_t redraw) {
@@ -410,33 +416,43 @@ void app_loop_run(const app_loop_config_t* config) {
         ctx.now_ms = esp_timer_get_time() / 1000;
         rails_idle_check(ctx.now_ms);
 
+        // 空闲自动锁屏：任何触摸都刷新活动时间，页面可用 stay-awake 报告无触摸活动。
+        // Idle auto-lock: any touch refreshes activity; pages report touchless activity via stay-awake.
+        bool touched_now = err == ESP_OK && touch.touched;
+        if (touched_now || s_stay_awake) s_active_ms = ctx.now_ms;
+        s_stay_awake = false;
+        if (s_active_ms < 0) s_active_ms = ctx.now_ms;
+        uint8_t idle_min = app_settings_idle_lock_min();
+        bool idle_lock = idle_min && ctx.now_ms - s_active_ms >= (int64_t)idle_min * 60000;
+
         // 电源键短按 = 锁屏。自检页要连着占用 PMU，这时不抢它的事件队列。
         // Short power-key press locks. A page that holds the PMU keeps its event queue.
         // Short power-key press locks. A page that holds the PMU keeps its event queue.
         if (read_pico_pmu_ready() && !current->holds_pmu
             && ctx.now_ms - last_lock_poll_ms >= APP_LOCK_POLL_MS) {
             last_lock_poll_ms = ctx.now_ms;
-            if (read_pico_pmu_take_key_short()) {
-                if (ctx.now_ms < s_lock_ignore_until_ms) {
-                    ESP_LOGI(TAG, "ignore boot KEY_SHORT");
-                } else {
-                    held_key = -1;
-                    cancel_gesture(&ctx, current, &gesture);
-                    if (menu_pressed >= 0) menu_feedback(&ctx, current, menu_leaf, menu_pressed, false, &feedback);
-                    menu_pressed = UI_MENU_HIT_NONE;
-                    enter_lock_and_sleep(ctx.hl, &s_lock_ignore_until_ms, ctx.acc);
-                    ctx.now_ms = esp_timer_get_time() / 1000;
-                    poll_media(&ctx, current, &media_mounted, &media_invalidated);
-                    last_media_poll_ms = ctx.now_ms;
-                    ctx.consumed = true;
-                    ctx.pressed = false;
-                    ctx.released = false;
-                    // 醒来还在同一页，重画一次免得留着锁屏图。
-                    // Still the same page; redraw so the lock image does not stay.
-                    // Still the same page; redraw so the lock image does not stay.
-                    if (menu_open) present_menu(&ctx, current, menu_leaf, &feedback);
-                    else app_present(&ctx, current, APP_REDRAW_PAGE);
-                }
+            bool key_short = read_pico_pmu_take_key_short();
+            if (key_short && ctx.now_ms < s_lock_ignore_until_ms) {
+                ESP_LOGI(TAG, "ignore boot KEY_SHORT");
+            } else if (key_short || idle_lock) {
+                if (idle_lock && !key_short) ESP_LOGI(TAG, "idle lock after %u min", idle_min);
+                held_key = -1;
+                cancel_gesture(&ctx, current, &gesture);
+                if (menu_pressed >= 0) menu_feedback(&ctx, current, menu_leaf, menu_pressed, false, &feedback);
+                menu_pressed = UI_MENU_HIT_NONE;
+                enter_lock_and_sleep(ctx.hl, &s_lock_ignore_until_ms, ctx.acc);
+                ctx.now_ms = esp_timer_get_time() / 1000;
+                poll_media(&ctx, current, &media_mounted, &media_invalidated);
+                last_media_poll_ms = ctx.now_ms;
+                ctx.consumed = true;
+                ctx.pressed = false;
+                ctx.released = false;
+                s_active_ms = ctx.now_ms;
+                // 醒来还在同一页，重画一次免得留着锁屏图。
+                // Still the same page; redraw so the lock image does not stay.
+                // Still the same page; redraw so the lock image does not stay.
+                if (menu_open) present_menu(&ctx, current, menu_leaf, &feedback);
+                else app_present(&ctx, current, APP_REDRAW_PAGE);
             }
         }
 

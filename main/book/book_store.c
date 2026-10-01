@@ -13,6 +13,8 @@
  * Frozen: after user confirmation, delete only direct regular books in mounted roots; report partial failures without notifying UI revision.
  * 冻结：删除前清除同名普通覆盖备份；仅有备份时先恢复，失败保留可恢复的原书。
  * Frozen: clear a matching regular replacement backup before deletion; restore backup-only books first and preserve recovery on failure.
+ * 冻结：首页枚举不创建目录、不格式化；既有显式书架/上传初始化策略保持不变。
+ * Frozen: home enumeration never creates directories or formats; retain existing explicit shelf/upload initialization policy.
  */
 #include "book_store.h"
 #include "book_progress.h"
@@ -53,10 +55,10 @@ static bool sd_ready(void) {
     return info.present && info.mounted;
 }
 
-static esp_err_t flash_root(book_store_root_t* out) {
+static esp_err_t mount_flash(bool allow_format) {
     if (!book_store_flash_ready()) {
         const esp_vfs_fat_mount_config_t config = {
-            .format_if_mount_failed = true,
+            .format_if_mount_failed = allow_format,
             .max_files = 4,
             .allocation_unit_size = 4096,
         };
@@ -67,9 +69,40 @@ static esp_err_t flash_root(book_store_root_t* out) {
             return err;
         }
     }
-    esp_err_t err = ensure_dir("/flash/books");
+    return ESP_OK;
+}
+
+static esp_err_t flash_root(book_store_root_t* out) {
+    esp_err_t err = mount_flash(true);
+    if (err != ESP_OK) return err;
+    err = ensure_dir("/flash/books");
     if (err == ESP_OK) *out = (book_store_root_t){.path = "/flash/books", .is_flash = true};
     return err;
+}
+
+esp_err_t book_store_read_roots(book_store_root_t out[2], int* n) {
+    if (!out || !n) return ESP_ERR_INVALID_ARG;
+    *n = 0;
+    memset(out, 0, sizeof(*out) * 2);
+    s_roots_degraded = false;
+    read_pico_sd_info_t info = {0};
+    read_pico_sd_get_info(&info);
+    if (info.present && !info.mounted) s_roots_degraded = true;
+    esp_err_t flash_err = mount_flash(false);
+    if (flash_err != ESP_OK) s_roots_degraded = true;
+    const book_store_root_t roots[2] = {
+        {.path = "/sdcard/books", .is_flash = false},
+        {.path = "/flash/books", .is_flash = true},
+    };
+    for (int i = 0; i < 2; ++i) {
+        if (i == 0 ? !(info.present && info.mounted) : flash_err != ESP_OK) continue;
+        struct stat st;
+        if (stat(roots[i].path, &st) == 0) {
+            if (S_ISDIR(st.st_mode)) out[(*n)++] = roots[i];
+            else s_roots_degraded = true;
+        } else if (errno != ENOENT) s_roots_degraded = true;
+    }
+    return *n || flash_err == ESP_OK ? ESP_OK : flash_err;
 }
 
 esp_err_t book_store_roots(book_store_root_t out[2], int* n) {

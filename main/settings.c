@@ -10,7 +10,10 @@
 
 #include "settings.h"
 
+#include <stdio.h>
 #include <string.h>
+
+#include "os_sync.h"
 
 #include "esp_log.h"
 #include "nvs.h"
@@ -25,6 +28,27 @@
 #define NVS_KEY_PICKUP "pickup"
 #define NVS_KEY_BOOK_PX "bk_px"
 #define NVS_KEY_BOOK_SHAKE "bk_shake"
+#define NVS_KEY_TZ "tz_qh"
+#define NVS_KEY_LEAD "bk_lead"
+#define NVS_KEY_MARGIN "bk_marg"
+#define NVS_KEY_GUIDE "bk_guide"
+#define NVS_KEY_INDENT "bk_ind"
+#define NVS_KEY_PARA "bk_para"
+#define NVS_KEY_AUTO "bk_auto"
+#define NVS_KEY_TAP "bk_tap"
+#define NVS_KEY_NIGHT "bk_night"
+#define NVS_KEY_LOCK_STYLE "lk_style"
+#define NVS_KEY_LOCK_PIN "lk_pin"
+#define NVS_KEY_SYNC_URL "sy_url"
+#define NVS_KEY_SYNC_USER "sy_user"
+#define NVS_KEY_SYNC_KEY "sy_key"
+#define NVS_KEY_SYNC_AUTO "sy_auto"
+#define NVS_KEY_ALIGN "bk_align"
+#define NVS_KEY_F_CLOCK "ft_clock"
+#define NVS_KEY_F_BATT "ft_batt"
+#define NVS_KEY_F_BAR "ft_bar"
+#define NVS_KEY_IDLE "idle_min"
+#define NVS_KEY_GC_EVERY "gc_every"
 #define FONT_PATH_MAX 160
 
 static app_sleep_mode_t s_sleep = APP_SLEEP_DEEP;
@@ -34,9 +58,35 @@ static uint8_t s_last_boot;
 static bool s_pickup_wake;
 static uint8_t s_book_px = 48;
 static bool s_book_shake;
+static int8_t s_tz_qh = 32;
+static uint8_t s_book_leading;
+static uint8_t s_book_margin;
+static uint8_t s_book_guide;
+static bool s_book_indent = true;
+static uint8_t s_book_para;
+static uint8_t s_book_auto;
+static bool s_book_tap = true;
+static bool s_book_night;
+static uint8_t s_lock_style;
+static char s_lock_pin[8];
+static char s_sync_url[OS_SYNC_URL_MAX] = "https://sync.koreader.rocks";
+static char s_sync_user[OS_SYNC_USER_MAX];
+static char s_sync_key[33];
+static bool s_sync_auto;
+static uint8_t s_book_align;
+static bool s_footer_clock, s_footer_battery, s_footer_bar = true;
+static uint8_t s_idle_lock;
+// 与 app_config.h 的原编译期档一致，保持升级无行为变化。/ Matches the old compile-time tier in app_config.h; upgrades keep behavior.
+static uint8_t s_gc_every = 14;
 
 static uint8_t valid_book_px(uint8_t px) {
     return px >= 36 && px <= 72 && (px - 36) % 4 == 0 ? px : 48;
+}
+
+// 档位与 app_config.h 原值兼容：0 关，或 3..30 之间的常用档。/ Tiers stay compatible with the old app_config.h value: 0 off, or common steps within 3..30.
+static bool gc_every_valid(uint8_t every) {
+    return every == 0 || every == 3 || every == 5 || every == 10 ||
+           every == 14 || every == 20 || every == 30;
 }
 
 void app_settings_init(void) {
@@ -69,6 +119,43 @@ void app_settings_init(void) {
     uint8_t book_px = 48, book_shake = 0;
     if (nvs_get_u8(h, NVS_KEY_BOOK_PX, &book_px) == ESP_OK) s_book_px = valid_book_px(book_px);
     if (nvs_get_u8(h, NVS_KEY_BOOK_SHAKE, &book_shake) == ESP_OK) s_book_shake = book_shake != 0;
+    int8_t tz = 32;
+    if (nvs_get_i8(h, NVS_KEY_TZ, &tz) == ESP_OK && tz >= -47 && tz <= 47) s_tz_qh = tz;
+    uint8_t lead = 0, margin = 0, guide = 0, tap = 1, night = 0, style = 0;
+    if (nvs_get_u8(h, NVS_KEY_LEAD, &lead) == ESP_OK && lead <= 30) s_book_leading = lead;
+    if (nvs_get_u8(h, NVS_KEY_MARGIN, &margin) == ESP_OK && margin <= 2) s_book_margin = margin;
+    if (nvs_get_u8(h, NVS_KEY_GUIDE, &guide) == ESP_OK && guide <= 2) s_book_guide = guide;
+    uint8_t indent = 1, para = 0, auto_turn = 0;
+    if (nvs_get_u8(h, NVS_KEY_INDENT, &indent) == ESP_OK) s_book_indent = indent != 0;
+    if (nvs_get_u8(h, NVS_KEY_PARA, &para) == ESP_OK && para <= 1) s_book_para = para;
+    if (nvs_get_u8(h, NVS_KEY_AUTO, &auto_turn) == ESP_OK && auto_turn <= 3) s_book_auto = auto_turn;
+    if (nvs_get_u8(h, NVS_KEY_TAP, &tap) == ESP_OK) s_book_tap = tap != 0;
+    if (nvs_get_u8(h, NVS_KEY_NIGHT, &night) == ESP_OK) s_book_night = night != 0;
+    if (nvs_get_u8(h, NVS_KEY_LOCK_STYLE, &style) == ESP_OK && style <= 3) s_lock_style = style;
+    size_t sync_len = sizeof(s_sync_url);
+    if (nvs_get_str(h, NVS_KEY_SYNC_URL, s_sync_url, &sync_len) != ESP_OK) s_sync_url[0] = 0;
+    sync_len = sizeof(s_sync_user);
+    if (nvs_get_str(h, NVS_KEY_SYNC_USER, s_sync_user, &sync_len) != ESP_OK) s_sync_user[0] = 0;
+    sync_len = sizeof(s_sync_key);
+    if (nvs_get_str(h, NVS_KEY_SYNC_KEY, s_sync_key, &sync_len) != ESP_OK) s_sync_key[0] = 0;
+    uint8_t sync_auto = 0;
+    if (nvs_get_u8(h, NVS_KEY_SYNC_AUTO, &sync_auto) == ESP_OK) s_sync_auto = sync_auto != 0;
+    uint8_t align = 0, idle = 0, f_clock = 0, f_batt = 0, f_bar = 1;
+    if (nvs_get_u8(h, NVS_KEY_ALIGN, &align) == ESP_OK && align <= 2) s_book_align = align;
+    if (nvs_get_u8(h, NVS_KEY_F_CLOCK, &f_clock) == ESP_OK) s_footer_clock = f_clock != 0;
+    if (nvs_get_u8(h, NVS_KEY_F_BATT, &f_batt) == ESP_OK) s_footer_battery = f_batt != 0;
+    if (nvs_get_u8(h, NVS_KEY_F_BAR, &f_bar) == ESP_OK) s_footer_bar = f_bar != 0;
+    if (nvs_get_u8(h, NVS_KEY_IDLE, &idle) == ESP_OK &&
+        (idle == 0 || idle == 5 || idle == 10 || idle == 30)) s_idle_lock = idle;
+    uint8_t gc_every = 14;
+    if (nvs_get_u8(h, NVS_KEY_GC_EVERY, &gc_every) == ESP_OK && gc_every_valid(gc_every)) s_gc_every = gc_every;
+    size_t pin_len = sizeof(s_lock_pin);
+    if (nvs_get_str(h, NVS_KEY_LOCK_PIN, s_lock_pin, &pin_len) != ESP_OK) s_lock_pin[0] = '\0';
+    // 旧数据不是 4 位数字就视为未设密码，不阻塞启动。/ Legacy junk other than 4 digits counts as unarmed.
+    size_t pin_size = strnlen(s_lock_pin, sizeof(s_lock_pin));
+    bool pin_ok = pin_size == 0 || pin_size == 4;
+    for (size_t i = 0; pin_ok && i < pin_size; ++i) pin_ok = s_lock_pin[i] >= '0' && s_lock_pin[i] <= '9';
+    if (!pin_ok) s_lock_pin[0] = '\0';
     nvs_close(h);
     ESP_LOGI(
         TAG, "sleep mode %s, font %s",
@@ -171,4 +258,214 @@ void app_settings_set_book_shake(bool on) {
     if (s_book_shake == on) return;
     s_book_shake = on;
     nvs_put_u8(NVS_KEY_BOOK_SHAKE, on ? 1 : 0);
+}
+
+int8_t app_settings_tz_qh(void) {
+    return s_tz_qh;
+}
+
+void app_settings_set_tz_qh(int8_t qh) {
+    if (qh < -47 || qh > 47) return;
+    if (s_tz_qh == qh) return;
+    s_tz_qh = qh;
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS, NVS_READWRITE, &h) != ESP_OK) return;
+    nvs_set_i8(h, NVS_KEY_TZ, qh);
+    nvs_commit(h);
+    nvs_close(h);
+}
+
+static void nvs_put_u8_checked(const char* key, uint8_t value) {
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS, NVS_READWRITE, &h) != ESP_OK) return;
+    nvs_set_u8(h, key, value);
+    nvs_commit(h);
+    nvs_close(h);
+}
+
+uint8_t app_settings_book_leading(void) { return s_book_leading; }
+
+void app_settings_set_book_leading(uint8_t percent) {
+    if (percent > 30) return;
+    if (s_book_leading == percent) return;
+    s_book_leading = percent;
+    nvs_put_u8_checked(NVS_KEY_LEAD, percent);
+}
+
+uint8_t app_settings_book_margin(void) { return s_book_margin; }
+
+void app_settings_set_book_margin(uint8_t tier) {
+    if (tier > 2) return;
+    if (s_book_margin == tier) return;
+    s_book_margin = tier;
+    nvs_put_u8_checked(NVS_KEY_MARGIN, tier);
+}
+
+uint8_t app_settings_book_guide(void) { return s_book_guide; }
+
+void app_settings_set_book_guide(uint8_t style) {
+    if (style > 2) return;
+    if (s_book_guide == style) return;
+    s_book_guide = style;
+    nvs_put_u8_checked(NVS_KEY_GUIDE, style);
+}
+
+bool app_settings_book_indent(void) { return s_book_indent; }
+
+void app_settings_set_book_indent(bool on) {
+    if (s_book_indent == on) return;
+    s_book_indent = on;
+    nvs_put_u8_checked(NVS_KEY_INDENT, on ? 1 : 0);
+}
+
+uint8_t app_settings_book_para(void) { return s_book_para; }
+
+void app_settings_set_book_para(uint8_t tier) {
+    if (tier > 1) return;
+    if (s_book_para == tier) return;
+    s_book_para = tier;
+    nvs_put_u8_checked(NVS_KEY_PARA, tier);
+}
+
+uint8_t app_settings_book_auto(void) { return s_book_auto; }
+
+void app_settings_set_book_auto(uint8_t tier) {
+    if (tier > 3) return;
+    if (s_book_auto == tier) return;
+    s_book_auto = tier;
+    nvs_put_u8_checked(NVS_KEY_AUTO, tier);
+}
+
+bool app_settings_book_tap(void) { return s_book_tap; }
+
+void app_settings_set_book_tap(bool on) {
+    if (s_book_tap == on) return;
+    s_book_tap = on;
+    nvs_put_u8_checked(NVS_KEY_TAP, on ? 1 : 0);
+}
+
+bool app_settings_book_night(void) { return s_book_night; }
+
+void app_settings_set_book_night(bool on) {
+    if (s_book_night == on) return;
+    s_book_night = on;
+    nvs_put_u8_checked(NVS_KEY_NIGHT, on ? 1 : 0);
+}
+
+uint8_t app_settings_lock_style(void) { return s_lock_style; }
+
+void app_settings_set_lock_style(uint8_t style) {
+    if (style > 3) return;
+    if (s_lock_style == style) return;
+    s_lock_style = style;
+    nvs_put_u8_checked(NVS_KEY_LOCK_STYLE, style);
+}
+
+bool app_settings_lock_pin(char* out, size_t cap) {
+    if (out && cap) {
+        strncpy(out, s_lock_pin, cap - 1);
+        out[cap - 1] = '\0';
+    }
+    return s_lock_pin[0] != '\0';
+}
+
+static void nvs_put_str(const char* key, const char* value) {
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS, NVS_READWRITE, &h) != ESP_OK) return;
+    nvs_set_str(h, key, value);
+    nvs_commit(h);
+    nvs_close(h);
+}
+
+const char* app_settings_sync_url(void) { return s_sync_url; }
+
+void app_settings_set_sync_url(const char* url) {
+    snprintf(s_sync_url, sizeof(s_sync_url), "%s", url ? url : "");
+    nvs_put_str(NVS_KEY_SYNC_URL, s_sync_url);
+}
+
+const char* app_settings_sync_user(void) { return s_sync_user; }
+
+void app_settings_set_sync_user(const char* user) {
+    snprintf(s_sync_user, sizeof(s_sync_user), "%s", user ? user : "");
+    nvs_put_str(NVS_KEY_SYNC_USER, s_sync_user);
+}
+
+const char* app_settings_sync_key(void) { return s_sync_key; }
+
+void app_settings_set_sync_key(const char* key) {
+    snprintf(s_sync_key, sizeof(s_sync_key), "%s", key ? key : "");
+    nvs_put_str(NVS_KEY_SYNC_KEY, s_sync_key);
+}
+
+uint8_t app_settings_book_align(void) { return s_book_align; }
+
+void app_settings_set_book_align(uint8_t align) {
+    if (align > 2) return;
+    if (s_book_align == align) return;
+    s_book_align = align;
+    nvs_put_u8_checked(NVS_KEY_ALIGN, align);
+}
+
+bool app_settings_footer_clock(void) { return s_footer_clock; }
+
+void app_settings_set_footer_clock(bool on) {
+    if (s_footer_clock == on) return;
+    s_footer_clock = on;
+    nvs_put_u8_checked(NVS_KEY_F_CLOCK, on ? 1 : 0);
+}
+
+bool app_settings_footer_battery(void) { return s_footer_battery; }
+
+void app_settings_set_footer_battery(bool on) {
+    if (s_footer_battery == on) return;
+    s_footer_battery = on;
+    nvs_put_u8_checked(NVS_KEY_F_BATT, on ? 1 : 0);
+}
+
+bool app_settings_footer_bar(void) { return s_footer_bar; }
+
+void app_settings_set_footer_bar(bool on) {
+    if (s_footer_bar == on) return;
+    s_footer_bar = on;
+    nvs_put_u8_checked(NVS_KEY_F_BAR, on ? 1 : 0);
+}
+
+uint8_t app_settings_idle_lock_min(void) { return s_idle_lock; }
+
+void app_settings_set_idle_lock_min(uint8_t minutes) {
+    if (minutes != 0 && minutes != 5 && minutes != 10 && minutes != 30) return;
+    if (s_idle_lock == minutes) return;
+    s_idle_lock = minutes;
+    nvs_put_u8_checked(NVS_KEY_IDLE, minutes);
+}
+
+uint8_t app_settings_gc_every(void) { return s_gc_every; }
+
+void app_settings_set_gc_every(uint8_t every) {
+    if (!gc_every_valid(every) || s_gc_every == every) return;
+    s_gc_every = every;
+    nvs_put_u8_checked(NVS_KEY_GC_EVERY, every);
+}
+
+bool app_settings_sync_auto(void) { return s_sync_auto; }
+
+void app_settings_set_sync_auto(bool on) {
+    if (s_sync_auto == on) return;
+    s_sync_auto = on;
+    nvs_put_u8_checked(NVS_KEY_SYNC_AUTO, on ? 1 : 0);
+}
+
+bool app_settings_set_lock_pin(const char* pin) {
+    size_t len = pin ? strnlen(pin, 8) : 0;
+    if (len != 0 && len != 4) return false;
+    for (size_t i = 0; i < len; ++i)
+        if (pin[i] < '0' || pin[i] > '9') return false;
+    snprintf(s_lock_pin, sizeof(s_lock_pin), "%s", pin ? pin : "");
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS, NVS_READWRITE, &h) != ESP_OK) return false;
+    nvs_set_str(h, NVS_KEY_LOCK_PIN, s_lock_pin);
+    esp_err_t err = nvs_commit(h);
+    nvs_close(h);
+    return err == ESP_OK;
 }

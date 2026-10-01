@@ -32,6 +32,16 @@ static int s_px;
 static size_t s_scan;
 static int64_t s_used;
 static bool s_complete;
+// 行距加成与夜间反色是模块状态：build 与 draw 共用，调用方在 build 前设置。
+// Leading bonus and night inversion are module state shared by build and draw; callers set them before building.
+static int s_leading_pct;
+static bool s_night;
+// 首行缩进/段落间距影响 build 与 draw；辅助线只影响 draw，三者都在 build 前设置。
+// Indent and paragraph gap affect builds and draws; the guide rule is draw-only; set all before building.
+static bool s_indent_on = true;
+static int s_para_tier;
+static int s_guide_style;
+static int s_align;
 
 static const blk_t* s_blocks;
 static size_t s_block_count;
@@ -59,18 +69,19 @@ static void image_size(const blk_t* block, int* width, int* height) {
 static int row_height(const blk_t* block, int px) {
     if (block && block->image) { int width, height; image_size(block, &width, &height); return height; }
     if (block && block->image_src) return 2 * s_px < s_rect.height ? 2 * s_px : s_rect.height;
-    return px + px / 2;
+    return px + px / 2 + px * s_leading_pct / 100;
 }
 static EpdRect placeholder_rect(EpdRect body, int top, int height) {
     int pad = body.width > 24 && height > 16 ? 8 : 0;
     return (EpdRect){body.x + pad, body.y + top + pad / 2, body.width - 2 * pad, height - pad};
 }
 static void draw_placeholder(uint8_t* fb, const blk_t* block, EpdRect rect) {
+    uint8_t fg = s_night ? 255 : 0;
     for (int x = rect.x; x < rect.x + rect.width; ++x) {
-        epd_draw_pixel(x, rect.y, 0, fb); epd_draw_pixel(x, rect.y + rect.height - 1, 0, fb);
+        epd_draw_pixel(x, rect.y, fg, fb); epd_draw_pixel(x, rect.y + rect.height - 1, fg, fb);
     }
     for (int y = rect.y; y < rect.y + rect.height; ++y) {
-        epd_draw_pixel(rect.x, y, 0, fb); epd_draw_pixel(rect.x + rect.width - 1, y, 0, fb);
+        epd_draw_pixel(rect.x, y, fg, fb); epd_draw_pixel(rect.x + rect.width - 1, y, fg, fb);
     }
     int px = s_px < 32 ? s_px : 32;
     bool repeat = block->image_repeated && !block->image_title;
@@ -79,13 +90,13 @@ static void draw_placeholder(uint8_t* fb, const blk_t* block, EpdRect rect) {
     int lines = repeat ? 2 : 1;
     int top = rect.y + (rect.height - lines * (px + 4)) / 2;
     ttf_draw_text_px(fb, rect.x + rect.width / 2, top + ttf_ascender_px(px), px,
-                     label, EPD_DRAW_ALIGN_CENTER, 0, 15);
+                     label, EPD_DRAW_ALIGN_CENTER, s_night ? 15 : 0, s_night ? 0 : 15);
     if (repeat) {
         char origin[64]; snprintf(origin, sizeof(origin), "已读最早：第 %u 节", (unsigned)block->image_first_chapter + 1);
         int small = px < 24 ? px : 24;
         if (ttf_text_width_px(small, origin) <= rect.width - 16)
             ttf_draw_text_px(fb, rect.x + rect.width / 2, top + px + 4 + ttf_ascender_px(small), small,
-                             origin, EPD_DRAW_ALIGN_CENTER, 0, 15);
+                             origin, EPD_DRAW_ALIGN_CENTER, s_night ? 15 : 0, s_night ? 0 : 15);
     }
 }
 // 拒绝截断、过长编码、代理项和嵌入零字节。/ Reject truncation, overlong encodings, surrogates and embedded NUL.
@@ -131,11 +142,23 @@ static bool append_page(size_t off) {
     return true;
 }
 
+// 段首（前一字节是换行或章节开头）缩进两字符，标题不缩进。/ Paragraph starts (preceded by a newline or chapter head) indent two ems; headings do not.
+static int line_indent(size_t off, bool heading) {
+    if (!s_indent_on || heading) return 0;
+    if (!off) return 2 * s_px;
+    char prev = s_text[off - 1];
+    return prev == '\n' || prev == '\r' ? 2 * s_px : 0;
+}
+// 段落间距：标题恒为半行，正文标准三分之一行、加大二分之一行。/ Paragraph gap: half a line for headings; body thirds standard and halves relaxed.
+static int para_gap(int line_height, bool heading) {
+    return line_height / (heading ? 2 : s_para_tier ? 2 : 3);
+}
 // 折行时保留原文字节位置；CRLF 算一个段落边界。/ Preserve source offsets while wrapping; CRLF is one paragraph boundary.
 static bool take_line(size_t off, size_t* next, bool* paragraph_end, int* px, bool* heading) {
     const blk_t* block = block_at(off);
     *heading = block && block->heading;
     *px = s_px + (*heading ? 8 : 0);
+    int64_t budget = s_rect.width - line_indent(off, *heading);
     size_t limit = block ? block->offset + block->len : s_len;
     size_t end = off;
     int64_t width = 0;
@@ -156,7 +179,7 @@ static bool take_line(size_t off, size_t* next, bool* paragraph_end, int* px, bo
         glyph[n] = 0;
         int64_t candidate = width + ttf_text_width_px(*px, glyph);
         if (candidate < 0) return false;
-        if (candidate > s_rect.width) {
+        if (candidate > budget) {
             if (end == off) return false;
             break;
         }
@@ -241,7 +264,7 @@ bool book_layout_extend(size_t pages) {
             if (book_layout_page_count() >= target) return true;
         }
         s_used += line_height;
-        if (paragraph_end) s_used += line_height / (heading ? 2 : 3);
+        if (paragraph_end) s_used += para_gap(line_height, heading);
         s_scan = next;
     }
     s_complete = true;
@@ -272,6 +295,9 @@ void book_layout_draw_page(uint8_t* fb, size_t page, EpdRect rect, int px) {
     if (!fb || page >= book_layout_page_count() || px != s_px || rect.width != s_rect.width ||
         rect.height != s_rect.height || rect.x < 0 || rect.y < 0 ||
         rect.x > INT_MAX - rect.width || rect.y > INT_MAX - rect.height) return;
+    // 夜间模式整块反色：黑底、白字、图片灰度翻转。/ Night inverts the whole body: black ground, white text, flipped image grays.
+    uint8_t fg = s_night ? 15 : 0, bg = s_night ? 0 : 15;
+    if (s_night) epd_fill_rect(rect, 0, fb);
     size_t off = s_pages[page];
     size_t end = page + 1 < s_count ? s_pages[page + 1] : s_len;
     int64_t used = 0;
@@ -290,16 +316,67 @@ void book_layout_draw_page(uint8_t* fb, size_t page, EpdRect rect, int px) {
             for (int y = 0; y < line_height; ++y) for (int x = 0; x < image_width; ++x) {
                 size_t src = (size_t)((int64_t)y * block->image_height / line_height) * block->image_width +
                              (size_t)((int64_t)x * block->image_width / image_width);
-                epd_draw_pixel(left + x, rect.y + (int)used + y, block->image[src], fb);
+                epd_draw_pixel(left + x, rect.y + (int)used + y, s_night ? 255 - block->image[src] : block->image[src], fb);
             }
         } else if (block && block->image_src) {
             draw_placeholder(fb, block, placeholder_rect(rect, (int)used, line_height));
         } else if (s_line[0]) {
-            ttf_draw_text_px(fb, rect.x, rect.y + (int)used + ttf_ascender_px(line_px), line_px,
-                             s_line, EPD_DRAW_ALIGN_LEFT, 0, 15);
+            int indent = line_indent(off, heading);
+            int64_t width = ttf_text_width_px(line_px, s_line);
+            // 对齐：居中整行居中；两端对齐只作用于段中行（段末行、标题与图片行保持左对齐）。
+            // Alignment: center centers the whole line; justification covers mid-paragraph lines only.
+            if (s_align == 1) {
+                ttf_draw_text_px(fb, rect.x + indent + (rect.width - indent - (int)width) / 2,
+                                 rect.y + (int)used + ttf_ascender_px(line_px), line_px,
+                                 s_line, EPD_DRAW_ALIGN_LEFT, fg, bg);
+            } else if (s_align == 2 && !paragraph_end && !heading && width < rect.width - indent) {
+                // 两端对齐：逐字绘制并在字隙均摊余量；余量过小走整行绘制。
+                // Justified: draw glyph by glyph spreading the slack; tiny slack keeps whole-line draws.
+                int slack = rect.width - indent - (int)width;
+                if (slack < line_px / 2) {
+                    ttf_draw_text_px(fb, rect.x + indent, rect.y + (int)used + ttf_ascender_px(line_px),
+                                     line_px, s_line, EPD_DRAW_ALIGN_LEFT, fg, bg);
+                } else {
+                    size_t glyphs = 0;
+                    for (const char* q = s_line; *q; ++glyphs) {
+                        size_t n = codepoint_size(q, strlen(q));
+                        if (!n) break;
+                        q += n;
+                    }
+                    int per_gap = glyphs > 1 ? slack / (int)(glyphs - 1) : 0;
+                    int extra = glyphs > 1 ? slack % (int)(glyphs - 1) : 0;
+                    int x = rect.x + indent;
+                    for (const char* q = s_line; *q;) {
+                        size_t n = codepoint_size(q, strlen(q));
+                        if (!n) break;
+                        char glyph[5];
+                        memcpy(glyph, q, n);
+                        glyph[n] = 0;
+                        ttf_draw_text_px(fb, x, rect.y + (int)used + ttf_ascender_px(line_px), line_px,
+                                         glyph, EPD_DRAW_ALIGN_LEFT, fg, bg);
+                        x += (int)ttf_text_width_px(line_px, glyph) + per_gap + (extra-- > 0 ? 1 : 0);
+                        q += n;
+                    }
+                }
+            } else {
+                ttf_draw_text_px(fb, rect.x + indent, rect.y + (int)used + ttf_ascender_px(line_px), line_px,
+                                 s_line, EPD_DRAW_ALIGN_LEFT, fg, bg);
+            }
+            // 行辅助线：每行文字下方一条横线，实线整条、虚线 8/6 分段，随夜间换灰。
+            // Guide rule: one rule under each text line, solid whole or dashed 8/6 segments, graying with night.
+            if (s_guide_style) {
+                int y = rect.y + (int)used + line_px + (line_height - line_px) / 2 - 1;
+                uint8_t gray = s_night ? 0x50 : 0xB0;
+                if (s_guide_style == 1) {
+                    epd_fill_rect((EpdRect){rect.x, y, rect.width, 2}, gray, fb);
+                } else {
+                    for (int x = 0; x + 8 <= rect.width; x += 14)
+                        epd_fill_rect((EpdRect){rect.x + x, y, 8, 2}, gray, fb);
+                }
+            }
         }
         used += line_height;
-        if (paragraph_end) used += line_height / (heading ? 2 : 3);
+        if (paragraph_end) used += para_gap(line_height, heading);
         off = next;
     }
 }
@@ -323,8 +400,34 @@ size_t book_layout_image_at(size_t page, EpdRect rect, int x, int y, EpdRect* hi
             }
         }
         used += height;
-        if (paragraph_end) used += height / (heading ? 2 : 3);
+        if (paragraph_end) used += para_gap(height, heading);
         off = next;
     }
     return SIZE_MAX;
+}
+
+// 行距加成作用于后续 build 与 draw；夜间反色只影响 draw，二者都须在 build 前设置。
+// The leading bonus applies to later builds and draws; night inversion affects draws only; set both before building.
+void book_layout_set_leading(int percent) {
+    s_leading_pct = percent < 0 || percent > 60 ? 0 : percent;
+}
+
+void book_layout_set_night(bool on) {
+    s_night = on;
+}
+
+void book_layout_set_indent(bool on) {
+    s_indent_on = on;
+}
+
+void book_layout_set_paragraph(int tier) {
+    s_para_tier = tier == 1 ? 1 : 0;
+}
+
+void book_layout_set_guide(int style) {
+    s_guide_style = style == 1 || style == 2 ? style : 0;
+}
+
+void book_layout_set_align(int align) {
+    s_align = align == 1 || align == 2 ? align : 0;
 }

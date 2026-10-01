@@ -17,6 +17,7 @@
 #include "epd_highlevel.h"
 #include "epdiy.h"
 #include "esp_log.h"
+#include "os_crash.h"
 #include "pmu_selftest.h"
 #include "read_pico_board.h"
 #include "read_pico_init.h"
@@ -24,6 +25,7 @@
 #include "settings.h"
 #include "ttf_font.h"
 #include "ui_kit.h"
+#include "sleep.h"
 #include "vcom_setup.h"
 
 static const char* TAG = "read_pico";
@@ -68,6 +70,9 @@ void app_main(void) {
     read_pico_handle_t hw;
     if (read_pico_init(&hw) != ESP_OK) return;
     app_settings_init();
+    // 先记上次复位原因；异常复位在锁屏挑战前写入内置存储日志。
+    // Record the last reset reason first; abnormal ones reach the internal log before the lock challenge.
+    os_crash_boot_check();
     const bool vcom_ok = resolve_vcom_at_boot();
     pmu_selftest_bind(hw.sensor);
     const bool st_resume = pmu_selftest_boot_resume();
@@ -94,6 +99,13 @@ void app_main(void) {
     if (hw.pmu_ready && !vcom_ok) {
         vcom_setup_run(&hl, framebuffer, hw.touch);
     }
+
+    // 密码挑战可能无限阻塞，崩溃日志先落盘。/ The PIN challenge may block forever; flush the crash log first.
+    os_crash_flush();
+
+    // 设有锁屏密码时先阻塞校验；主循环、菜单与页面在通过前都不可达。
+    // With a lock PIN armed, block here first; the loop, menus and pages stay unreachable until it passes.
+    app_lock_pin_challenge(&hl, hw.touch);
 
     app_loop_run(&(app_loop_config_t){
         .hl = &hl,

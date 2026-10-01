@@ -38,8 +38,8 @@ extern "C" {
 #define UI_KEY_2 1
 #define UI_KEY_3 2
 
-/// 底栏最右那格的菜单把手，箭头向上表示能打开菜单。所有页都要画。
-/// Menu handle in the rightmost bar cell; an up arrow means the menu can open. Every page draws it.
+/// 底栏最右菜单把手：导航符号打开，关闭符号返回。所有页保留触区。
+/// Rightmost handle: navigation glyph opens, close glyph returns. Every page retains its hit area.
 void ui_draw_menu_handle(uint8_t* framebuffer, bool menu_open);
 bool ui_menu_handle_hit_test(uint16_t x, uint16_t y);
 

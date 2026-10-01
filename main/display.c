@@ -17,6 +17,7 @@
 #include "e0470_epaper_waveform.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "settings.h"
 
 static const char* TAG = "read_pico";
 static bool s_bulk_io;
@@ -63,28 +64,29 @@ static void use_scan_for(const EpdWaveform* waveform, enum EpdDrawMode mode) {
 static int s_soft_refreshes;
 
 // 所有按 fb 刷屏的出口都经这里。GL16 必须全像素（白底补 1 帧靠它打到）。
-// 差分刷攒够 APP_GC16_EVERY 次就把这一次升为全像素 GC16：区域、fb 都不变，只换模式，
-// 屏上内容仍由 fb 决定，不会丢；全像素是为了让未变化像素也过一遍 LUT，否则压不掉灰底。
-// 跟随 DU 波形只有 DU 一张表，不计数也不升级。
+// 差分刷攒够设置里的清残影周期就把这一次升为全像素 GC16：区域、fb 都不变，
+// 只换模式，屏上内容仍由 fb 决定，不会丢；全像素是为了让未变化像素也过一遍
+// LUT，否则压不掉灰底。跟随 DU 波形只有 DU 一张表，不计数也不升级。
 // Every fb present goes through here. GL16 must be full-pixel (the extra white
-// frame depends on that). After APP_GC16_EVERY soft updates, this one is
-// promoted to full-pixel GC16: area and fb stay the same, only the mode
-// changes, so content is not lost. Full-pixel is so unchanged pixels also run
-// the LUT; otherwise the gray floor will not clear. FOLLOW DU has only a DU
-// table and does not count or promote.
+// frame depends on that). After the configured ghost-cleanup period of soft
+// updates, this one is promoted to full-pixel GC16: area and fb stay the same,
+// only the mode changes, so content is not lost. Full-pixel is so unchanged
+// pixels also run the LUT; otherwise the gray floor will not clear. FOLLOW DU
+// has only a DU table and does not count or promote.
 static enum EpdDrawError hl_update(
     EpdiyHighlevelState* hl, const EpdWaveform* waveform, enum EpdDrawMode mode, bool full,
     const EpdRect* area
 ) {
     full = full || (mode & 0xF) == MODE_GL16;
     if (waveform != &E0470_FOLLOW_WAVEFORM) {
+        unsigned every = app_settings_gc_every();
         if ((mode & 0xF) == MODE_GC16) {
             s_soft_refreshes = 0;
-        } else if (APP_GC16_EVERY > 0 && ++s_soft_refreshes >= APP_GC16_EVERY) {
+        } else if (every > 0 && (unsigned)++s_soft_refreshes >= every) {
             s_soft_refreshes = 0;
             mode = (enum EpdDrawMode)((mode & ~0xF) | MODE_GC16);
             full = true;
-            ESP_LOGI(TAG, "promote to GC16 after %d soft refreshes", APP_GC16_EVERY);
+            ESP_LOGI(TAG, "promote to GC16 after %u soft refreshes", every);
         }
     }
     if (area != NULL) {

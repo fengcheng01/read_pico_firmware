@@ -18,6 +18,9 @@
 static bool sd_mounted;
 static bool sd_invalid_present;
 static int mount_calls, mount_error, mkdir_error, is_directory = 1, fat_error;
+static bool expected_format = true;
+static int mkdir_calls;
+static int root_stat_error;
 static int sd_mkdir_error;
 static int file_mode = S_IFREG, file_error, unlink_error, forget_error, unlinks, forgets;
 static bool sd_exists = true, flash_exists = true;
@@ -25,12 +28,14 @@ static bool backup_exists;
 static int backup_mode = S_IFREG, backup_unlink_error, rename_error;
 static char forgotten[BOOK_STORE_PATH_MAX];
 static int mock_mkdir(const char* path, mode_t mode) {
+    ++mkdir_calls;
     (void)mode;
     errno = sd_mkdir_error && !strncmp(path, "/sdcard/", 8) ? sd_mkdir_error : mkdir_error;
     return errno ? -1 : 0;
 }
 static int mock_stat(const char* path, struct stat* out) {
     if (!strcmp(path, "/sdcard/books") || !strcmp(path, "/flash/books")) {
+        if (root_stat_error) { errno = root_stat_error; return -1; }
         out->st_mode = is_directory ? S_IFDIR : S_IFREG; return 0;
     }
     if (strstr(path, ".rename-backup")) {
@@ -79,7 +84,7 @@ esp_err_t read_pico_sd_get_info(read_pico_sd_info_t* out) {
 esp_err_t esp_vfs_fat_spiflash_mount_rw_wl(const char* path, const char* label,
     const esp_vfs_fat_mount_config_t* config, wl_handle_t* out) {
     assert(!strcmp(path, "/flash") && !strcmp(label, "storage"));
-    assert(config->format_if_mount_failed && config->max_files == 4 && config->allocation_unit_size == 4096);
+    assert(config->format_if_mount_failed == expected_format && config->max_files == 4 && config->allocation_unit_size == 4096);
     ++mount_calls; if (!mount_error) *out = 1; return mount_error;
 }
 esp_err_t esp_vfs_fat_info(const char* path, uint64_t* total, uint64_t* free_bytes) {
@@ -91,6 +96,20 @@ int main(void) {
     book_store_root_t roots[2], upload;
     int n = -1;
     assert(!book_store_flash_ready());
+    // 首页失败必须保留介质，不格式化或创建目录。/ Home failures must preserve media without formatting or creating directories.
+    expected_format = false; mount_error = ESP_FAIL;
+    assert(book_store_read_roots(NULL, &n) == ESP_ERR_INVALID_ARG);
+    assert(book_store_read_roots(roots, &n) == ESP_FAIL && n == 0 && !mkdir_calls);
+    sd_mounted = true;
+    assert(book_store_read_roots(roots, &n) == ESP_OK && n == 1 && book_store_roots_degraded() && !mkdir_calls);
+    mount_error = 0;
+    assert(book_store_read_roots(roots, &n) == ESP_OK && n == 2 && !book_store_roots_degraded() && !mkdir_calls);
+    root_stat_error = ENOENT;
+    assert(book_store_read_roots(roots, &n) == ESP_OK && n == 0 && !book_store_roots_degraded() && !mkdir_calls);
+    root_stat_error = EACCES;
+    assert(book_store_read_roots(roots, &n) == ESP_OK && n == 0 && book_store_roots_degraded() && !mkdir_calls);
+    root_stat_error = 0;
+    s_wl = WL_INVALID_HANDLE; sd_mounted = false; expected_format = true;
     assert(book_store_roots(NULL, &n) == ESP_ERR_INVALID_ARG);
     mount_error = ESP_FAIL;
     assert(book_store_roots(roots, &n) == ESP_FAIL && n == 0);

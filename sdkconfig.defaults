@@ -47,3 +47,7 @@ CONFIG_ESP_WIFI_IRAM_OPT=n
 CONFIG_ESP_WIFI_RX_IRAM_OPT=n
 CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024
 CONFIG_HTTPD_MAX_URI_LEN=1024
+# SNTP 双服务器（阿里云 + pool）
+CONFIG_LWIP_SNTP_MAX_SERVERS=2
+# kosync 协议用 MD5 做密码哈希与文档标识 / kosync uses MD5 for password hashing and doc identity
+CONFIG_MBEDTLS_MD5_C=y
