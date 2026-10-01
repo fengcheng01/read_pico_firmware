@@ -29,6 +29,8 @@ No second-device driver or flashable image is supplied without developer documen
 Agent-facing layout, `app_desc_t` contract, glossary and comment style are in
 [AGENTS.md](AGENTS.md).
 
+The refined toolbar exposes TOC/bookmarks, Add Bookmark, a size subpanel, More Settings, Clean and Library. Settings group typography and turns/display. Bookmark deletion requires confirmation. Sync runs in a worker, confirms pulled positions before applying, excludes uploads/deletions during sync and cancels on exit. Home avoids a permanent font notice; the reader offers a full-font entry only when glyphs are missing.
+
 ## Documentation & More Devices
 
 - [Official Read Pico documentation](https://dot.mindreset.tech/docs/read_0)
@@ -113,8 +115,8 @@ Global navigation lists only four roots; existing features below are grouped und
 | IOE | Port-0 levels and interrupts, touch-reset pulse from the bottom bar |
 | Device | Device probes and command ACKs; power-cut items are recorded in the backend only |
 | Books | UTF-8 / GBK TXT and EPUB from TF or internal storage, chapters, font size and per-book progress; swipe to turn, hold text for TOC and hold a shelf row for details, progress reset or confirmed deletion; filter storage sources, sort by name or recent reading, and search by pinyin, initials or English; single-book actions use a popup, while management supports batch selection, progress reset/deletion and rescan; experimental shake-to-turn defaults off. EPUB navigation supports NCX and nav documents. |
-| Reader typography | The toolbar Typography menu: font, leading, margins, first-line indent, paragraph gap, the per-line guide rule (solid/dashed), alignment (left/center/justified), tap zones, auto page turn and the ghost-cleanup period (off/3/5/10/14/20/30); Night inverts the body |
-| Bookmarks & jumping | TOC tabs for chapters, bookmarks (16 per book, tap to jump, long-press to delete, cleaned with deletion) and 10%–100% percent jumps |
+| Reader typography | The toolbar More Settings menu: font, leading, margins, first-line indent, paragraph gap, the per-line guide rule (solid/dashed), alignment (left/center/justified), tap zones, auto page turn and the ghost-cleanup period (off/3/5/10/14/20/30); Night inverts the body |
+| Bookmarks & jumping | TOC tabs for chapters, bookmarks (16 per book, tap to jump, long-press to confirm deletion, cleaned with deletion) and 10%–100% percent jumps |
 | End-of-book picks | Paging past the last page suggests up to three same-source books (recency first) |
 | Reader status bar | Footer clock/battery percent/progress bar toggles; Today always shows battery |
 | Idle lock | Auto-lock after off/5/10/30 idle minutes; auto page turns defer it |

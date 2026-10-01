@@ -11,6 +11,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #include "epdiy.h"
@@ -59,6 +60,8 @@ const ttf_font_item_t* ttf_font_item(int index);
 const char* ttf_font_path(void);
 const char* ttf_font_display_name(void);
 bool ttf_font_ready(void);
+/// 仅检查驻留 cmap，不读字形轮廓；输入长度有界。/ Check resident cmap only, without outline IO, over bounded input.
+bool ttf_font_supports_text(const char* text, size_t len);
 int ttf_ascender(int size);
 int ttf_ascender_px(int pixel_height);
 

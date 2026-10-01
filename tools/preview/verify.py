@@ -239,21 +239,23 @@ class PreviewTests(unittest.TestCase):
         self.preview.command("tap 136 1038")  # 排版 / typography
         typography = self.preview.png
         self.assertNotEqual(toolbar, typography)
-        self.preview.command("tap 300 292")  # 行距 / leading（菜单保持打开）
+        self.preview.command("tap 300 452")  # 行距 / leading（菜单保持打开）
         relaxed = self.preview.png
         self.assertNotEqual(typography, relaxed)
-        self.preview.command("tap 300 580")  # 行辅助线 / guide rule (row5 y546-612)
+        self.preview.command("tap 300 900")  # 行辅助线 / guide rule (row5 y546-612)
         solid = self.preview.png
         self.assertNotEqual(relaxed, solid)
         self.preview.command("tap 424 1140")  # 返回阅读（底栏）/ return via the bottom bar
         reader = self.preview.png
         self.assertNotEqual(solid, reader)
         self.preview.command("key 1")
+        self.preview.command("tap 136 1038")
+        self.preview.command("tap 480 224")  # 翻页与显示 / turns and display
         normal = self.preview.png
-        self.preview.command("tap 342 1038")
+        self.preview.command("tap 300 676")  # 夜间开关 / night switch
         night = self.preview.png
         self.assertNotEqual(normal, night)
-        self.preview.command("tap 342 1038")
+        self.preview.command("tap 300 676")
         self.assertEqual(normal, self.preview.png)
 
 
@@ -286,13 +288,17 @@ class PreviewTests(unittest.TestCase):
         self.assertNotEqual(base, self.preview.png)
         self.preview.command("fixture 1")
         self.preview.command("tap 220 1140")
+        self.settle()
         self.preview.command("tap 300 400")
+        self.settle()
         self.preview.command("key 1")
         self.preview.command("tap 136 1038")
         menu = self.preview.png
-        self.preview.command("tap 300 690")
+        self.preview.command("tap 480 224")
+        menu = self.preview.png
+        self.preview.command("tap 300 340")
         self.assertNotEqual(menu, self.preview.png)
-        self.preview.command("tap 300 690")
+        self.preview.command("tap 300 340")
         self.assertNotEqual(menu, self.preview.png)
 
     def test_transfer_stop_returns_to_origin(self):
@@ -356,6 +362,12 @@ class PreviewTests(unittest.TestCase):
         listed = self.preview.png
         self.assertNotEqual(reader, listed)
         self.preview.command("hold 342 381")  # 长按第一条书签 / long-press the bookmark
+        confirmation = self.preview.png
+        self.assertNotEqual(listed, confirmation)
+        self.preview.command("tap 165 660")  # 保留书签 / keep it
+        self.assertEqual(listed, self.preview.png)
+        self.preview.command("hold 342 381")
+        self.preview.command("tap 475 660")  # 确认删除 / confirm removal
         removed = self.preview.png
         self.assertNotEqual(listed, removed)
 
@@ -429,14 +441,18 @@ class PreviewTests(unittest.TestCase):
         self.preview.command("key 1")  # 中键 = 工具条 / middle key opens the toolbar
         toolbar = self.preview.png
         self.assertNotEqual(body, toolbar)
+        self.preview.command("tap 544 944")  # 字号子面板 / size subpanel
+        size_panel = self.preview.png
+        self.assertNotEqual(toolbar, size_panel)
         self.preview.command("tap 544 944")  # 字号 + / size up
-        self.assertNotEqual(toolbar, self.preview.png)
         grown = self.preview.png
-        self.preview.command("tap 342 1038")  # 夜间 开 / night on
+        self.assertNotEqual(size_panel, grown)
+        self.preview.command("tap 136 944")  # 返回工具 / back to tools
+        tools = self.preview.png
+        self.preview.command("tap 342 1038")  # 清除残影 / full refresh
+        self.assertEqual(self.preview.state["refresh_mode"], 2)
+        self.assertEqual(tools, self.preview.png)
         night = self.preview.png
-        self.assertNotEqual(grown, night)
-        self.preview.command("tap 342 1038")  # 夜间 关 / night off
-        self.assertEqual(grown, self.preview.png)
         self.preview.command("tap 544 1040")  # 书架 / shelf
         shelf = self.preview.png
         self.assertNotEqual(night, shelf)

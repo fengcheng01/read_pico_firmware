@@ -78,3 +78,9 @@ esp_err_t read_pico_transfer_forget_wifi(void);
 esp_err_t read_pico_transfer_scan_wifi(read_pico_transfer_network_t out[READ_PICO_TRANSFER_SCAN_MAX], size_t *count);
 /// 停服后保存设备输入的凭据，不自动连接；密码校验与网页相同。/ Save device-entered credentials while stopped without connecting; validation matches the webpage.
 esp_err_t read_pico_transfer_save_wifi(const char *ssid, const char *password);
+
+/// UI 获取文件/进度互斥会话；上传或删除中立即返回 false，不等待。
+/// UI claims an exclusive file/progress session; return false immediately during upload/deletion.
+bool read_pico_transfer_claim_sync(void);
+/// 后台请求已收齐且 UI 完成进度操作后释放。/ Release after joining network work and finishing UI progress operations.
+void read_pico_transfer_release_sync(void);

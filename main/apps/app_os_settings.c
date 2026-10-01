@@ -28,7 +28,8 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
     for (unsigned i = 0; i < sizeof(items) / sizeof(items[0]); ++i) {
         EpdRect r = row_rect(i);
         ui_text(fb, r.x, r.y + 10, 36, items[i].title, EPD_DRAW_ALIGN_LEFT, false);
-        ui_text(fb, r.x, r.y + 64, 24, items[i].detail, EPD_DRAW_ALIGN_LEFT, false);
+        bool disabled = items[i].id == OS_APP_TRANSFER && os_device()->transfer != OS_CAP_PRESENT;
+        ui_text(fb, r.x, r.y + 64, 24, disabled ? "此设备暂不支持连接与传书" : items[i].detail, EPD_DRAW_ALIGN_LEFT, false);
         ui_text_vc(fb, r.x + r.width - 8, r.y + 36, 36, "›", EPD_DRAW_ALIGN_RIGHT, false);
         ui_hairline(fb, r.y + r.height, r.x, r.width, UI_GRAY_LIGHT);
     }

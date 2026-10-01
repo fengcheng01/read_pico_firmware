@@ -113,3 +113,7 @@ static inline void ui_wifi_qr_draw(uint8_t* fb,EpdRect r) {(void)fb;(void)r;}
 static inline int read_pico_transfer_forget_wifi(void) { ++test_forget_count; if (!test_forget_error) test_configured=false; return test_forget_error; }
 
 static inline int book_progress_forget(const char* path) {(void)path;return ESP_OK;}
+
+static bool test_sync_claimed;
+static inline bool read_pico_transfer_claim_sync(void) { if (test_busy || test_sync_claimed) return false; test_sync_claimed=true; return true; }
+static inline void read_pico_transfer_release_sync(void) { test_sync_claimed=false; }

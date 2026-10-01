@@ -24,7 +24,7 @@
 #include "ui_menu.h"
 #include "ui_product.h"
 
-static EpdRect back_rect(void) { return (EpdRect){470, 68, 174, 68}; }
+static EpdRect back_rect(void) { return ui_product_back_rect(); }
 static EpdRect mode_rect(int i) { return (EpdRect){UI_MARGIN, 240 + i * 108, ui_content_width(), 96}; }
 static EpdRect pickup_rect(void) { return (EpdRect){UI_MARGIN, 636, ui_content_width(), 96}; }
 static EpdRect style_rect(int i) { return ui_row_rect(i, 4, 810, 84); }

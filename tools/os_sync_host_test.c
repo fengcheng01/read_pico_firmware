@@ -8,6 +8,7 @@
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
+#include <math.h>
 
 static char s_method[8], s_url[224], s_user[64], s_key[64], s_body[288], s_type[40];
 static const char* s_resp;
@@ -112,6 +113,25 @@ int main(void) {
     assert(os_sync_pull(&cfg, "0123456789abcdef0123456789abcdef", remote, sizeof(remote), &percent) == OS_SYNC_NOT_FOUND);
     s_status = 500;
     assert(os_sync_pull(&cfg, "0123456789abcdef0123456789abcdef", remote, sizeof(remote), &percent) == OS_SYNC_SERVER);
+
+    s_status = 200;
+    s_resp = "{\"progress\": \"a\\n\\u4e66\", \"percentage\": 0.5}";
+    assert(os_sync_pull(&cfg, "0123456789abcdef0123456789abcdef", remote, sizeof(remote), &percent) == OS_SYNC_OK);
+    assert(!strcmp(remote, "a\n书") && percent == 0.5f);
+    const char* invalid[] = {"{\"progress\":\"a\",\"percentage\":NaN}", "{\"progress\":\"a\",\"percentage\":1.2}", "{\"progress\":\"a\",\"percentage\":-1}", "{\"progress\":\"a\",\"percentage\":0.5} garbage", "{\"progress\":\"a\"}"};
+    for (size_t i = 0; i < sizeof(invalid) / sizeof(invalid[0]); ++i) {
+        s_resp = invalid[i]; strcpy(remote, "unchanged"); percent = 0.25f;
+        assert(os_sync_pull(&cfg, "0123456789abcdef0123456789abcdef", remote, sizeof(remote), &percent) == OS_SYNC_PARSE);
+        assert(!strcmp(remote, "unchanged") && percent == 0.25f);
+    }
+    s_resp = "{\"progress\":\"too long\",\"percentage\":0.5}";
+    assert(os_sync_pull(&cfg, "0123456789abcdef0123456789abcdef", remote, 4, &percent) == OS_SYNC_PARSE);
+    assert(os_sync_push(&cfg, "0123456789abcdef0123456789abcdef", rp1, NAN) == OS_SYNC_IO);
+    strcpy(cfg.user, "a\nb");
+    assert(os_sync_register(&cfg) == OS_SYNC_OK && strstr(s_body, "a\\u000ab"));
+
+    s_resp = "[[[[[[[[[0]]]]]]]]]";
+    assert(os_sync_pull(&cfg, "0123456789abcdef0123456789abcdef", remote, sizeof(remote), &percent) == OS_SYNC_PARSE);
 
     // 默认服务器与结尾斜杠规范化。/ Default server and trailing-slash normalization.
     os_sync_config_t defaulted = {{0}, {0}, {0}};

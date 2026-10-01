@@ -63,6 +63,8 @@ typedef struct {char name[256],path[288];uint32_t size;bool is_flash,has_progres
 static EpdRect ui_row_rect(int i,int count,int y,int height){EpdRect r=ui_bar_rect(i,count);r.y=y;r.height=height;return r;}
 static char s_query[65],s_search_draft[65],s_batch_message[128];
 static bool s_batch_confirm,s_batch_delete;
+static int s_mark_delete = -1;
+static bool s_mark_manage, s_toolbar_sizes, s_layout_group;
 static bool read_pico_search_match(const char* name,const char* query){return !*query||strstr(name,query)!=NULL;}
 static int book_chapter_count(void){return 1;}
 #define BOOK_TOC_ROWS 10

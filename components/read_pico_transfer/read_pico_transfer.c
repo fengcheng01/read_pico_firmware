@@ -360,7 +360,7 @@ static esp_netif_t *s_netif;
 static esp_event_handler_instance_t s_events, s_ip_events;
 static bool s_wifi, s_started, s_loop_owned;
 static char *s_buffer;
-static bool s_stopping, s_upload_active;
+static bool s_stopping, s_upload_active, s_sync_active;
 static bool s_config_busy;
 static transfer_connection_t s_connection;
 extern const char upload_start[] asm("_binary_upload_html_start");
@@ -822,7 +822,7 @@ static esp_err_t books_handler(httpd_req_t *req) {
     int resolved = resolve_mutation_path(s_root, name, path, sizeof(path));
     if (resolved) return respond_error(req, resolved);
     portENTER_CRITICAL(&s_lock);
-    bool accepted = admission_begin(s_stopping, &s_upload_active);
+    bool accepted = admission_begin(s_stopping || s_sync_active, &s_upload_active);
     portEXIT_CRITICAL(&s_lock);
     if (!accepted) return wifi_response(req, "409 Conflict", "{\"error\":\"正在上传或切换网络，请稍后重试\"}");
     file_result_t result = retry ? (file_result_t){.status = !s_cfg.file_changed_cb || s_cfg.file_changed_cb(path) == ESP_OK ? 200 : 500} :
@@ -848,7 +848,7 @@ static esp_err_t upload_handler(httpd_req_t *req) {
     snprintf(part, sizeof(part), "%s.part", path);
     bool overwrite = httpd_query_key_value(query, "overwrite", replace, sizeof(replace)) == ESP_OK && !strcmp(replace, "1");
     portENTER_CRITICAL(&s_lock);
-    if (!admission_begin(s_stopping, &s_upload_active)) {
+    if (!admission_begin(s_stopping || s_sync_active, &s_upload_active)) {
         portEXIT_CRITICAL(&s_lock);
         return wifi_response(req, "503 Service Unavailable", "{\"error\":\"网络正在切换，请连接后重试\"}");
     }
@@ -890,6 +890,17 @@ static esp_err_t font_info_handler(httpd_req_t *req) {
 }
 
 /* ---- 生命周期 / Lifecycle ---- */
+bool read_pico_transfer_claim_sync(void) {
+    portENTER_CRITICAL(&s_lock);
+    bool ok = !s_stopping && !s_upload_active && !s_sync_active;
+    if (ok) s_sync_active = true;
+    portEXIT_CRITICAL(&s_lock);
+    return ok;
+}
+void read_pico_transfer_release_sync(void) {
+    portENTER_CRITICAL(&s_lock); s_sync_active = false; portEXIT_CRITICAL(&s_lock);
+}
+
 bool read_pico_transfer_try_stop_if_idle(void) {
     portENTER_CRITICAL(&s_lock);
     bool accepted = admission_stop(&s_stopping, s_upload_active);

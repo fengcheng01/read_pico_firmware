@@ -3,6 +3,15 @@
 按日期和作者简述对用户可见的功能变化；详细实现历史见 Git。使用方法见 [README](../README.zh-CN.md)。
 User-visible changes by date and author; Git retains implementation history. See [README](../README.md) for usage.
 
+## 2026-10-01 · Codex · 阅读界面优化 / Reader UI improvements
+
+- 阅读工具新增直接加书签与字号子面板；“更多设置”分为文字排版、翻页与显示两组，保留清残影和书架出口。书签管理和长按删除均须确认，取消保留原记录。
+  Reader tools add direct bookmarks and a size subpanel; More Settings groups typography and turns/display, retaining cleaning and shelf exits. Bookmark management and long-press deletion require confirmation; cancellation preserves the record.
+- 首页不再常驻字体技术告知；正文仅在当前章节确实存在缺字时提供完整字体入口。今日页以续读/书架按钮替代未实现待办区；存储记录区分检测中、无记录和不可读。
+  Home drops the permanent font notice; the reader offers the full-font entry only when the current chapter has missing glyphs. Today replaces the unfinished todo area with Continue/Library, and storage records distinguish probing, absence and read failure.
+- 同步使用单个后台请求，下载先展示本地/远端位置并确认，离页取消收齐；同步与上传/删除互斥。修复 EPUB 封面 XML 终止符、HTTP 短写/分段/超长响应及 JSON 边界处理。
+  Sync uses one worker, stages local/remote positions for pull confirmation and cancels/joins on exit, excluding uploads/deletions during sync. Fixes cover XML termination, HTTP short writes/fragments/oversized responses and JSON bounds.
+
 ## 2026-10-01 · ZCode
 
 - 书签与跳转：目录页改为“目录 / 书签 / 跳转”三页签。书签每书最多 16 条（按位置排序、满员淘汰最旧），首行一键加当前页，点按跳转、长按删除，删除图书时随进度一并清理；跳转页签提供 10%–100% 百分比直达，与进度条点按共用定位路径。

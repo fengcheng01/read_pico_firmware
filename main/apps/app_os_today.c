@@ -3,10 +3,10 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * 中文：今日根页。时钟来自 PMU RTC 与用户时区，未校时显式可见；阅读摘要
- * 来自真实进度与本地阅读统计；待办输入通道未交付前明确标注尚未启用。
+ * 来自真实进度与本地阅读统计；用户批准以续读入口替代未实现待办区。
  * English: Today root. The clock comes from the PMU RTC with the user timezone
  * and stays visibly uncalibrated; the reading summary uses real progress and
- * local reading stats; todos stay marked unavailable until an input path ships.
+ * local reading stats; the approved continue-reading action replaces the unimplemented todo area.
  *
  * 冻结：不伪造时间、任务或阅读数字；分钟变化只用 DU 刷时钟区；render 只绘图。
  * Frozen: Never invent time, tasks or reading numbers; minute changes DU-refresh
@@ -108,10 +108,8 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
         ui_text(fb, UI_MARGIN, 614, 30, "正在查找最近阅读…", EPD_DRAW_ALIGN_LEFT, false);
     }
     ui_hairline(fb, 892, UI_MARGIN, ui_content_width(), UI_GRAY_BLACK);
-    ui_text(fb, UI_MARGIN, 920, 44, "待办", EPD_DRAW_ALIGN_LEFT, false);
-    ui_text(fb, UI_MARGIN, 996, 30, "尚未启用", EPD_DRAW_ALIGN_LEFT, false);
-    ui_product_title(fb, (EpdRect){UI_MARGIN, 1036, ui_content_width(), 64},
-                     "本地待办需要配套输入通道，当前版本不展示虚构事项。", 24, 2);
+    ui_draw_button(fb, (EpdRect){UI_MARGIN, 930, ui_content_width(), 88},
+                   !s_loading && data->current.path[0] ? "继续阅读" : "打开书架", true);
     ui_product_root_bar(fb, OS_APP_TODAY);
 }
 static app_redraw_t navigate(app_ctx_t* ctx, os_app_id_t id, const char* path) {
@@ -128,6 +126,9 @@ static app_redraw_t gesture(app_ctx_t* ctx, const ui_gesture_event_t* ev) {
         return navigate(ctx, id, NULL);
     if (s_loading) return APP_REDRAW_NONE;
     const book_home_snapshot_t* data = book_home_snapshot();
+    if (ui_rect_hit((EpdRect){UI_MARGIN, 930, ui_content_width(), 88}, ev->x0, ev->y0) &&
+        ui_rect_hit((EpdRect){UI_MARGIN, 930, ui_content_width(), 88}, ev->x, ev->y))
+        return navigate(ctx, OS_APP_LIBRARY, data->current.path[0] ? data->current.path : NULL);
     if (ui_rect_hit(reading_row_rect(2), ev->x0, ev->y0) && ui_rect_hit(reading_row_rect(2), ev->x, ev->y) &&
         data->current.path[0])
         return navigate(ctx, OS_APP_LIBRARY, data->current.path);

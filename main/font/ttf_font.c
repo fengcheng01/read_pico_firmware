@@ -1775,6 +1775,22 @@ static int measure_width(int pixel_height, const char* text) {
     return width;
 }
 
+bool ttf_font_supports_text(const char* text, size_t len) {
+    if (!font_ready || !text) return false;
+    size_t at = 0;
+    while (at < len) {
+        char unit[5] = {0};
+        size_t n = len - at < 4 ? len - at : 4;
+        memcpy(unit, text + at, n);
+        const char* cursor = unit;
+        uint32_t cp = decode_utf8(&cursor);
+        if (!cp) return false;
+        at += (size_t)(cursor - unit);
+        if (cp >= 0x20 && stbtt_FindGlyphIndex(&font_info, (int)cp) == 0) return false;
+    }
+    return true;
+}
+
 bool ttf_font_ready(void) {
     return font_ready;
 }

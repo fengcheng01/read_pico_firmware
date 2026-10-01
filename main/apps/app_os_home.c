@@ -71,8 +71,8 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
         ui_text(fb, UI_MARGIN, 380, 28, "你的阅读进度会保存在设备上", EPD_DRAW_ALIGN_LEFT, false);
         ui_draw_button(fb, continue_rect(), data->book_count || !transfer_enabled() ? "打开书架" : "导入图书", true);
     }
-    const char* notice = s_notice ? s_notice : !s_loading && data->degraded ? "部分存储不可用，请到工具中检查" :
-                         ttf_font_is_builtin() ? "内置字体为子集，完整中文请部署 TF 字库" : "点击继续阅读，恢复已保存的位置";
+    const char* notice = s_notice ? s_notice : !s_loading && data->degraded ? "部分存储不可用，请到设置检查" :
+                         "点击继续阅读，恢复已保存的位置";
     ui_product_title(fb, (EpdRect){UI_MARGIN, 682, ui_content_width(), 38}, notice, 26, 1);
     ui_hairline(fb, 736, UI_MARGIN, ui_content_width(), UI_GRAY_BLACK);
     char heading[80];

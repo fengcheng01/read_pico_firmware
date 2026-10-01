@@ -24,7 +24,7 @@
 #include "ui_product.h"
 #include <stdio.h>
 
-static EpdRect back_rect(void) { return (EpdRect){470, 68, 174, 68}; }
+static EpdRect back_rect(void) { return ui_product_back_rect(); }
 static EpdRect refresh_rect(void) { return (EpdRect){UI_MARGIN, 880, 260, 84}; }
 
 static bool s_probing = true;
@@ -34,6 +34,7 @@ static int s_root_count;
 static uint64_t s_flash_free;
 static bool s_flash_usable;
 static char s_crash[64];
+static os_crash_summary_state_t s_crash_state;
 
 static void format_bytes(uint64_t bytes, char* out, size_t cap) {
     if (bytes >= 1024ULL * 1024ULL * 1024ULL)
@@ -57,13 +58,14 @@ static app_redraw_t on_tick(app_ctx_t* ctx) {
     if (!os_storage_probe_complete()) return APP_REDRAW_NONE;
     s_probing = false;
     read_pico_sd_get_info(&s_sd);
-    s_flash_usable = book_store_read_roots(s_roots, &s_root_count) == ESP_OK;
+    s_flash_usable = false;
+    if (book_store_read_roots(s_roots, &s_root_count) != ESP_OK) s_root_count = 0;
     s_flash_free = 0;
     for (int i = 0; i < s_root_count; ++i)
-        if (s_roots[i].is_flash) s_flash_free = book_store_free_bytes(&s_roots[i]);
+        if (s_roots[i].is_flash) { s_flash_usable = true; s_flash_free = book_store_free_bytes(&s_roots[i]); }
     // 只读摘要；崩溃日志本身由开机 os_crash 流程写入。/ Read-only summary; the log itself is written at boot by os_crash.
     s_crash[0] = 0;
-    (void)os_crash_summary(s_crash, sizeof(s_crash));
+    s_crash_state = s_flash_usable ? os_crash_summary_read(s_crash, sizeof(s_crash)) : OS_CRASH_SUMMARY_ERROR;
     return APP_REDRAW_PAGE;
 }
 
@@ -94,7 +96,8 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
     ui_text(fb, UI_MARGIN, 432, 36, line, EPD_DRAW_ALIGN_LEFT, false);
     ui_hairline(fb, 512, UI_MARGIN, ui_content_width(), UI_GRAY_BLACK);
     ui_text(fb, UI_MARGIN, 542, 30, "系统记录", EPD_DRAW_ALIGN_LEFT, false);
-    ui_text(fb, UI_MARGIN, 596, 36, s_crash[0] ? s_crash : "无异常重启记录", EPD_DRAW_ALIGN_LEFT, false);
+    ui_text(fb, UI_MARGIN, 596, 36, s_probing ? "检测中…" : s_crash_state == OS_CRASH_SUMMARY_READY ? s_crash :
+            s_crash_state == OS_CRASH_SUMMARY_EMPTY ? "无异常重启记录" : "记录暂不可读，请重新检测", EPD_DRAW_ALIGN_LEFT, false);
     ui_text(fb, UI_MARGIN, 656, 22, "崩溃时无反栈；记录保存在内置存储 crash.log", EPD_DRAW_ALIGN_LEFT, false);
     ui_hairline(fb, 700, UI_MARGIN, ui_content_width(), UI_GRAY_BLACK);
     ui_product_title(fb, (EpdRect){UI_MARGIN, 726, ui_content_width(), 130},

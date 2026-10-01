@@ -59,6 +59,8 @@ void ui_product_header(uint8_t* fb, const char* title, const char* detail) {
     ui_text(fb, UI_MARGIN, 70, 56, title, EPD_DRAW_ALIGN_LEFT, false);
     ui_product_title(fb, (EpdRect){UI_MARGIN, 140, ui_content_width(), 34}, detail, 26, 1);
 }
+EpdRect ui_product_back_rect(void) { return (EpdRect){470, 60, 174, 80}; }
+void ui_product_back(uint8_t* fb, const char* label) { ui_draw_button(fb, ui_product_back_rect(), label, false); }
 static const os_app_id_t roots[] = {OS_APP_HOME, OS_APP_LIBRARY, OS_APP_TODAY, OS_APP_SETTINGS};
 static const char* root_labels[] = {"正在读", "书架", "今日", "设置"};
 void ui_product_root_bar(uint8_t* fb, os_app_id_t active) {
@@ -91,7 +93,7 @@ void ui_product_cover(uint8_t* fb, EpdRect r, const char* title, int px) {
     ui_text(fb, r.x + 24, r.y + r.height - 30, 18, "READ PICO", EPD_DRAW_ALIGN_LEFT, false);
 }
 EpdRect ui_product_shelf_rect(int row) { return (EpdRect){UI_MARGIN, 308 + row * 228, ui_content_width(), 208}; }
-EpdRect ui_product_shelf_nav_rect(int index) { return ui_row_rect(index, 3, 1014, 56); }
+EpdRect ui_product_shelf_nav_rect(int index) { return ui_row_rect(index, 3, 1006, 80); }
 void ui_product_shelf_card(uint8_t* fb, EpdRect r, const char* title, const char* meta,
                            unsigned percent, bool has_progress, bool pressed, const uint8_t* cover) {
     ui_clear_rect_fast(fb, r);
@@ -116,7 +118,7 @@ void ui_product_shelf_card(uint8_t* fb, EpdRect r, const char* title, const char
 EpdRect ui_product_tool_rect(int index) {
     return ui_grid_rect(index % 3, 3, index / 3, UI_BAR_TOP - 2 * (UI_BTN_H + UI_GAP), UI_BTN_H);
 }
-void ui_product_reader_tools(uint8_t* fb, const char* title, int px, bool night, int pressed) {
+static void reader_tools(uint8_t* fb, const char* title, int px, bool sizes, int pressed) {
     EpdRect panel = {UI_MARGIN - 16, 782, ui_content_width() + 32, UI_BAR_TOP - 782};
     ui_clear_rect_fast(fb, panel);
     ui_hairline(fb, 782, panel.x, panel.width, UI_GRAY_BLACK);
@@ -124,23 +126,30 @@ void ui_product_reader_tools(uint8_t* fb, const char* title, int px, bool night,
     char size[32]; snprintf(size, sizeof(size), "%d px", px);
     ui_text(fb, ui_content_right(), 816, 30, size, EPD_DRAW_ALIGN_RIGHT, false);
     ui_text(fb, UI_MARGIN, 864, 24, "阅读工具 · 中键长按打开导航", EPD_DRAW_ALIGN_LEFT, false);
-    const char* labels[] = {"目录", "字号 −", "字号 +", "排版", night ? "夜间 开" : "夜间 关", "书架"};
+    const char* labels[] = {"目录 / 书签", "添加书签", "字号", "更多设置", "清除残影", "书架"};
+    const char* size_labels[] = {"返回工具", "字号 −", "字号 +", "正文字体", "更多设置", "书架"};
     for (int i = 0; i < 6; ++i) {
         EpdRect r = ui_product_tool_rect(i);
         if (pressed == 200 + i) ui_draw_pressed_round_rect(fb, r, 4);
         else ui_draw_round_rect(fb, r, 4, UI_GRAY_BLACK);
-        ui_text_vc(fb, r.x + r.width / 2, r.y + r.height / 2, 32, labels[i], EPD_DRAW_ALIGN_CENTER, false);
+        ui_text_vc(fb, r.x + r.width / 2, r.y + r.height / 2, 32, sizes ? size_labels[i] : labels[i], EPD_DRAW_ALIGN_CENTER, false);
     }
 }
-EpdRect ui_product_reader_body(bool builtin) {
-    int top = builtin ? 56 : 24;
+void ui_product_reader_tools(uint8_t* fb, const char* title, int px, bool night, int pressed) {
+    (void)night; reader_tools(fb, title, px, false, pressed);
+}
+void ui_product_reader_sizes(uint8_t* fb, const char* title, int px, int pressed) {
+    reader_tools(fb, title, px, true, pressed);
+}
+EpdRect ui_product_reader_body(bool missing_glyphs) {
+    int top = missing_glyphs ? 88 : 24;
     return (EpdRect){UI_MARGIN, top, ui_content_width(), UI_BAR_TOP - 8 - top};
 }
 void ui_product_reader_chrome(uint8_t* fb, const char* title, unsigned page, unsigned pages,
-                             unsigned percent, bool builtin, const char* status, bool bar) {
-    if (builtin) {
-        ui_text(fb, UI_MARGIN, 12, 24, "内置字库可能缺字 · 点此选择 TF 字体", EPD_DRAW_ALIGN_LEFT, false);
-        ui_hairline(fb, 44, UI_MARGIN, ui_content_width(), UI_GRAY_LIGHT);
+                             unsigned percent, bool missing_glyphs, const char* status, bool bar) {
+    if (missing_glyphs) {
+        ui_text(fb, UI_MARGIN, 24, 26, "本章有缺字 · 点此选择完整字体", EPD_DRAW_ALIGN_LEFT, false);
+        ui_hairline(fb, 76, UI_MARGIN, ui_content_width(), UI_GRAY_LIGHT);
     }
     EpdRect track = ui_bar_rect(0, 1);
     if (bar) {

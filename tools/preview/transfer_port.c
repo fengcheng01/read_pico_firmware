@@ -7,6 +7,7 @@
  * Frozen: Fixtures stay offline; sync actions only message; progress/time/battery are static values.
  */
 #include "os_sync.h"
+#include "os_crash.h"
 #include "os_time.h"
 #include "read_pico_transfer.h"
 #include "settings.h"
@@ -99,22 +100,27 @@ void os_sync_set_password(const char* plain) {
     // Preview skips MD5 and stores a valid-length placeholder so the page shows "set".
     app_settings_set_sync_key("preview00000000000000000000000000");
 }
-os_sync_result_t os_sync_device_auth(char* note, size_t cap) {
-    if (note && cap) snprintf(note, cap, "预览不联网，请在真机验证");
-    return OS_SYNC_OFFLINE;
+static bool s_sync_preview;
+bool os_sync_job_start(os_sync_job_t job, char* note, size_t cap) {
+    (void)job;
+    if (s_sync_preview) return false;
+    s_sync_preview = true;
+    snprintf(note, cap, "正在同步，可返回或停止…");
+    return true;
 }
-os_sync_result_t os_sync_device_register(char* note, size_t cap) {
-    if (note && cap) snprintf(note, cap, "预览不联网，请在真机验证");
-    return OS_SYNC_OFFLINE;
+bool os_sync_job_poll(char* note, size_t cap) {
+    if (!s_sync_preview) return false;
+    s_sync_preview = false;
+    snprintf(note, cap, "预览不联网，请在真机验证");
+    return true;
 }
-os_sync_result_t os_sync_push_last(char* note, size_t cap) {
-    if (note && cap) snprintf(note, cap, "预览不联网，请在真机验证");
-    return OS_SYNC_OFFLINE;
-}
-os_sync_result_t os_sync_pull_last(char* note, size_t cap) {
-    if (note && cap) snprintf(note, cap, "预览不联网，请在真机验证");
-    return OS_SYNC_OFFLINE;
-}
+bool os_sync_job_busy(void) { return s_sync_preview; }
+bool os_sync_pull_pending(void) { return false; }
+bool os_sync_pull_confirm(bool apply, char* note, size_t cap) {(void)apply;(void)note;(void)cap;return false;}
+void os_sync_job_request_cancel(void) { s_sync_preview = false; }
+void os_sync_job_cancel(void) { s_sync_preview = false; }
+bool read_pico_transfer_claim_sync(void) { return true; }
+void read_pico_transfer_release_sync(void) {}
 
 int os_time_battery_permille(void) { return 780; }
 bool os_time_recently_synced(void) { return false; }
@@ -124,4 +130,9 @@ bool os_crash_summary(char* out, size_t cap) {
     // Preview cannot read reset registers; empty output shows "no records" on the storage page.
     if (out && cap) out[0] = 0;
     return false;
+}
+
+os_crash_summary_state_t os_crash_summary_read(char* out, size_t cap) {
+    if (out && cap) out[0] = 0;
+    return OS_CRASH_SUMMARY_EMPTY;
 }

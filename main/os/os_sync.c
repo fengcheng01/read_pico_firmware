@@ -8,6 +8,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
+#include "cJSON.h"
 
 static const os_sync_io_t* s_io;
 static char s_url[OS_SYNC_URL_MAX];
@@ -47,13 +49,16 @@ static os_sync_result_t status_result(int status) {
     return OS_SYNC_SERVER;
 }
 
-static void json_escape(char* out, size_t cap, const char* text) {
+static bool json_escape(char* out, size_t cap, const char* text) {
     size_t at = 0;
-    for (const unsigned char* p = (const unsigned char*)(text ? text : ""); *p && at + 7 < cap; ++p) {
-        if (*p == '"' || *p == '\\') out[at++] = '\\';
-        out[at++] = (char)*p;
+    for (const unsigned char* p = (const unsigned char*)(text ? text : ""); *p; ++p) {
+        size_t need = *p < 0x20 ? 6 : (*p == '"' || *p == '\\') ? 2 : 1;
+        if (need >= cap - at) return false;
+        if (*p < 0x20) { snprintf(out + at, cap - at, "\\u%04x", *p); at += 6; }
+        else { if (need == 2) out[at++] = '\\'; out[at++] = (char)*p; }
     }
     out[at] = 0;
+    return true;
 }
 
 // 校验配置并把基址规范进 s_url（去结尾斜杠）。/ Validate and normalize the base URL into s_url.
@@ -69,10 +74,10 @@ static os_sync_result_t check(const os_sync_config_t* config) {
 os_sync_result_t os_sync_register(const os_sync_config_t* config) {
     os_sync_result_t pre = check(config);
     if (pre != OS_SYNC_OK) return pre;
-    char user[OS_SYNC_USER_MAX * 2 + 2], key[67];
-    json_escape(user, sizeof(user), config->user);
-    json_escape(key, sizeof(key), config->key);
-    char body[160];
+    char user[OS_SYNC_USER_MAX * 6 + 1], key[67];
+    if (!json_escape(user, sizeof(user), config->user)) return OS_SYNC_IO;
+    if (!json_escape(key, sizeof(key), config->key)) return OS_SYNC_IO;
+    char body[320];
     snprintf(body, sizeof(body), "{\"username\":\"%s\",\"password\":\"%s\"}", user, key);
     char url[OS_SYNC_URL_MAX + 32];
     snprintf(url, sizeof(url), "%s/users/create", s_url);
@@ -93,9 +98,9 @@ os_sync_result_t os_sync_push(const os_sync_config_t* config, const char* doc_id
     os_sync_result_t pre = check(config);
     if (pre != OS_SYNC_OK) return pre;
     if (!doc_id || strlen(doc_id) != 32 || !progress || !progress[0]) return OS_SYNC_IO;
-    char doc[67], prog[OS_SYNC_PROGRESS_MAX * 2 + 2], body[256];
-    json_escape(doc, sizeof(doc), doc_id);
-    json_escape(prog, sizeof(prog), progress);
+    char doc[67], prog[OS_SYNC_PROGRESS_MAX * 6 + 1], body[640];
+    if (!json_escape(doc, sizeof(doc), doc_id)) return OS_SYNC_IO;
+    if (!json_escape(prog, sizeof(prog), progress) || !isfinite(percent)) return OS_SYNC_IO;
     if (percent < 0) percent = 0;
     if (percent > 1) percent = 1;
     snprintf(body, sizeof(body),
@@ -107,59 +112,48 @@ os_sync_result_t os_sync_push(const os_sync_config_t* config, const char* doc_id
     return status_result(s_io->request("PUT", url, config->user, config->key, "application/json", body, NULL, 0));
 }
 
-// 在平坦 JSON 里定位 "key":"值"；返回值区间与长度。/ Locate a flat "key":"value"; returns the value span.
-static const char* json_string(const char* resp, const char* key, size_t* len) {
-    char pattern[24];
-    int n = snprintf(pattern, sizeof(pattern), "\"%s\":", key);
-    if (n < 0 || (size_t)n >= sizeof(pattern)) return NULL;
-    const char* at = strstr(resp, pattern);
-    if (!at) return NULL;
-    at += n;
-    while (*at == ' ') ++at;
-    if (*at++ != '"') return NULL;
-    const char* start = at;
-    while (*at && *at != '"') {
-        if (*at == '\\' && at[1]) ++at;
-        ++at;
+// 响应很小且结构浅，解析前限制嵌套，避免恶意 JSON 消耗任务栈。
+// Responses are small and shallow; bound nesting before parsing to protect the task stack.
+static bool bounded_json(const char* text) {
+    unsigned depth = 0;
+    bool quoted = false, escaped = false;
+    for (const unsigned char* p = (const unsigned char*)text; *p; ++p) {
+        if (quoted) {
+            if (escaped) escaped = false;
+            else if (*p == '\\') escaped = true;
+            else if (*p == '"') quoted = false;
+        } else if (*p == '"') quoted = true;
+        else if (*p == '{' || *p == '[') { if (++depth > 8) return false; }
+        else if (*p == '}' || *p == ']') { if (!depth) return false; --depth; }
     }
-    if (*at != '"') return NULL;
-    *len = (size_t)(at - start);
-    return start;
+    return !quoted && !depth;
 }
 
 os_sync_result_t os_sync_pull(const os_sync_config_t* config, const char* doc_id,
                               char* progress, size_t cap, float* percent) {
     os_sync_result_t pre = check(config);
     if (pre != OS_SYNC_OK) return pre;
-    if (!doc_id || strlen(doc_id) != 32) return OS_SYNC_IO;
-    char url[OS_SYNC_URL_MAX + 64];
+    if (!doc_id || strlen(doc_id) != 32 || !progress || !cap || !percent) return OS_SYNC_IO;
+    char url[OS_SYNC_URL_MAX + 64], resp[512] = {0};
     snprintf(url, sizeof(url), "%s/syncs/progress/%s", s_url, doc_id);
-    char resp[512];
     os_sync_result_t result = status_result(s_io->request("GET", url, config->user, config->key,
                                                           NULL, NULL, resp, sizeof(resp)));
     if (result != OS_SYNC_OK) return result;
-    size_t len = 0;
-    const char* value = json_string(resp, "progress", &len);
-    if (!value) return OS_SYNC_PARSE;
-    if (progress && cap) {
-        // 反转义仅处理 \" 与 \\；其它转义按单字符降级。/ Unescape \" and \\; other escapes degrade to one char.
-        size_t used = 0;
-        for (size_t i = 0; i < len && used + 1 < cap; ++i) {
-            char c = value[i];
-            if (c == '\\' && i + 1 < len) c = value[++i];
-            progress[used++] = c;
-        }
-        progress[used] = 0;
+    resp[sizeof(resp) - 1] = 0;
+    if (!bounded_json(resp)) return OS_SYNC_PARSE;
+    cJSON* json = cJSON_ParseWithOpts(resp, NULL, true);
+    if (!json) return OS_SYNC_PARSE;
+    cJSON* position = cJSON_GetObjectItemCaseSensitive(json, "progress");
+    cJSON* pct = cJSON_GetObjectItemCaseSensitive(json, "percentage");
+    bool valid = cJSON_IsObject(json) && cJSON_IsString(position) && cJSON_IsNumber(pct) &&
+        isfinite(pct->valuedouble) && pct->valuedouble >= 0 && pct->valuedouble <= 1 &&
+        position->valuestring[0] && strlen(position->valuestring) < cap;
+    if (valid) {
+        memcpy(progress, position->valuestring, strlen(position->valuestring) + 1);
+        *percent = (float)pct->valuedouble;
     }
-    // percentage 是数字不是字符串，直接找冒号后的数值。/ percentage is a number, so read past the colon.
-    const char* pct = strstr(resp, "\"percentage\"");
-    if (!pct || !(pct = strchr(pct, ':'))) return OS_SYNC_PARSE;
-    ++pct;
-    char* end = NULL;
-    double parsed = strtod(pct, &end);
-    if (end == pct) return OS_SYNC_PARSE;
-    if (percent) *percent = parsed < 0 ? 0 : parsed > 1 ? 1 : (float)parsed;
-    return OS_SYNC_OK;
+    cJSON_Delete(json);
+    return valid ? OS_SYNC_OK : OS_SYNC_PARSE;
 }
 
 bool os_sync_progress_encode(char* out, size_t cap, uint32_t file_size, uint16_t chapter,

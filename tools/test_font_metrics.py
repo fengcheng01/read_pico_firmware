@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SOURCE = (ROOT / 'main/font/ttf_font.c').read_text(encoding='utf-8')
 
 def function(name):
-    match = re.search(r'^static [^\n]+\b' + name + r'\([^\n]*\) \{', SOURCE, re.M)
+    match = re.search(r'^(?:static )?[^\n]+\b' + name + r'\([^\n]*\) \{', SOURCE, re.M)
     assert match
     at, depth = match.end(), 1
     while depth:
@@ -22,6 +22,8 @@ def function(name):
 unit = r'''
 #include <assert.h>
 #include <stdint.h>
+#include <stdbool.h>
+#include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <limits.h>
@@ -29,8 +31,9 @@ unit = r'''
 #define STB_TRUETYPE_IMPLEMENTATION
 #include "stb_truetype.h"
 static stbtt_fontinfo font_info;
+static bool font_ready = true;
 '''
-unit += function('decode_utf8') + '\n' + function('measure_width')
+unit += function('decode_utf8') + '\n' + function('measure_width') + '\n' + function('ttf_font_supports_text')
 unit += r'''
 int main(int argc,char** argv) {
     for(int a=1;a<argc;++a) {
@@ -45,6 +48,8 @@ int main(int argc,char** argv) {
             int glyf=font_info.glyf,loca=font_info.loca;
             font_info.glyf=font_info.loca=INT_MAX;
             assert(measure_width(px,strings[i])==expected);
+            assert(ttf_font_supports_text("Read Pico", 9));
+            assert(!ttf_font_supports_text("\xf4\x8f\xbf\xbf", 4));
             font_info.glyf=glyf;font_info.loca=loca;
         }
         free(data);

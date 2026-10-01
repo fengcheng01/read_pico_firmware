@@ -28,7 +28,7 @@
 #define READING_PX_MIN 36
 #define READING_PX_MAX 72
 
-static EpdRect back_rect(void) { return (EpdRect){470, 68, 174, 68}; }
+static EpdRect back_rect(void) { return ui_product_back_rect(); }
 static EpdRect step_rect(int i) { return (EpdRect){352 + i * 154, 266, 138, 88}; }
 static EpdRect font_list_rect(void) { return (EpdRect){UI_MARGIN, 690, 320, 84}; }
 static EpdRect footer_row_rect(int i) { return (EpdRect){UI_MARGIN, 872 + i * 66, ui_content_width(), 58}; }

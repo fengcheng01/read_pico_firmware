@@ -146,7 +146,7 @@ def build(sanitize=False):
     command = [os.environ.get("CC", "cc"), "-std=gnu11", "-O1" if sanitize else "-O2", "-g",
                "-Wall", "-Wextra", "-Wno-sign-compare", "-Wno-unused-variable", "-Wno-unused-function", "-Wno-unused-parameter",
                "-Itools/preview", f"-I{includes}", "-Imain/app", "-Imain/ui", "-Imain/ui/product",
-               "-Imain/os", "-Imain/book", "-Imain/font", "-Imain", "-Icomponents/read_pico_transfer/include"]
+               "-Imain/os", "-Imanaged_components/espressif__cjson/cJSON", "-Imain/book", "-Imain/font", "-Imain", "-Icomponents/read_pico_transfer/include"]
     if os.uname().sysname == "Darwin":
         developer = Path(subprocess.check_output(["xcode-select", "-p"], text=True).strip())
         sdk = Path(os.environ.get("PREVIEW_MACOS_SDK", developer / "Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"))
@@ -160,7 +160,7 @@ def build(sanitize=False):
                 "main/book/book_entry.c", "main/book/book_layout.c", "main/book/book_source.c", "main/book/book_home.c", "main/book/book_cover.c", "main/book/book_marks.c",
                 "main/book/book_txt.c", "main/book/gbk.c", "main/book/book_epub.c", "main/book/zip_reader.c",
                 "main/book/html_text.c", "main/book/book_image.c", "main/book/vendor/tjpgd.c",
-                "components/read_pico_search/read_pico_search.c", "main/os/os_time.c", "main/os/os_device_pico.c", "main/os/os_sync.c", "main/os/os_lunar.c", "main/os/os_crash.c",
+                "components/read_pico_search/read_pico_search.c", "main/os/os_time.c", "main/os/os_device_pico.c", "main/os/os_sync.c", "main/os/os_sync_http.c", "managed_components/espressif__cjson/cJSON/cJSON.c", "main/os/os_lunar.c", "main/os/os_crash.c",
                 "main/app/app_sleep_hooks.c",
                 "main/ui/product/ui_product.c", str(OUT / "graphics.c"), str(OUT / "unavailable.c"),
                 str(OUT / "assets.S"), "main/ui/ui_kit.c", "main/ui/ui_gesture.c", "main/ui/ui_menu.c", "main/ui/datamatrix.c",

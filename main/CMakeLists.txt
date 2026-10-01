@@ -7,6 +7,7 @@ set(main_requires
     e0470_epaper_waveform
     read_pico_pmu
     esp_netif
+    espressif__cjson
     esp_http_client
     mbedtls
     fatfs
@@ -49,6 +50,7 @@ idf_component_register(
         "os/os_time.c"
         "os/os_time_pico.c"
         "os/os_sync.c"
+        "os/os_sync_http.c"
         "os/os_sync_pico.c"
         "os/os_lunar.c"
         "os/os_crash.c"

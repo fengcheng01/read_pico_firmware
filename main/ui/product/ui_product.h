@@ -22,6 +22,10 @@ void ui_product_home_bar(uint8_t* fb, bool transfer_enabled);
 os_app_id_t ui_product_home_bar_hit(uint16_t x, uint16_t y, bool transfer_enabled);
 /// 统一产品页标题；不读取硬件或文件。/ Shared product header without hardware or file reads.
 void ui_product_header(uint8_t* fb, const char* title, const char* detail);
+/// 子页返回触区与绘制共用。/ Shared subpage back geometry and drawing.
+EpdRect ui_product_back_rect(void);
+/// 绘制子页返回按钮。/ Draw a subpage back button.
+void ui_product_back(uint8_t* fb, const char* label);
 /// 四根入口导航及命中；把手触区独立保留。/ Four-root navigation and hit testing; retain a separate handle target.
 void ui_product_root_bar(uint8_t* fb, os_app_id_t active);
 os_app_id_t ui_product_root_hit(uint16_t x, uint16_t y);
@@ -36,14 +40,16 @@ EpdRect ui_product_shelf_nav_rect(int index);
 /// / cover is a 146×188 grayscale bitmap (BOOK_COVER_W/H); NULL falls back to the typographic cover.
 void ui_product_shelf_card(uint8_t* fb, EpdRect rect, const char* title, const char* meta,
                            unsigned percent, bool has_progress, bool pressed, const uint8_t* cover);
-/// 保持六项阅读动作的共同工具条与触区；night 显示反色标记。/ Shared toolbar and hit geometry retaining all six reading actions; night labels the inverted state.
+/// 阅读工具与字号面板共用六项触区；夜间模式在更多设置。/ Tools and size panels share six targets; night mode lives in grouped settings.
 EpdRect ui_product_tool_rect(int index);
 void ui_product_reader_tools(uint8_t* fb, const char* title, int px, bool night, int pressed);
-/// 正文与字体告知/进度页脚共用几何；status 为页脚左侧可选状态（时钟/电量），bar 控制进度条。
+/// 字号子面板，复用工具触区。/ Size subpanel sharing toolbar hit geometry.
+void ui_product_reader_sizes(uint8_t* fb, const char* title, int px, int pressed);
+/// 正文与缺字告知/进度页脚共用几何；status 为页脚左侧可选状态（时钟/电量），bar 控制进度条。
 /// Shared body/font notice/footer geometry; status is the optional left footer cluster (clock/battery) and bar toggles the track.
-EpdRect ui_product_reader_body(bool builtin);
+EpdRect ui_product_reader_body(bool missing_glyphs);
 void ui_product_reader_chrome(uint8_t* fb, const char* title, unsigned page, unsigned pages,
-                             unsigned percent, bool builtin, const char* status, bool bar);
+                             unsigned percent, bool missing_glyphs, const char* status, bool bar);
 /// 锁屏密码键盘绘制/命中；digits 为已输位数，back 额外画返回按钮，命中 0..9 数字、10 清空、11 退格。
 /// Lock-PIN keypad draw/hit; digits are entered dots, back adds a return button, hits return 0..9 digits, 10 clear, 11 backspace.
 void ui_product_lock_keypad(uint8_t* fb, const char* title, const char* message, unsigned digits, bool back);

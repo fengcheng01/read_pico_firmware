@@ -37,8 +37,10 @@
  * User revision: load images only after a tap and return without repagination; cache one viewed image in the current chapter and distinguish visited-chapter origins from the first occurrence in the whole book.
  * User-approved completion: the lock/sleep prepare hook saves reader progress first; reading time accumulates only on valid local dates, cuts off after 5 idle minutes and skips uncalibrated periods.
  * User-approved completion: the toolbar gains a typography menu (font/leading/margins/first-line indent/paragraph gap/per-line guide rule/tap zones/shake/night/auto turn/screen cleaning); leading, margin, indent and gap changes repaginate at once while keeping the anchor; guide rules run under every text line, solid or dashed; alignment adds left/center/justified and the footer status bar gains clock/battery switches; the menu stays open after changes and exits via Return or the middle key.
- * 用户批准六项功能：目录页三页签（章节/书签/百分比跳转，书签长按删除）；读完面板推荐同源下一本；清残影周期改档位设置（gc_every）；异常复位日志走 os_crash；黄历锁屏在 sleep/设置侧。
- * Frozen: The TOC gains three tabs (chapters/bookmarks/percent jump, long-press deletes a bookmark); an end-of-book panel suggests same-source next books; the ghost-cleanup period becomes the gc_every setting; abnormal resets log via os_crash; the almanac lock face lives in sleep/settings.
+ * 用户批准设计稿落地：工具拆为目录/书签、添加书签、字号子面板、更多设置、清残影和书架；更多设置两组各六行，书签删除先确认，降低误触与信息密度。
+ * User-approved design implementation: tools expose TOC/bookmarks, add mark, size subpanel, grouped settings, cleaning and shelf; two six-row groups and confirmed bookmark deletion reduce density and accidental loss.
+ * 用户批准六项功能：目录页三页签（章节/书签/百分比跳转，书签管理或长按先确认删除）；读完面板推荐同源下一本；清残影周期改档位设置（gc_every）；异常复位日志走 os_crash；黄历锁屏在 sleep/设置侧。
+ * Frozen: The TOC gains three tabs (chapters/bookmarks/percent jump, management or long-press confirms bookmark deletion); an end-of-book panel suggests same-source next books; the ghost-cleanup period becomes the gc_every setting; abnormal resets log via os_crash; the almanac lock face lives in sleep/settings.
  */
 #include <dirent.h>
 #include <errno.h>
@@ -142,6 +144,7 @@ static bool s_scan_pending, s_resume_pending, s_toolbar, s_clear_confirm;
 static char s_resume_path[BOOK_STORE_PATH_MAX], s_resume_name[256];
 static char s_message[128], s_storage[128], s_path[BOOK_STORE_PATH_MAX], s_title[128];
 static char s_font_path[192];
+static bool s_font_notice;
 static char* s_text;
 static blk_t* s_blocks;
 static size_t s_block_count;
@@ -173,6 +176,10 @@ static uint8_t* s_next_fb;
 static int s_next_page = -1, s_prep_page = -1;
 // 目录页三页签：0 章节 1 书签 2 百分比跳转。/ TOC tabs: 0 chapters, 1 bookmarks, 2 percent jump.
 static uint8_t s_toc_tab;
+static int s_mark_delete = -1;
+static bool s_mark_manage, s_toolbar_sizes, s_layout_group;
+static EpdRect mark_manage_rect(void) { return ui_product_back_rect(); }
+static EpdRect mark_confirm_rect(int i) { return ui_row_rect(i, 2, 620, UI_BTN_H); }
 static book_mark_t s_marks[BOOK_MARKS_MAX];
 static size_t s_mark_count;
 // 读完面板与同源下一本候选。/ End-of-book panel and same-source next candidates.
@@ -209,7 +216,7 @@ static size_t fb_bytes(void) { return (size_t)epd_width() * epd_height() / 2; }
 static EpdRect reader_area(void) { return (EpdRect){0, 0, UI_LOCK_WIDTH, (UI_BAR_TOP / 32) * 32}; }
 static EpdRect body_rect(void) {
     // 边距档每级 16px，只收窄正文，不动页脚与工具条。/ Margin tiers inset 16 px each, narrowing only the body.
-    EpdRect body = ui_product_reader_body(ttf_font_is_builtin());
+    EpdRect body = ui_product_reader_body(s_font_notice);
     int inset = (int)app_settings_book_margin() * 16;
     body.x += inset; body.width -= 2 * inset;
     return body;
@@ -246,8 +253,8 @@ static EpdRect progress_rect(void) {
     EpdRect b = ui_bar_rect(0, 1);
     return (EpdRect){b.x, UI_BAR_TOP, b.width, UI_BAR_H};
 }
-// 目录页顶部三页签占 176..244，列表从 264 起。/ The three TOC tabs own 176..244; rows start at 264.
-static EpdRect toc_tab_rect(int i) { return ui_row_rect(i, 3, 176, 68); }
+// 目录页顶部三页签占 184..264，列表从 264 起。/ The three TOC tabs own 184..264; rows start at 264.
+static EpdRect toc_tab_rect(int i) { return ui_row_rect(i, 3, 184, 80); }
 static EpdRect row_rect(int row, bool toc) {
     if (!toc && s_view != BULK) return ui_product_shelf_rect(row);
     int h = toc ? (UI_CONTENT_BOTTOM - 264) / BOOK_TOC_ROWS : UI_BTN_H + UI_GAP;
@@ -620,7 +627,7 @@ static void draw_reader(uint8_t* fb, size_t page) {
     footer_status(status, sizeof(status));
     ui_product_reader_chrome(fb, s_save_failed ? "进度未保存，稍后重试" : s_title,
                              (unsigned)page + 1, book_layout_complete() ? (unsigned)book_layout_page_count() : 0,
-                             percent(page), ttf_font_is_builtin(), status, app_settings_footer_bar());
+                             percent(page), s_font_notice, status, app_settings_footer_bar());
     EpdRect track = progress_rect();
     size_t chapters = book_chapter_count();
     if (chapters <= 40 && book_total_bytes()) {
@@ -630,7 +637,13 @@ static void draw_reader(uint8_t* fb, size_t page) {
         }
     }
     if (s_toolbar) {
-        ui_product_reader_tools(fb, s_title, s_px, app_settings_book_night(), s_pressed_control);
+        if (s_toolbar_sizes) ui_product_reader_sizes(fb, s_title, s_px, s_pressed_control);
+        else ui_product_reader_tools(fb, s_title, s_px, app_settings_book_night(), s_pressed_control);
+        if (s_message[0]) {
+            EpdRect notice = {UI_MARGIN, 864, ui_content_width(), 32};
+            ui_clear_rect_fast(fb, notice);
+            ui_product_title(fb, notice, s_message, 24, 1);
+        }
     }
     ui_draw_menu_handle(fb, false);
 }
@@ -810,6 +823,7 @@ static void draw_toc(app_ctx_t* ctx, uint8_t* fb) {
         ui_text_vc(fb, r.x + r.width / 2, r.y + r.height / 2, 28,
                    i == 1 ? mark_label : i == 2 ? "跳转" : "目录", EPD_DRAW_ALIGN_CENTER, false);
     }
+    if (s_toc_tab == 1) ui_draw_button(fb, mark_manage_rect(), s_mark_manage ? "完成" : "管理书签", false);
     int rows = view_rows();
     int count = toc_row_count();
     for (int row = 0; row < rows; ++row) {
@@ -844,13 +858,26 @@ static void draw_toc(app_ctx_t* ctx, uint8_t* fb) {
         ui_text_vc(fb, r.x + UI_PAD, r.y + r.height / 2, UI_PX_BTN, name, EPD_DRAW_ALIGN_LEFT, false);
         ui_text_vc(fb, r.x + r.width - UI_PAD, r.y + r.height / 2, UI_PX_CAPTION, mark, EPD_DRAW_ALIGN_RIGHT, false);
     }
-    const char* hint = s_message[0] ? s_message : s_toc_tab == 1 ? "点按跳转 · 长按删除 · 首行为本页加书签"
+    const char* hint = s_message[0] ? s_message : s_toc_tab == 1 ? s_mark_manage ? "点击书签选择删除，确认后生效" : "点按跳转 · 管理书签可删除"
                                  : s_toc_tab == 2 ? "按全书字节位置估算跳转" : "点击章节直达";
     ui_text(fb, UI_MARGIN, UI_CONTENT_BOTTOM - 8, UI_PX_CAPTION, hint, EPD_DRAW_ALIGN_LEFT, false);
     draw_control(fb, ui_bar_rect(0, 3), "上一页", 100);
     draw_control(fb, ui_bar_rect(1, 3), "返回阅读", 101);
     draw_control(fb, ui_bar_rect(2, 3), "下一页", 102);
     ui_draw_menu_handle(fb, false);
+    if (s_mark_delete >= 0 && (size_t)s_mark_delete < s_mark_count) {
+        EpdRect panel = {UI_MARGIN - 16, 410, ui_content_width() + 32, 326};
+        ui_clear_rect_fast(fb, panel);
+        ui_draw_round_rect(fb, panel, UI_BTN_RADIUS, UI_GRAY_BLACK);
+        ui_text(fb, UI_MARGIN, 444, 36, "删除这条书签？", EPD_DRAW_ALIGN_LEFT, false);
+        char detail[96];
+        snprintf(detail, sizeof(detail), "第 %u 节 · %u%% · 不改变阅读位置",
+                 (unsigned)s_marks[s_mark_delete].chapter + 1, (unsigned)s_marks[s_mark_delete].pct);
+        ui_product_title(fb, (EpdRect){UI_MARGIN, 494, ui_content_width(), 44}, s_title, 28, 1);
+        ui_product_title(fb, (EpdRect){UI_MARGIN, 548, ui_content_width(), 64}, detail, 24, 2);
+        ui_draw_button(fb, mark_confirm_rect(0), "保留书签", true);
+        ui_draw_button(fb, mark_confirm_rect(1), "确认删除", true);
+    }
 }
 static void render(app_ctx_t* ctx, uint8_t* fb) {
     lock_draw();
@@ -1047,6 +1074,8 @@ static bool load_chapter(app_ctx_t* ctx, size_t chapter, size_t offset, bool las
     lock_draw();
     invalidate_prep();
     apply_typography();
+    bool old_notice = s_font_notice;
+    s_font_notice = !ttf_font_supports_text(loaded.utf8, loaded.len);
     bool ok = book_layout_begin_blocks(loaded.utf8, loaded.len, loaded.blocks, loaded.count, body_rect(), s_px);
     // 先完成续读页；其余页由 tick 分批排版，上一章末页仍须定位到末尾。
     // Finish the resume page first; ticks paginate the rest, while previous-chapter navigation needs its end.
@@ -1055,6 +1084,7 @@ static bool load_chapter(app_ctx_t* ctx, size_t chapter, size_t offset, bool las
         ok = book_layout_extend(2);
     if (!ok) {
         html_text_free(&loaded);
+        s_font_notice = old_notice;
         bool restored = s_text && book_layout_build_blocks(s_text, s_text_len, s_blocks, s_block_count, body_rect(), s_px);
         unlock_draw();
         if (!restored) {
@@ -1141,6 +1171,7 @@ static bool open_book(app_ctx_t* ctx, const char* path) {
         return false;
     }
     s_view = READING;
+    s_mark_delete = -1; s_mark_manage = s_toolbar_sizes = s_layout_group = false;
     s_toolbar = s_clear_confirm = s_batch_confirm = false;
     s_turns = s_unsaved = 0;
     s_size_settle_ms = 0;
@@ -1472,9 +1503,11 @@ static void goto_font(app_ctx_t* ctx) {
 
 /* ---- 排版菜单 / Typography menu ---- */
 #define BOOK_LAYOUT_ROWS 12
-// 12 行收 pitch 到 74，末行 990..1056，说明行仍在底栏上方。
-// Twelve rows tighten the pitch to 74; the last row ends at 1056, keeping the note above the bar.
-static EpdRect layout_row_rect(int i) { return (EpdRect){UI_MARGIN, 176 + i * 74, ui_content_width(), 66}; }
+// 两组各六行，触区保持 96 高。
+// Two groups of six rows keep touch targets 96 pixels high.
+static bool layout_visible(int i) { return (i >= 6) == s_layout_group; }
+static EpdRect layout_tab_rect(int i) { return ui_row_rect(i, 2, 184, 80); }
+static EpdRect layout_row_rect(int i) { return (EpdRect){UI_MARGIN, 292 + (i % 6) * 112, ui_content_width(), 96}; }
 static const char* layout_value(int row) {
     switch (row) {
         case 0: return ttf_font_is_builtin() ? "内置子集 ›" : "TF 字体 ›";
@@ -1498,11 +1531,18 @@ static const char* layout_value(int row) {
 static const uint8_t k_gc_steps[] = {0, 3, 5, 10, 14, 20, 30};
 static void draw_layout_menu(uint8_t* fb) {
     ui_clear_page(fb);
-    ui_product_header(fb, "排版", "行距 · 边距 · 缩进 · 辅助线 · 输入");
+    ui_product_header(fb, "更多设置", "排版与翻页分组，调整保留阅读位置");
+    for (int i = 0; i < 2; ++i) {
+        EpdRect r = layout_tab_rect(i);
+        if ((bool)i == s_layout_group) ui_draw_selected_round_rect(fb, r, UI_BTN_RADIUS);
+        else ui_draw_round_rect(fb, r, UI_BTN_RADIUS, UI_GRAY_BLACK);
+        ui_text_vc(fb, r.x + r.width / 2, r.y + r.height / 2, 30, i ? "翻页与显示" : "文字排版", EPD_DRAW_ALIGN_CENTER, false);
+    }
     static const char* labels[] = {"正文字体", "行距", "页边距", "首行缩进", "段落间距",
                                    "行辅助线", "对齐方式", "点击翻页", "晃动翻页*", "夜间模式", "自动翻页", "清残影周期"};
     char gc_value[16] = {0};
     for (int i = 0; i < BOOK_LAYOUT_ROWS; ++i) {
+        if (!layout_visible(i)) continue;
         EpdRect r = layout_row_rect(i);
         if (s_pressed_control == 800 + i) ui_draw_pressed_round_rect(fb, r, UI_BTN_RADIUS);
         const char* value = layout_value(i);
@@ -1543,7 +1583,10 @@ static app_redraw_t relayout_menu(app_ctx_t* ctx) {
     return APP_REDRAW_PAGE;
 }
 static app_redraw_t layout_action(app_ctx_t* ctx, uint16_t x, uint16_t y) {
-    for (int i = 0; i < BOOK_LAYOUT_ROWS; ++i) if (ui_rect_hit(layout_row_rect(i), x, y)) {
+    for (int i = 0; i < 2; ++i) if (ui_rect_hit(layout_tab_rect(i), x, y)) {
+        s_layout_group = i != 0; return APP_REDRAW_PAGE;
+    }
+    for (int i = 0; i < BOOK_LAYOUT_ROWS; ++i) if (layout_visible(i) && ui_rect_hit(layout_row_rect(i), x, y)) {
         invalidate_prep();
         // 菜单保持打开，值就地刷新；“返回阅读”或中键退出后才看到正文效果。
         // The menu stays open with values refreshing in place; body effects show after Return or the middle key.
@@ -1700,6 +1743,21 @@ static app_redraw_t ended_action(app_ctx_t* ctx, uint16_t x, uint16_t y) {
 }
 // 目录页动作：页签 + 当前列表。/ TOC actions: tabs plus the active list.
 static app_redraw_t toc_action(app_ctx_t* ctx, uint16_t x, uint16_t y) {
+    if (s_mark_delete >= 0) {
+        for (int i = 0; i < 2; ++i) if (ui_rect_hit(mark_confirm_rect(i), x, y)) {
+            if (i == 1) {
+                esp_err_t err = book_marks_remove_at(s_path, (size_t)s_mark_delete);
+                copy_text(s_message, sizeof(s_message), err == ESP_OK ? "已删除书签" : "删除失败，请重试");
+                marks_reload();
+            }
+            s_mark_delete = -1;
+            return APP_REDRAW_PAGE;
+        }
+        return APP_REDRAW_NONE;
+    }
+    if (s_toc_tab == 1 && ui_rect_hit(mark_manage_rect(), x, y)) {
+        s_mark_manage = !s_mark_manage; return APP_REDRAW_PAGE;
+    }
     for (int i = 0; i < 3; ++i) if (ui_rect_hit(toc_tab_rect(i), x, y)) {
         if (s_toc_tab != (uint8_t)i) { s_toc_tab = (uint8_t)i; ctx->leaf = 0; }
         if (i == 1) marks_reload();
@@ -1718,12 +1776,14 @@ static app_redraw_t toc_action(app_ctx_t* ctx, uint16_t x, uint16_t y) {
         }
         if (s_toc_tab == 1) {
             if (!index) {
-                book_marks_add(s_path, (uint16_t)s_chapter,
+                esp_err_t err = book_marks_add(s_path, (uint16_t)s_chapter,
                                (uint32_t)book_layout_page_start_offset(s_page), (uint8_t)percent(s_page));
+                copy_text(s_message, sizeof(s_message), err == ESP_OK ? "已添加本页书签" : "书签保存失败，请重试");
                 marks_reload();
                 return APP_REDRAW_PAGE;
             }
             if ((size_t)index <= s_mark_count) {
+                if (s_mark_manage) { s_mark_delete = index - 1; return APP_REDRAW_PAGE; }
                 book_mark_t* m = &s_marks[index - 1];
                 save_progress();
                 if (m->chapter < book_chapter_count() && load_chapter(ctx, m->chapter, m->byte_off, false)) {
@@ -1744,6 +1804,7 @@ static app_redraw_t toc_action(app_ctx_t* ctx, uint16_t x, uint16_t y) {
     return APP_REDRAW_NONE;
 }
 static app_redraw_t action_at(app_ctx_t* ctx, uint16_t x, uint16_t y) {
+    if (s_view == TOC && s_mark_delete >= 0) return toc_action(ctx, x, y);
     if (s_resume_path[0]) {
         for (int i = 0; i < 2; ++i) if (ui_rect_hit(ui_row_rect(i, 2, 620, UI_BTN_H), x, y)) {
             return resume_choice(ctx, i != 0);
@@ -1765,14 +1826,28 @@ static app_redraw_t action_at(app_ctx_t* ctx, uint16_t x, uint16_t y) {
     if (s_view == READING) {
         if (s_image_open) return close_image();
         if (s_ended) return ended_action(ctx, x, y);
-        if (ttf_font_is_builtin() && y < 56) { goto_font(ctx); return APP_REDRAW_NONE; }
+        if (s_font_notice && y < 88) { goto_font(ctx); return APP_REDRAW_NONE; }
         if (s_toolbar) {
             for (int i = 0; i < BOOK_TOOL_COUNT; ++i) if (ui_rect_hit(tool_rect(i), x, y)) {
                 invalidate_prep();
+                if (s_toolbar_sizes) {
+                    if (i == 0) s_toolbar_sizes = false;
+                    else if (i == 1 || i == 2) return resize_text(ctx, i == 1 ? -1 : 1);
+                    else if (i == 3) { goto_font(ctx); return APP_REDRAW_NONE; }
+                    else if (i == 4) { save_progress(); s_toolbar = false; s_layout_group = false; s_view = LAYOUT; }
+                    else { save_progress(); free_book(); s_view = SHELF; scan_shelf(ctx); }
+                    return APP_REDRAW_PAGE;
+                }
                 if (i == 0) { save_progress(); s_view = TOC; ctx->leaf = s_toc_tab == 0 ? s_chapter / BOOK_TOC_ROWS : 0; marks_reload(); }
-                else if (i == 1 || i == 2) return resize_text(ctx, i == 1 ? -1 : 1);
-                else if (i == 3) { save_progress(); s_toolbar = false; s_view = LAYOUT; }
-                else if (i == 4) { app_settings_set_book_night(!app_settings_book_night()); invalidate_prep(); }
+                else if (i == 1) {
+                    esp_err_t err = book_marks_add(s_path, (uint16_t)s_chapter,
+                        (uint32_t)book_layout_page_start_offset(s_page), (uint8_t)percent(s_page));
+                    copy_text(s_message, sizeof(s_message), err == ESP_OK ? "已添加本页书签" : "书签保存失败，请重试");
+                    marks_reload();
+                }
+                else if (i == 2) { s_toolbar_sizes = true; s_message[0] = 0; }
+                else if (i == 3) { save_progress(); s_toolbar = false; s_layout_group = false; s_view = LAYOUT; }
+                else if (i == 4) return APP_REDRAW_FULL;
                 else { save_progress(); free_book(); s_view = SHELF; scan_shelf(ctx); }
                 return APP_REDRAW_PAGE;
             }
@@ -1790,7 +1865,7 @@ static app_redraw_t action_at(app_ctx_t* ctx, uint16_t x, uint16_t y) {
             if (x < UI_LOCK_WIDTH * 3 / 10) return turn_page(ctx, -1);
             if (x >= UI_LOCK_WIDTH * 7 / 10) return turn_page(ctx, 1);
         }
-        s_toolbar = !s_toolbar;
+        s_toolbar_sizes = false; s_toolbar = !s_toolbar;
         invalidate_prep();
         return APP_REDRAW_PAGE;
     }
@@ -1878,6 +1953,7 @@ static void on_enter(app_ctx_t* ctx) {
     // Transfer has stopped and joined HTTP; safely unregister only invalidated paths.
     pending_drop_invalidated();
     s_store_revision = book_store_revision();
+    s_mark_delete = -1; s_mark_manage = s_toolbar_sizes = s_layout_group = false;
     s_toolbar = s_clear_confirm = s_batch_confirm = false;
     s_pressed_control = -1;
     s_du_count = 0;
@@ -1925,6 +2001,7 @@ static void book_on_media_lost(app_ctx_t* ctx) {
     s_view = SHELF;
     s_count = s_visible_count = 0;
     ctx->leaf = 0;
+    s_mark_delete = -1; s_mark_manage = s_toolbar_sizes = s_layout_group = false;
     s_toolbar = s_clear_confirm = s_batch_confirm = false;
     s_pressed_control = -1;
     s_scan_pending = true;
@@ -2004,6 +2081,14 @@ static int control_at(app_ctx_t* ctx, uint16_t x, uint16_t y, EpdRect* rect) {
         if (ui_rect_hit(*rect, x, y)) return 100 + i;
     }
     if (s_view == TOC) {
+        if (s_mark_delete >= 0) {
+            for (int i = 0; i < 2; ++i) {
+                *rect = mark_confirm_rect(i);
+                if (ui_rect_hit(*rect, x, y)) return 970 + i;
+            }
+            return -1;
+        }
+        if (s_toc_tab == 1) { *rect = mark_manage_rect(); if (ui_rect_hit(*rect, x, y)) return 972; }
         for (int i = 0; i < 3; ++i) {
             *rect = toc_tab_rect(i);
             if (ui_rect_hit(*rect, x, y)) return 900 + i;
@@ -2025,7 +2110,9 @@ static int control_at(app_ctx_t* ctx, uint16_t x, uint16_t y, EpdRect* rect) {
         if (s_view == SHELF && s_save_failed && ui_rect_hit(*rect, x, y)) return 113;
     }
     if (s_view == LAYOUT) {
+        for (int i = 0; i < 2; ++i) { *rect = layout_tab_rect(i); if (ui_rect_hit(*rect, x, y)) return 820 + i; }
         for (int i = 0; i < BOOK_LAYOUT_ROWS; ++i) {
+            if (!layout_visible(i)) continue;
             *rect = layout_row_rect(i);
             if (ui_rect_hit(*rect, x, y)) return 800 + i;
         }
@@ -2077,8 +2164,7 @@ static app_redraw_t gesture_event(app_ctx_t* ctx, const ui_gesture_event_t* ev) 
         if (s_view == TOC && s_toc_tab == 1 && s_text && start >= 931 && start <= 939) {
             int index = ctx->leaf * BOOK_TOC_ROWS + (start - 930);
             if (index >= 1 && (size_t)index <= s_mark_count) {
-                (void)book_marks_remove_at(s_path, (size_t)index - 1);
-                marks_reload();
+                s_mark_delete = index - 1;
                 return APP_REDRAW_PAGE;
             }
         }
@@ -2120,6 +2206,10 @@ static app_redraw_t on_key(app_ctx_t* ctx, int key) {
         if (key == UI_KEY_2) { s_resume_path[0] = 0; ctx->request_menu = true; }
         return APP_REDRAW_PAGE;
     }
+    if (s_mark_delete >= 0) {
+        if (key == UI_KEY_1 || key == UI_KEY_2) { s_mark_delete = -1; return APP_REDRAW_PAGE; }
+        return APP_REDRAW_NONE;
+    }
     if (s_scan_pending || s_clear_confirm) return APP_REDRAW_NONE;
     if (s_view == MANAGE) {
         if (key == UI_KEY_1) { s_view = SHELF; return APP_REDRAW_PAGE; }
@@ -2130,7 +2220,7 @@ static app_redraw_t on_key(app_ctx_t* ctx, int key) {
     if (key == UI_KEY_2) {
         if (s_view == BULK) { int first = ctx->leaf * BULK_ROWS; s_view = SHELF; ctx->leaf = first / BOOK_ROWS; }
         else if (s_view == READING) {
-            s_toolbar = !s_toolbar;
+            s_toolbar_sizes = false; s_toolbar = !s_toolbar;
             invalidate_prep();
         } else if ((s_view == TOC || s_view == LAYOUT) && s_text) {
             s_view = READING;
@@ -2247,6 +2337,7 @@ static app_redraw_t on_tick(app_ctx_t* ctx) {
         return APP_REDRAW_AREA;
     }
     if (s_text && strcmp(s_font_path, ttf_font_path())) {
+        s_font_notice = !ttf_font_supports_text(s_text, s_text_len);
         size_t off = book_layout_page_start_offset(s_page);
         save_progress();
         lock_draw();

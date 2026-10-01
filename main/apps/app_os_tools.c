@@ -14,7 +14,7 @@
 #include <stdio.h>
 #define TOOL_ROWS 7
 static EpdRect row_rect(int i) { return (EpdRect){UI_MARGIN, 216 + i * 118, ui_content_width(), 108}; }
-static EpdRect back_rect(void) { return (EpdRect){470, 68, 174, 68}; }
+static EpdRect back_rect(void) { return ui_product_back_rect(); }
 static int leaves(void) { return (app_diagnostic_count() + TOOL_ROWS - 1) / TOOL_ROWS; }
 static void render(app_ctx_t* ctx, uint8_t* fb) {
     ui_clear_page(fb);

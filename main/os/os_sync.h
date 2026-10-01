@@ -86,8 +86,24 @@ bool os_sync_progress_decode(const char* in, uint32_t* file_size, uint16_t* chap
 /* 设备侧粘合（os_sync_pico.c），宿主测试不链接。/ Device glue (os_sync_pico.c); host tests never link it. */
 /// 明文密码即时转 MD5 保存。/ Convert a plain password to MD5 and store it at once.
 void os_sync_set_password(const char* plain);
-os_sync_result_t os_sync_device_auth(char* note, size_t cap);
-os_sync_result_t os_sync_device_register(char* note, size_t cap);
-/// 推/拉“最后一本书”的进度；note 回填页面消息。/ Push/pull the last book's progress; note feeds the page message.
-os_sync_result_t os_sync_push_last(char* note, size_t cap);
-os_sync_result_t os_sync_pull_last(char* note, size_t cap);
+typedef enum {
+    OS_SYNC_JOB_AUTH, ///< 测试账号 / Test credentials
+    OS_SYNC_JOB_REGISTER, ///< 注册账号 / Register credentials
+    OS_SYNC_JOB_PUSH, ///< 上传快照 / Push a snapshot
+    OS_SYNC_JOB_PULL, ///< 下载待确认位置 / Pull a position for confirmation
+} os_sync_job_t;
+/// UI 任务准备快照，最多一个后台请求；note 给出启动结果。/ UI prepares a snapshot for at most one worker; note reports admission.
+bool os_sync_job_start(os_sync_job_t job, char* note, size_t cap);
+/// UI 非阻塞接收结果；下载成功只准备待确认记录，不写 NVS。/ UI polls without blocking; successful pulls stage a record without NVS writes.
+bool os_sync_job_poll(char* note, size_t cap);
+/// 是否有正在执行的请求。/ Whether a request is running.
+bool os_sync_job_busy(void);
+/// 是否有待用户确认的下载进度。/ Whether a downloaded position awaits confirmation.
+bool os_sync_pull_pending(void);
+/// UI 确认时校验文件与原进度未变，再保存；取消保留本地。/ UI confirms only unchanged file/progress snapshots; cancellation preserves local progress.
+bool os_sync_pull_confirm(bool apply, char* note, size_t cap);
+/// 离页取消并收齐后台请求，再释放快照。/ Cancel and join the worker before releasing snapshots on exit.
+void os_sync_job_cancel(void);
+
+/// 睡眠钩子仅置取消位，不等待网络。/ Sleep hooks only set the cancellation bit and never wait for the network.
+void os_sync_job_request_cancel(void);

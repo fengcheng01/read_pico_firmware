@@ -8,14 +8,15 @@
  * verifies certificates, never skipped), document identity is the KOReader
  * partial MD5, and push/pull act on the last-read book's progress record.
  *
- * 冻结：只在 UI 任务上随传书 STA 会话运行；不做后台轮询；密码仅以 MD5 落盘；
+ * 冻结：用户批准非阻塞同步；UI 准备/应用快照，单个后台请求只做网络；离页取消并收齐；密码仅以 MD5 落盘；
  * 拉取只在文件大小匹配时套用 rp1 精确位置，否则按百分比近似并明示。
- * Frozen: Runs only on the UI task inside transfer STA sessions with no
+ * Frozen: User-approved nonblocking sync: UI prepares/applies snapshots, one worker only networks, and exit cancels/joins; no
  * background polling; the password persists only as MD5; pulls apply the exact
  * rp1 position only when file sizes match, otherwise approximating by
  * percentage and saying so.
  */
 #include "os_sync.h"
+#include "os_sync_http.h"
 #include "book_progress.h"
 #include "esp_crt_bundle.h"
 #include "esp_http_client.h"
@@ -26,41 +27,58 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <stdatomic.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/semphr.h"
 
 static const char* TAG = "os_sync";
 
+static bool sync_cancelled(void);
+typedef struct { esp_http_client_handle_t client; int64_t deadline; } sync_stream_ctx_t;
+static bool stream_active(void* arg) {
+    sync_stream_ctx_t* ctx = arg;
+    return !sync_cancelled() && esp_timer_get_time() < ctx->deadline;
+}
+static int stream_write(void* arg, const char* data, size_t size) {
+    sync_stream_ctx_t* ctx = arg;
+    return esp_http_client_write(ctx->client, data, (int)size);
+}
+static int stream_read(void* arg, char* data, size_t size) {
+    sync_stream_ctx_t* ctx = arg;
+    return esp_http_client_read(ctx->client, data, (int)size);
+}
+static bool stream_complete(void* arg) {
+    sync_stream_ctx_t* ctx = arg;
+    return esp_http_client_is_complete_data_received(ctx->client);
+}
 static int sync_request(const char* method, const char* url, const char* user, const char* key,
                         const char* content_type, const char* body, char* resp, size_t resp_cap) {
+    if (resp && resp_cap) resp[0] = 0;
     esp_http_client_config_t config = {
         .url = url,
         .method = strcmp(method, "PUT") == 0 ? HTTP_METHOD_PUT :
                   strcmp(method, "POST") == 0 ? HTTP_METHOD_POST : HTTP_METHOD_GET,
-        .timeout_ms = 10000,
-        // 传书页 STA 会话期间调用；https 需有效证书，绝不跳过校验。
-        // Called during the transfer STA session; https needs a valid certificate and never skips verification.
+        .timeout_ms = 1000,
         .crt_bundle_attach = strncmp(url, "https://", 8) == 0 ? esp_crt_bundle_attach : NULL,
         .buffer_size = 1024,
     };
     esp_http_client_handle_t client = esp_http_client_init(&config);
     if (!client) return -1;
-    esp_http_client_set_header(client, "Accept", "application/vnd.koreader.v1+json");
-    if (user && key) {
-        esp_http_client_set_header(client, "x-auth-user", user);
-        esp_http_client_set_header(client, "x-auth-key", key);
-    }
-    if (content_type) esp_http_client_set_header(client, "Content-Type", content_type);
+    sync_stream_ctx_t ctx = {client, esp_timer_get_time() + 10000000};
+    os_sync_stream_t io = {stream_write, stream_read, stream_complete, stream_active, &ctx};
     int status = -1;
-    // open/fetch/read 流程才能读到响应体；perform 会把流消费掉。
-    // The open/fetch/read flow is required to read the body; perform consumes the stream.
-    if (esp_http_client_open(client, body ? (int)strlen(body) : 0) == ESP_OK) {
-        if (body && esp_http_client_write(client, body, (int)strlen(body)) >= 0) {}
-        (void)esp_http_client_fetch_headers(client);
-        status = esp_http_client_get_status_code(client);
-        if (resp && resp_cap) {
-            int read = esp_http_client_read(client, resp, (int)resp_cap - 1);
-            if (read >= 0) resp[read] = 0;
-        }
+    bool headers_ok = esp_http_client_set_header(client, "Accept", "application/vnd.koreader.v1+json") == ESP_OK;
+    if (user && key) {
+        headers_ok &= esp_http_client_set_header(client, "x-auth-user", user) == ESP_OK;
+        headers_ok &= esp_http_client_set_header(client, "x-auth-key", key) == ESP_OK;
     }
+    if (content_type) headers_ok &= esp_http_client_set_header(client, "Content-Type", content_type) == ESP_OK;
+    if (headers_ok && stream_active(&ctx) &&
+        esp_http_client_open(client, body ? (int)strlen(body) : 0) == ESP_OK &&
+        os_sync_http_write(&io, body) && stream_active(&ctx) &&
+        esp_http_client_fetch_headers(client) >= 0 && os_sync_http_read(&io, resp, resp_cap))
+        status = esp_http_client_get_status_code(client);
     esp_http_client_cleanup(client);
     ESP_LOGI(TAG, "%s %s -> %d", method, url, status);
     return status;
@@ -115,121 +133,109 @@ void os_sync_set_password(const char* plain) {
     app_settings_set_sync_key(key);
 }
 
-/// 上传最后一本书的进度；note 汇总结果给页面显示。/ Push the last book's progress; note carries the page message.
-os_sync_result_t os_sync_push_last(char* note, size_t cap) {
-    os_sync_config_t config;
-    load_config(&config);
-    char path[288];
-    if (!note || !cap) return OS_SYNC_IO;
-    note[0] = 0;
-    if (!os_sync_config_ready(&config)) {
-        snprintf(note, cap, "请先设置同步账号");
-        return OS_SYNC_NO_CONFIG;
+/* ---- 单请求快照 / Single-request snapshot ---- */
+static SemaphoreHandle_t s_done;
+static bool s_running, s_pending;
+static atomic_bool s_cancel;
+static os_sync_job_t s_job;
+static os_sync_config_t s_config;
+static char s_path[288], s_doc[33], s_position[OS_SYNC_PROGRESS_MAX];
+static book_progress_t s_local, s_remote;
+static bool s_has_local;
+static uint32_t s_size;
+static float s_percent;
+static os_sync_result_t s_result;
+static bool sync_cancelled(void) { return atomic_load(&s_cancel); }
+
+static void sync_worker(void* arg) {
+    (void)arg;
+    if (s_job == OS_SYNC_JOB_AUTH) s_result = os_sync_auth(&s_config);
+    else if (s_job == OS_SYNC_JOB_REGISTER) s_result = os_sync_register(&s_config);
+    else if (s_job == OS_SYNC_JOB_PUSH) s_result = os_sync_push(&s_config, s_doc, s_position, s_percent);
+    else s_result = os_sync_pull(&s_config, s_doc, s_position, sizeof(s_position), &s_percent);
+    // 信号发出后不再访问快照，UI 可以安全接收或离页。/ After signaling, never access snapshots; UI may receive or exit safely.
+    xSemaphoreGive(s_done);
+    vTaskDelete(NULL);
+}
+bool os_sync_job_busy(void) { return s_running; }
+bool os_sync_pull_pending(void) { return s_pending; }
+bool os_sync_job_start(os_sync_job_t job, char* note, size_t cap) {
+    if (!note || !cap || s_running || s_pending || job < OS_SYNC_JOB_AUTH || job > OS_SYNC_JOB_PULL) return false;
+    load_config(&s_config);
+    if (!os_sync_config_ready(&s_config)) { snprintf(note, cap, "请先设置同步账号"); return false; }
+    s_job = job;
+    if (job == OS_SYNC_JOB_PUSH || job == OS_SYNC_JOB_PULL) {
+        struct stat st;
+        if (!book_progress_last_path(s_path, sizeof(s_path)) || !s_path[0] ||
+            stat(s_path, &st) || st.st_size <= 0 || st.st_size > UINT32_MAX || !sync_doc_id(s_path, s_doc)) {
+            snprintf(note, cap, "图书文件或阅读记录不可用"); return false;
+        }
+        s_size = (uint32_t)st.st_size;
+        memset(&s_local, 0, sizeof(s_local));
+        s_has_local = book_progress_load(s_path, s_size, &s_local);
+        if (job == OS_SYNC_JOB_PUSH && !s_has_local) { snprintf(note, cap, "还没有阅读记录"); return false; }
+        if (job == OS_SYNC_JOB_PUSH) {
+            if (!os_sync_progress_encode(s_position, sizeof(s_position), s_size, s_local.chapter, s_local.byte_off, s_local.px)) return false;
+            s_percent = s_local.pct > 100 ? 1.0f : s_local.pct / 100.0f;
+        }
     }
-    if (!book_progress_last_path(path, sizeof(path)) || !path[0]) {
-        snprintf(note, cap, "还没有阅读记录");
-        return OS_SYNC_IO;
+    if (!s_done) s_done = xSemaphoreCreateBinary();
+    if (!s_done) { snprintf(note, cap, "内存不足，请重试"); return false; }
+    atomic_store(&s_cancel, false);
+    s_running = true;
+    if (xTaskCreate(sync_worker, "progress_sync", 8192, NULL, 3, NULL) != pdPASS) {
+        s_running = false; snprintf(note, cap, "无法启动同步，请重试"); return false;
     }
+    snprintf(note, cap, "%s", job == OS_SYNC_JOB_PULL ? "正在下载，完成后确认位置…" : "正在同步，可返回或停止…");
+    return true;
+}
+bool os_sync_job_poll(char* note, size_t cap) {
+    if (!s_running || xSemaphoreTake(s_done, 0) != pdTRUE) return false;
+    s_running = false;
+    if (sync_cancelled()) s_result = OS_SYNC_OFFLINE;
+    if (s_result != OS_SYNC_OK || s_job != OS_SYNC_JOB_PULL) {
+        snprintf(note, cap, "%s", os_sync_result_name(s_result)); return true;
+    }
+    memset(&s_remote, 0, sizeof(s_remote));
+    uint32_t size, off;
+    uint16_t chapter;
+    uint8_t px;
+    bool exact = os_sync_progress_decode(s_position, &size, &chapter, &off, &px) && size == s_size;
+    s_remote.file_size = s_size;
+    s_remote.px = app_settings_book_px();
+    if (exact) {
+        s_remote.chapter = chapter; s_remote.byte_off = off;
+        s_remote.px = px >= 36 && px <= 72 ? px : 48;
+    }
+    s_remote.pct = (uint8_t)(s_percent * 100 + 0.5f);
+    s_pending = true;
+    snprintf(note, cap, "本地 %u%% → 远端 %u%% · %s", (unsigned)s_local.pct, (unsigned)s_remote.pct,
+             exact ? "精确位置" : "近似位置");
+    return true;
+}
+bool os_sync_pull_confirm(bool apply, char* note, size_t cap) {
+    if (!s_pending) return false;
+    s_pending = false;
+    if (!apply) { snprintf(note, cap, "已保留本地阅读位置"); return true; }
     struct stat st;
-    if (stat(path, &st) || st.st_size <= 0 || st.st_size > 0xFFFFFFFF) {
-        snprintf(note, cap, "图书文件不可用");
-        return OS_SYNC_IO;
-    }
     char doc[33];
-    book_progress_t progress = {0};
-    if (!sync_doc_id(path, doc) || !book_progress_load(path, (uint32_t)st.st_size, &progress)) {
-        snprintf(note, cap, "无法计算本书标识或进度");
-        return OS_SYNC_IO;
+    book_progress_t current = {0};
+    bool has = book_progress_load(s_path, s_size, &current);
+    bool unchanged = has == s_has_local && (!has || (current.last_open_s == s_local.last_open_s &&
+        current.chapter == s_local.chapter && current.byte_off == s_local.byte_off && current.pct == s_local.pct));
+    if (stat(s_path, &st) || st.st_size != s_size || !sync_doc_id(s_path, doc) || strcmp(doc, s_doc) || !unchanged) {
+        snprintf(note, cap, "图书或本地进度已变化，请重新下载"); return false;
     }
-    char rp1[OS_SYNC_PROGRESS_MAX];
-    os_sync_progress_encode(rp1, sizeof(rp1), (uint32_t)st.st_size, progress.chapter,
-                            progress.byte_off, progress.px);
-    os_sync_result_t result = os_sync_push(&config, doc, rp1, progress.pct > 100 ? 1.0f : progress.pct / 100.0f);
-    snprintf(note, cap, "%s", os_sync_result_name(result));
-    return result;
+    if (book_progress_save(s_path, &s_remote) != ESP_OK || book_progress_set_last_path(s_path) != ESP_OK) {
+        snprintf(note, cap, "进度保存失败，请重新下载"); return false;
+    }
+    snprintf(note, cap, "已应用远端位置 %u%%", (unsigned)s_remote.pct);
+    return true;
 }
-
-/// 拉取最后一本书的远端进度；大小匹配用 rp1 精确恢复，否则按百分比近似。
-/// / Pull the last book's remote progress; exact rp1 restore on size match, else a percentage approximation.
-os_sync_result_t os_sync_pull_last(char* note, size_t cap) {
-    os_sync_config_t config;
-    load_config(&config);
-    char path[288], doc[33], remote[OS_SYNC_PROGRESS_MAX];
-    float percent = 0;
-    if (!note || !cap) return OS_SYNC_IO;
-    note[0] = 0;
-    if (!os_sync_config_ready(&config)) {
-        snprintf(note, cap, "请先设置同步账号");
-        return OS_SYNC_NO_CONFIG;
-    }
-    if (!book_progress_last_path(path, sizeof(path)) || !path[0]) {
-        snprintf(note, cap, "还没有阅读记录");
-        return OS_SYNC_IO;
-    }
-    struct stat st;
-    if (stat(path, &st) || st.st_size <= 0 || st.st_size > 0xFFFFFFFF) {
-        snprintf(note, cap, "图书文件不可用");
-        return OS_SYNC_IO;
-    }
-    if (!sync_doc_id(path, doc)) {
-        snprintf(note, cap, "无法计算本书标识");
-        return OS_SYNC_IO;
-    }
-    os_sync_result_t result = os_sync_pull(&config, doc, remote, sizeof(remote), &percent);
-    if (result != OS_SYNC_OK) {
-        snprintf(note, cap, "%s", os_sync_result_name(result));
-        return result;
-    }
-    book_progress_t progress = {0};
-    uint32_t size = 0, off = 0;
-    uint16_t chapter = 0;
-    uint8_t px = 48;
-    if (os_sync_progress_decode(remote, &size, &chapter, &off, &px) && size == (uint32_t)st.st_size) {
-        progress.file_size = size;
-        progress.chapter = chapter;
-        progress.byte_off = off;
-        progress.px = px >= 36 && px <= 72 ? px : 48;
-        snprintf(note, cap, "已精确恢复到 %u%%", (unsigned)(percent * 100));
-    } else {
-        // 远端是其它客户端（如 KOReader）或文件不同：仅按百分比，从头附近换算。
-        // Remote came from another client or a different file: percentage only, resolved near the start.
-        progress.file_size = (uint32_t)st.st_size;
-        progress.chapter = 0;
-        progress.byte_off = 0;
-        progress.px = app_settings_book_px();
-        snprintf(note, cap, "已按百分比恢复到 %u%%（位置为近似）", (unsigned)(percent * 100));
-    }
-    progress.pct = (uint8_t)(percent * 100 + 0.5f);
-    if (progress.pct > 100) progress.pct = 100;
-    esp_err_t err = book_progress_save(path, &progress);
-    if (err == ESP_OK) err = book_progress_set_last_path(path);
-    if (err != ESP_OK) {
-        snprintf(note, cap, "进度保存失败，请重试");
-        return OS_SYNC_IO;
-    }
-    return OS_SYNC_OK;
-}
-
-os_sync_result_t os_sync_device_auth(char* note, size_t cap) {
-    os_sync_config_t config;
-    load_config(&config);
-    if (!os_sync_config_ready(&config)) {
-        if (note && cap) snprintf(note, cap, "请先设置同步账号");
-        return OS_SYNC_NO_CONFIG;
-    }
-    os_sync_result_t result = os_sync_auth(&config);
-    if (note && cap) snprintf(note, cap, "%s", os_sync_result_name(result));
-    return result;
-}
-
-os_sync_result_t os_sync_device_register(char* note, size_t cap) {
-    os_sync_config_t config;
-    load_config(&config);
-    if (!os_sync_config_ready(&config)) {
-        if (note && cap) snprintf(note, cap, "请先设置同步账号");
-        return OS_SYNC_NO_CONFIG;
-    }
-    os_sync_result_t result = os_sync_register(&config);
-    if (note && cap) snprintf(note, cap, "%s", os_sync_result_name(result));
-    return result;
+void os_sync_job_request_cancel(void) { atomic_store(&s_cancel, true); }
+void os_sync_job_cancel(void) {
+    os_sync_job_request_cancel();
+    if (s_running) { xSemaphoreTake(s_done, portMAX_DELAY); s_running = false; }
+    s_pending = false;
+    memset(&s_config, 0, sizeof(s_config));
 }

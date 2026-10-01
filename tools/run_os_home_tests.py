@@ -15,7 +15,7 @@ if os.uname().sysname == "Darwin":
     if sdk.exists():
         flags += ["-isysroot", str(sdk)]
 with tempfile.TemporaryDirectory(prefix="rp-os.", dir="/tmp") as folder:
-    includes = ["-Imain/book", "-Imain/os", "-Imain/app", "-Itools/book_storage_stubs", "-Icomponents/read_pico/include"]
+    includes = ["-Imain/book", "-Imain/os", "-Imanaged_components/espressif__cjson/cJSON", "-Imain/app", "-Itools/book_storage_stubs", "-Icomponents/read_pico/include"]
     for name, sources in (("home", ["tools/os_home_host_test.c", "main/book/book_home.c", "main/book/book_entry.c"]),
                           ("store", ["tools/book_store_host_test.c"]),
                           ("device", ["tools/os_device_host_test.c", "main/os/os_device_pico.c"]),
@@ -23,16 +23,25 @@ with tempfile.TemporaryDirectory(prefix="rp-os.", dir="/tmp") as folder:
                           ("time", ["tools/os_time_host_test.c", "main/os/os_time.c"]),
                           ("stats", ["tools/book_stats_host_test.c", "main/book/book_stats.c"]),
                           ("sleep", ["tools/app_sleep_hooks_host_test.c", "main/app/app_sleep_hooks.c"]),
-                          ("sync", ["tools/os_sync_host_test.c", "main/os/os_sync.c"]),
+                          ("sync", ["tools/os_sync_host_test.c", "main/os/os_sync.c", "managed_components/espressif__cjson/cJSON/cJSON.c"]),
+                          ("cover", ["tools/book_cover_host_test.c", "main/book/book_cover.c"]),
+                          ("sync_device", ["tools/os_sync_device_host_test.c", "main/os/os_sync_pico.c", "main/os/os_sync.c", "main/os/os_sync_http.c", "managed_components/espressif__cjson/cJSON/cJSON.c"]),
+                          ("sync_http", ["tools/os_sync_http_host_test.c", "main/os/os_sync_http.c"]),
                           ("lunar", ["tools/os_lunar_host_test.c", "main/os/os_lunar.c"]),
                           ("marks", ["tools/book_marks_host_test.c", "main/book/book_marks.c"]),
                           ("crash", ["tools/os_crash_host_test.c", "main/os/os_crash.c"])):
         binary = str(Path(folder) / name)
         target_includes = includes
-        if name == "device":
+        target_flags = flags
+        if name in ("sync", "sync_device") and os.uname().sysname == "Darwin":
+            target_flags = flags + ["-Wno-deprecated-declarations"]
+        if name == "sync_device":
+            target_includes = ["-Itools/os_sync_device_stubs", *includes]
+            target_flags = target_flags + ["-Wno-unused-variable", "-pthread"]
+        elif name == "device":
             target_includes = includes + ["-DESP_ERR_NOT_FINISHED=6"]
         elif name == "product":
             target_includes = ["-Imain/book", "-Imain/font", "-Imain/ui", "-Imain/ui/product", "-Imain/app", "-Imain/os", "-Itools/os_home_stubs", "-Itools/app_loop_stubs", "-Itools/book_layout_stubs"]
-        subprocess.run([os.environ.get("CC", "cc"), *flags, *target_includes, *sources, "-o", binary], cwd=ROOT, check=True)
+        subprocess.run([os.environ.get("CC", "cc"), *target_flags, *target_includes, *sources, "-o", binary], cwd=ROOT, check=True)
         subprocess.run([binary, folder] if name == "home" else [binary], cwd=ROOT, check=True,
                        env=dict(os.environ, UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1"))

@@ -21,7 +21,7 @@
 #include "ui_product.h"
 #include <stdio.h>
 
-static EpdRect back_rect(void) { return (EpdRect){470, 68, 174, 68}; }
+static EpdRect back_rect(void) { return ui_product_back_rect(); }
 static EpdRect clock_rect(void) { return (EpdRect){UI_MARGIN, 200, ui_content_width(), 176}; }
 static EpdRect tz_button_rect(int i) { return ui_row_rect(i, 2, 700, UI_BTN_H); }
 static EpdRect sync_rect(void) { return (EpdRect){UI_MARGIN, 812, ui_content_width(), 72}; }

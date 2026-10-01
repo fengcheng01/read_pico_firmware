@@ -18,6 +18,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <errno.h>
 
 #include "book_store.h"
 #include "esp_log.h"
@@ -81,12 +82,17 @@ void os_crash_flush(void) {
     }
 }
 
-bool os_crash_summary(char* out, size_t cap) {
-    if (!out || !cap) return false;
+os_crash_summary_state_t os_crash_summary_read(char* out, size_t cap) {
+    if (!out || !cap) return OS_CRASH_SUMMARY_ERROR;
+    out[0] = 0;
     FILE* file = fopen(OS_CRASH_LOG_PATH, "rb");
-    if (!file) return false;
+    if (!file) return errno == ENOENT ? OS_CRASH_SUMMARY_EMPTY : OS_CRASH_SUMMARY_ERROR;
     static char log[OS_CRASH_LOG_MAX];
     size_t len = fread(log, 1, sizeof(log), file);
-    fclose(file);
-    return os_crash_format_summary(log, len, out, cap);
+    bool error = ferror(file) != 0;
+    error |= fclose(file) != 0;
+    if (error) return OS_CRASH_SUMMARY_ERROR;
+    if (!len) return OS_CRASH_SUMMARY_EMPTY;
+    return os_crash_format_summary(log, len, out, cap) ? OS_CRASH_SUMMARY_READY : OS_CRASH_SUMMARY_ERROR;
 }
+bool os_crash_summary(char* out, size_t cap) { return os_crash_summary_read(out, cap) == OS_CRASH_SUMMARY_READY; }

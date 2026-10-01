@@ -154,6 +154,21 @@ static void scale_cover(const uint8_t* src, uint16_t sw, uint16_t sh, uint8_t* o
     }
 }
 
+// XML 条目按实际大小分配并补终止符；ZIP 接口只返回原始字节。
+// Allocate XML by its bounded entry size and terminate it; ZIP returns raw bytes only.
+static char* extract_xml(zip_reader_t* zip, int index) {
+    size_t size = zip_entry_size(zip, index);
+    if (!size || size > COVER_TEXT_MAX) return NULL;
+    char* text = malloc(size + 1);
+    if (!text) return NULL;
+    if (zip_extract(zip, index, text, size) != ESP_OK || memchr(text, 0, size)) {
+        free(text);
+        return NULL;
+    }
+    text[size] = 0;
+    return text;
+}
+
 bool book_cover_load(const char* path, uint8_t** gray_out) {
     if (!path || !gray_out) return false;
     *gray_out = NULL;
@@ -167,8 +182,8 @@ bool book_cover_load(const char* path, uint8_t** gray_out) {
     char opf_path[256] = {0};
     int container = zip_find(zip, "META-INF/container.xml");
     if (container >= 0) {
-        char* text = malloc(COVER_TEXT_MAX);
-        if (text && zip_extract(zip, container, text, COVER_TEXT_MAX) == ESP_OK) {
+        char* text = extract_xml(zip, container);
+        if (text) {
             const char* root = strstr(text, "rootfile");
             if (root) {
                 size_t len = 0;
@@ -187,8 +202,8 @@ bool book_cover_load(const char* path, uint8_t** gray_out) {
     int cover_index = -1;
     char cover_path[300];
     if (opf_index >= 0) {
-        char* text = malloc(COVER_TEXT_MAX);
-        if (text && zip_extract(zip, opf_index, text, COVER_TEXT_MAX) == ESP_OK &&
+        char* text = extract_xml(zip, opf_index);
+        if (text &&
             find_cover_href(text, href, sizeof(href), NULL)) {
             join_dir(cover_path, sizeof(cover_path), opf_path, href, strlen(href));
             cover_index = zip_find(zip, cover_path);

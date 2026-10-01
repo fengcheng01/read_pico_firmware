@@ -50,7 +50,7 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
     if (s_stage == PIN_CHOICE) {
         ui_clear_page(fb);
         ui_product_header(fb, "锁屏密码", "已验证，选择操作");
-        ui_draw_button(fb, (EpdRect){470, 68, 174, 68}, "返回", false);
+        ui_draw_button(fb, ui_product_back_rect(), "返回", false);
         ui_draw_button(fb, choice_rect(0), "设置新密码", true);
         ui_draw_button(fb, choice_rect(1), "清除密码", true);
         if (s_message[0]) ui_text(fb, UI_MARGIN, 760, 28, s_message, EPD_DRAW_ALIGN_LEFT, false);
@@ -69,8 +69,8 @@ static void back_to_sleep(app_ctx_t* ctx) {
 
 static app_redraw_t gesture(app_ctx_t* ctx, const ui_gesture_event_t* ev) {
     if (ev->type != UI_GESTURE_TAP) return APP_REDRAW_NONE;
-    if (ui_rect_hit((EpdRect){470, 68, 174, 68}, ev->x0, ev->y0) &&
-        ui_rect_hit((EpdRect){470, 68, 174, 68}, ev->x, ev->y)) {
+    if (ui_rect_hit(ui_product_back_rect(), ev->x0, ev->y0) &&
+        ui_rect_hit(ui_product_back_rect(), ev->x, ev->y)) {
         back_to_sleep(ctx);
         return APP_REDRAW_NONE;
     }

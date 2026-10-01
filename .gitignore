@@ -20,6 +20,7 @@
 **/build/
 build/
 /build-host/
+/firmware-release/
 *.o
 *.a
 *.out

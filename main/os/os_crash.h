@@ -47,3 +47,11 @@ void os_crash_boot_check(void);
 void os_crash_flush(void);
 /// 读取日志文件汇总到 out；无日志或不可读返回 false。/ Read the log file into a summary; false when absent or unreadable.
 bool os_crash_summary(char* out, size_t cap);
+
+typedef enum {
+    OS_CRASH_SUMMARY_EMPTY, ///< 确实无记录 / No records
+    OS_CRASH_SUMMARY_READY, ///< 已读摘要 / Summary ready
+    OS_CRASH_SUMMARY_ERROR, ///< 无法读取或解析 / Read or parse failure
+} os_crash_summary_state_t;
+/// 区分无记录和错误的只读摘要。/ Read-only summary distinguishing absence from errors.
+os_crash_summary_state_t os_crash_summary_read(char* out, size_t cap);

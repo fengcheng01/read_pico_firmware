@@ -5,8 +5,8 @@ Run real firmware pages and the reader engine on the host without ESP-IDF or a b
 
 ## 启动 / Run
 
-需要 Python 3.9+、GNU C11 编译器及 zlib。macOS 使用 Xcode/Command Line Tools 的编译器与 SDK，可用 `CC` 和 `PREVIEW_MACOS_SDK` 指定路径。
-Requires Python 3.9+, a GNU C11 compiler and zlib. On macOS, use the Xcode/Command Line Tools compiler and SDK; override paths with `CC` and `PREVIEW_MACOS_SDK`.
+需要 Python 3.9+、GNU C11 编译器、zlib 及 IDF 锁定的 managed_components 中 cJSON 源码（先运行 idf.py reconfigure）。macOS 使用 Xcode/Command Line Tools 的编译器与 SDK，可用 `CC` 和 `PREVIEW_MACOS_SDK` 指定路径。
+Requires Python 3.9+, a GNU C11 compiler, zlib and the IDF-locked cJSON sources under managed_components (populate with idf.py reconfigure first). On macOS, use the Xcode/Command Line Tools compiler and SDK; override paths with `CC` and `PREVIEW_MACOS_SDK`.
 
 ```sh
 python3 tools/preview/serve.py
