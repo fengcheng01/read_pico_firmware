@@ -10,6 +10,8 @@
  * Frozen: Preserve UTF-8 names; check limits first, validate fonts before commit and remove failed parts.
  * 冻结：热点网页或停服设备触屏可配置网络，不自动切模式；凭据只存单个NVS blob，状态不含密码。
  * Frozen: AP webpage or stopped-service device UI may provision without switching mode; one NVS blob holds secrets outside public status.
+ * 冻结：用户实机反馈要求同步按需自动联网；仅联网 STA 不访问文件、不启动 HTTP，控制任务串行启动/停止。
+ * Frozen: Hardware feedback requires on-demand sync networking; network-only STA never accesses files or starts HTTP and the owner serializes its lifecycle.
  */
 #include "read_pico_search.h"
 #include <stdbool.h>
@@ -922,17 +924,19 @@ void read_pico_transfer_stop(void) {
     portENTER_CRITICAL(&s_lock);
     s_status.state = READ_PICO_TRANSFER_STOPPED; s_status.sta_count = 0;
     s_status.network_ready = false; s_status.url[0] = 0;
-    s_upload_active = false;
+    s_upload_active = false; s_stopping = false;
     memset(&s_connection, 0, sizeof(s_connection));
     portEXIT_CRITICAL(&s_lock);
 }
 
 esp_err_t read_pico_transfer_start(const read_pico_transfer_cfg_t *cfg) {
-    if (!cfg || !cfg->root_dir || !cfg->free_bytes_cb || strlen(cfg->root_dir) >= sizeof(s_root) ||
+    if (!cfg || (cfg->network_only && cfg->mode != READ_PICO_TRANSFER_MODE_STA) ||
+        (!cfg->network_only && (!cfg->root_dir || !cfg->free_bytes_cb)) ||
+        (cfg->root_dir && strlen(cfg->root_dir) >= sizeof(s_root)) ||
         (cfg->font_dir && (cfg->is_flash || !cfg->font_dir[0] || strlen(cfg->font_dir) >= sizeof(s_font_root))) ||
         (cfg->mode != READ_PICO_TRANSFER_MODE_AP && cfg->mode != READ_PICO_TRANSFER_MODE_STA)) return ESP_ERR_INVALID_ARG;
     if (s_wifi || s_netif || s_http) return ESP_ERR_INVALID_STATE;
-    s_cfg = *cfg; strcpy(s_root, cfg->root_dir); s_cfg.root_dir = s_root;
+    s_cfg = *cfg; snprintf(s_root, sizeof(s_root), "%s", cfg->root_dir ? cfg->root_dir : ""); s_cfg.root_dir = s_root;
     snprintf(s_font_root, sizeof(s_font_root), "%s", cfg->font_dir ? cfg->font_dir : "");
     s_cfg.font_dir = s_font_root[0] ? s_font_root : NULL;
     portENTER_CRITICAL(&s_lock);
@@ -946,18 +950,20 @@ esp_err_t read_pico_transfer_start(const read_pico_transfer_cfg_t *cfg) {
     if (err != ESP_OK && cfg->mode == READ_PICO_TRANSFER_MODE_STA) goto fail;
     publish_credentials(&saved);
     if (cfg->mode == READ_PICO_TRANSFER_MODE_STA && saved.version != 1) { err = ESP_ERR_NOT_FOUND; goto fail; }
-    struct stat st;
-    if (stat(cfg->root_dir, &st) || !S_ISDIR(st.st_mode)) { err = ESP_ERR_NOT_FOUND; goto fail; }
-    unsigned removed = 0, restored = 0;
-    if (cleanup_interrupted(cfg->root_dir, &removed, &restored)) {
-        ESP_LOGW("transfer", "cleanup failed removed=%u restored=%u", removed, restored);
-        err = ESP_FAIL; goto fail;
+    if (!cfg->network_only) {
+        struct stat st;
+        if (stat(cfg->root_dir, &st) || !S_ISDIR(st.st_mode)) { err = ESP_ERR_NOT_FOUND; goto fail; }
+        unsigned removed = 0, restored = 0;
+        if (cleanup_interrupted(cfg->root_dir, &removed, &restored)) {
+            ESP_LOGW("transfer", "cleanup failed removed=%u restored=%u", removed, restored);
+            err = ESP_FAIL; goto fail;
     }
     if (s_font_root[0]) {
         if ((mkdir(s_font_root, 0755) && errno != EEXIST) || stat(s_font_root, &st) || !S_ISDIR(st.st_mode) ||
             cleanup_interrupted(s_font_root, &removed, &restored)) { err = ESP_FAIL; goto fail; }
     }
     if (removed || restored) ESP_LOGI("transfer", "cleanup removed=%u restored=%u", removed, restored);
+    }
     err = esp_netif_init();
     if (err != ESP_OK) goto fail;
     err = esp_event_loop_create_default();
@@ -993,28 +999,32 @@ esp_err_t read_pico_transfer_start(const read_pico_transfer_cfg_t *cfg) {
     err = esp_wifi_set_mode(cfg->mode == READ_PICO_TRANSFER_MODE_AP ? WIFI_MODE_AP : WIFI_MODE_STA); if (err != ESP_OK) goto fail;
     err = esp_wifi_set_config(cfg->mode == READ_PICO_TRANSFER_MODE_AP ? WIFI_IF_AP : WIFI_IF_STA, &wifi); if (err != ESP_OK) goto fail;
     clear_secret(&wifi, sizeof(wifi)); clear_secret(&saved, sizeof(saved));
-    s_buffer = heap_caps_malloc(16384, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!s_buffer) { err = ESP_ERR_NO_MEM; goto fail; }
+    if (!cfg->network_only) {
+        s_buffer = heap_caps_malloc(16384, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (!s_buffer) { err = ESP_ERR_NO_MEM; goto fail; }
+    }
     err = esp_wifi_start(); if (err != ESP_OK) goto fail;
     s_started = true;
-    httpd_config_t http = HTTPD_DEFAULT_CONFIG();
-    http.stack_size = 12288; http.max_uri_handlers = 10; http.recv_wait_timeout = 5;
-    http.lru_purge_enable = true;
-    err = httpd_start(&s_http, &http); if (err != ESP_OK) goto fail;
-    const httpd_uri_t routes[] = {
-        { .uri = "/", .method = HTTP_GET, .handler = index_handler },
-        { .uri = "/info", .method = HTTP_GET, .handler = info_handler },
-        { .uri = "/upload", .method = HTTP_PUT, .handler = upload_handler },
-        { .uri = "/fonts", .method = HTTP_PUT, .handler = upload_handler, .user_ctx = (void *)1 },
-        { .uri = "/fonts", .method = HTTP_GET, .handler = font_info_handler },
-        { .uri = "/books", .method = HTTP_GET, .handler = books_handler },
-        { .uri = "/books", .method = HTTP_DELETE, .handler = books_handler },
-        { .uri = "/books", .method = HTTP_POST, .handler = books_handler },
-        { .uri = "/wifi", .method = HTTP_POST, .handler = wifi_handler },
-        { .uri = "/wifi", .method = HTTP_DELETE, .handler = wifi_handler },
-    };
-    for (size_t i = 0; i < sizeof(routes)/sizeof(*routes); ++i) {
-        err = httpd_register_uri_handler(s_http, &routes[i]); if (err != ESP_OK) goto fail;
+    if (!cfg->network_only) {
+        httpd_config_t http = HTTPD_DEFAULT_CONFIG();
+        http.stack_size = 12288; http.max_uri_handlers = 10; http.recv_wait_timeout = 5;
+        http.lru_purge_enable = true;
+        err = httpd_start(&s_http, &http); if (err != ESP_OK) goto fail;
+        const httpd_uri_t routes[] = {
+            { .uri = "/", .method = HTTP_GET, .handler = index_handler },
+            { .uri = "/info", .method = HTTP_GET, .handler = info_handler },
+            { .uri = "/upload", .method = HTTP_PUT, .handler = upload_handler },
+            { .uri = "/fonts", .method = HTTP_PUT, .handler = upload_handler, .user_ctx = (void *)1 },
+            { .uri = "/fonts", .method = HTTP_GET, .handler = font_info_handler },
+            { .uri = "/books", .method = HTTP_GET, .handler = books_handler },
+            { .uri = "/books", .method = HTTP_DELETE, .handler = books_handler },
+            { .uri = "/books", .method = HTTP_POST, .handler = books_handler },
+            { .uri = "/wifi", .method = HTTP_POST, .handler = wifi_handler },
+            { .uri = "/wifi", .method = HTTP_DELETE, .handler = wifi_handler },
+        };
+        for (size_t i = 0; i < sizeof(routes)/sizeof(*routes); ++i) {
+            err = httpd_register_uri_handler(s_http, &routes[i]); if (err != ESP_OK) goto fail;
+    }
     }
     if (cfg->mode == READ_PICO_TRANSFER_MODE_AP) {
         portENTER_CRITICAL(&s_lock);
@@ -1032,4 +1042,9 @@ fail:
     clear_secret(&wifi, sizeof(wifi)); clear_secret(&saved, sizeof(saved));
     read_pico_transfer_stop(); set_error(err); return err;
 }
+esp_err_t read_pico_transfer_start_saved_network(void) {
+    const read_pico_transfer_cfg_t cfg = {.mode = READ_PICO_TRANSFER_MODE_STA, .network_only = true};
+    return read_pico_transfer_start(&cfg);
+}
+
 #endif

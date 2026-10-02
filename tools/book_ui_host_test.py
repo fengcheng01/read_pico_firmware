@@ -76,7 +76,12 @@ static size_t s_shelf_capacity;
 static int s_count,s_visible_count;
 static char s_message[128],s_shelf_warning[128],s_storage[128];
 static bool s_pending_invalidated,test_oom,test_degraded;
-static unsigned s_store_revision;
+static unsigned s_store_revision, s_catalog_revision;
+static int s_shelf_leaf;
+static char s_sync_note[128], s_resume_name[256];
+static void os_sync_job_cancel(void) {}
+static void apply_entry(app_ctx_t* ctx);
+static bool s_catalog_valid;
 #include "book_store.h"
 // 根结构用真实头文件，避免与 book_entry 的 ABI 分叉。/ Real header for the root struct; no ABI fork with book_entry.
 typedef struct {uint32_t file_size;uint16_t chapter;uint32_t byte_off;uint8_t px,pct;uint32_t last_open_s;} book_progress_t;
@@ -134,6 +139,7 @@ static size_t book_layout_page_start_offset(size_t page){return page*100;}
 static unsigned percent(size_t page){return (unsigned)page*20;}
 int book_progress_save(const char* p,const book_progress_t* value){(void)p;(void)value;test_save_calls++;return test_save_error;}
 int book_progress_set_last_path(const char* p){test_last_calls++;if(!test_last_error)snprintf(test_last_path,sizeof(test_last_path),"%s",p);return test_last_error;}
+static bool book_progress_last_path(char* out,size_t cap){snprintf(out,cap,"%s",test_last_path);return *out!=0;}
 static void save_progress(void);
 static void invalidate_prep(void){}
 static shelf_entry_t s_managed;
@@ -256,24 +262,22 @@ int main(void) {
     unsigned before_open=test_open_calls;
     on_enter(&resume_ctx);assert(s_resume_pending&&!s_entry_active&&test_open_calls==before_open);
     assert(book_entry_request(BOOK_ENTRY_OPEN,ep_large));
-    on_enter(&resume_ctx);assert(s_entry_active&&!s_resume_pending&&test_open_calls==before_open);
-    s_shelf=calloc(1,sizeof(*s_shelf));assert(s_shelf);s_count=1;
-    strcpy(s_shelf[0].path,ep_large);
-    apply_entry(&resume_ctx);assert(book_entry_status()==BOOK_ENTRY_OPENED&&test_open_calls==before_open+1);
+    on_enter(&resume_ctx);assert(!s_entry_active&&!s_resume_pending&&!s_scan_pending&&test_open_calls==before_open+1);
+    assert(book_entry_status()==BOOK_ENTRY_OPENED);
     apply_entry(&resume_ctx);assert(test_open_calls==before_open+1);
     book_on_exit(&resume_ctx);
+    test_open_success=false;
     assert(book_entry_request(BOOK_ENTRY_OPEN,ep_missing));
-    on_enter(&resume_ctx);apply_entry(&resume_ctx);assert(book_entry_status()==BOOK_ENTRY_NOT_FOUND&&s_message[0]);
+    on_enter(&resume_ctx);assert(book_entry_status()==BOOK_ENTRY_FAILED&&test_open_calls==before_open+2);
+    book_on_exit(&resume_ctx);
+    test_open_success=true;
+    assert(book_entry_request(BOOK_ENTRY_SHELF,NULL));on_enter(&resume_ctx);
+    apply_entry(&resume_ctx);assert(book_entry_status()==BOOK_ENTRY_SHELF_READY&&test_open_calls==before_open+2);
     book_on_exit(&resume_ctx);
     assert(book_entry_request(BOOK_ENTRY_SHELF,NULL));on_enter(&resume_ctx);
-    apply_entry(&resume_ctx);assert(book_entry_status()==BOOK_ENTRY_SHELF_READY&&test_open_calls==before_open+1);
-    book_on_exit(&resume_ctx);
-    assert(book_entry_request(BOOK_ENTRY_OPEN,ep_large));on_enter(&resume_ctx);
-    book_on_exit(&resume_ctx);assert(book_entry_status()==BOOK_ENTRY_CANCELLED&&test_open_calls==before_open+1);
-    assert(book_entry_request(BOOK_ENTRY_OPEN,ep_large));on_enter(&resume_ctx);
-    s_shelf=calloc(1,sizeof(*s_shelf));assert(s_shelf);s_count=1;
-    strcpy(s_shelf[0].path,ep_large);test_open_success=false;
-    apply_entry(&resume_ctx);assert(book_entry_status()==BOOK_ENTRY_FAILED&&test_open_calls==before_open+2);
+    book_on_exit(&resume_ctx);assert(book_entry_status()==BOOK_ENTRY_CANCELLED);
+    assert(book_entry_request(BOOK_ENTRY_OPEN,ep_large));test_open_success=false;
+    on_enter(&resume_ctx);assert(book_entry_status()==BOOK_ENTRY_FAILED&&test_open_calls==before_open+3);
     test_open_success=true;book_on_exit(&resume_ctx);s_scan_pending=false;s_resume_pending=false;
 
     shelf_entry_t a={.search_match=true,.name="Same.txt",.path="/sdcard/books/A/Same.txt"};

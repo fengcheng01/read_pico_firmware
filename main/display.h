@@ -20,15 +20,14 @@ extern "C" {
 #endif
 
 // LCD 像素时钟：只决定有效像素段占一行的多少，剩下的由行结束段补足——行周期被锁在
-// 波形标定的帧周期上，所以调 pclk 不会让刷新变快，只影响 DMA 的供数余量。12MHz 是
-// epdiy 的保守默认值，18MHz 实测稳定（前提是 PSRAM 跑在 120MHz，80MHz 下 16MHz
-// 就喂不满 DMA），开机锁 18MHz 留足余量。
+// 波形标定的帧周期上，所以调 pclk 不会让刷新变快，只影响 DMA 的供数余量。实机反馈后开机
+// 采用 12MHz，配合预填队列减少网络/字库竞争导致的欠载。18MHz 留给诊断实验。
 // LCD pixel clock: it only sets how much of the line the active pixels occupy;
 // the line-end pad fills the rest. The line period is locked to the waveform
 // frame time, so pclk does not make refresh faster — it only changes DMA slack.
-// 12 MHz is epdiy's conservative default; 18 MHz is stable here when PSRAM runs
-// at 120 MHz (at 80 MHz even 16 MHz starves DMA). Boot locks 18 MHz for margin.
-#define DISPLAY_PCLK_DEFAULT_MHZ 18
+// Hardware feedback selects 12 MHz at boot with queue prefill to reduce
+// underruns under network/font contention; 18 MHz remains a diagnostic option.
+#define DISPLAY_PCLK_DEFAULT_MHZ 12
 // 出现供数不足（EPD_DRAW_EMPTY_LINE_QUEUE）时退回这个确定安全的频率。
 // Fall back to this known-safe clock on underrun (EPD_DRAW_EMPTY_LINE_QUEUE).
 #define DISPLAY_PCLK_SAFE_MHZ READ_PICO_EPD_PCLK_MIN_MHZ

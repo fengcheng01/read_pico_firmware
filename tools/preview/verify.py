@@ -302,7 +302,7 @@ class PreviewTests(unittest.TestCase):
         self.assertNotEqual(solid, reader)
         self.preview.command("key 1")
         self.preview.command("tap 136 1038")
-        self.preview.command("tap 480 224")  # 翻页与显示 / turns and display
+        self.preview.command("tap 342 224")  # 翻页与显示 / turns and display
         normal = self.preview.png
         self.preview.command("tap 300 676")  # 夜间开关 / night switch
         night = self.preview.png
@@ -329,6 +329,56 @@ class PreviewTests(unittest.TestCase):
         self.preview.command("tap 557 102")
         self.assertEqual(self.preview.state["page"], self.indices["app_transfer"])
 
+    def test_reader_sync_and_direct_cached_home(self):
+        self.preview.command("fixture 1")
+        self.preview.command("tap 300 370")
+        self.assertEqual(self.state()["page"], self.indices["app_book"])
+        self.assertTrue(self.state()["reading"], "Home book opens before the first shelf frame")
+        self.preview.command("key 1")
+        self.preview.command("tap 136 1038")
+        self.preview.command("tap 550 224")
+        sync = self.preview.png
+        self.preview.command("tap 300 500")
+        self.assertTrue(sync != self.preview.png, "Reader settings admit sync directly")
+        self.preview.command("tap 424 1140")
+        self.assertTrue(self.state()["reading"])
+        self.page("app_os_home")
+        self.settle()
+        home = self.preview.png
+        self.page("app_os_today")
+        self.page("app_os_home")
+        self.assertTrue(home == self.preview.png, "Cached roots paint immediately without loading")
+
+    def test_home_epub_cover_and_shelf_cache(self):
+        self.preview.command("fixture 1")
+        self.preview.command("tap 220 1140")
+        self.settle()
+        self.preview.command("tap 300 650")
+        self.assertTrue(self.state()["reading"])
+        self.page("app_os_home")
+        self.settle()
+        pixels = self.preview.frame.read_bytes().split(b"\n", 3)[3]
+        cover_grays = {pixels[y * 684 + x] for y in range(238, 504) for x in range(52, 254)}
+        self.assertGreater(len(cover_grays), 6, "Home uses the extracted grayscale EPUB cover")
+        self.preview.command("tap 220 1140")
+        self.settle()
+        shelf = self.preview.png
+        self.page("app_os_today")
+        self.preview.command("tap 220 1140")
+        self.assertTrue(shelf == self.preview.png, "Shelf is cached before the first re-entry frame")
+
+    def test_pin_zero_clear_and_backspace_visible(self):
+        self.page("app_os_pin")
+        empty = self.preview.png
+        self.preview.command("tap 342 770")
+        one = self.preview.png
+        self.assertTrue(empty != one, "Zero key is visible and active in fourth row")
+        self.preview.command("tap 548 770")
+        self.assertTrue(empty == self.preview.png, "Backspace clears the zero digit")
+        self.preview.command("tap 342 770")
+        self.preview.command("tap 140 770")
+        self.assertTrue(empty == self.preview.png, "Clear key is visible and active")
+
     def test_reader_footer_status_and_align(self):
         # 状态栏：阅读设置开时钟/电量后页脚出现状态串；排版对齐切换即时重绘。
         # Footer status: enabling clock/battery shows the cluster; alignment steps redraw at once.
@@ -346,7 +396,7 @@ class PreviewTests(unittest.TestCase):
         self.preview.command("key 1")
         self.preview.command("tap 136 1038")
         menu = self.preview.png
-        self.preview.command("tap 480 224")
+        self.preview.command("tap 342 224")
         menu = self.preview.png
         self.preview.command("tap 300 340")
         self.assertNotEqual(menu, self.preview.png)
@@ -459,7 +509,7 @@ class PreviewTests(unittest.TestCase):
         self.assertEqual(self.state()["page"], self.indices["app_os_today"])
         loading = self.preview.png
         self.settle()
-        self.assertNotEqual(loading, self.preview.png)
+        self.assertEqual(loading, self.preview.png)  # 完整摘要跨根页复用。/ Reuse complete summaries across roots.
         today = self.preview.png
         self.preview.command("tap 320 760")  # 正在读行 / current-book row
         settled = self.settle()

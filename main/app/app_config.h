@@ -44,4 +44,4 @@
 // FOLLOW DU does not count. 0 disables the upgrade. The runtime tier lives in
 // the gc_every setting (defaulting to this value); this macro is only the
 // factory default and documentation.
-#define APP_GC16_EVERY 14
+#define APP_GC16_EVERY 5

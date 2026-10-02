@@ -86,6 +86,9 @@ static bool record_valid(const uint8_t* data, size_t len) {
         strnlen((const char*)data + HEADER_SIZE, path_len) == path_len - 1;
 }
 
+static atomic_uint s_revision;
+uint32_t book_progress_revision(void) { return atomic_load(&s_revision); }
+
 static esp_err_t warn_error(esp_err_t err) {
     if (err != ESP_OK) ESP_LOGW(TAG, "progress persistence: %s", esp_err_to_name(err));
     return err;
@@ -108,6 +111,7 @@ bool book_progress_load(const char* path, uint32_t size, book_progress_t* out) {
         .file_size = get32(data + 4), .chapter = (uint16_t)(data[8] | (data[9] << 8)),
         .byte_off = get32(data + 10), .px = data[14], .pct = data[15],
         .last_open_s = data[3] == 2 ? get32(data + 16) : 0,
+        .approximate = data[3] == 2 && data[20] == 1,
     };
     return true;
 }
@@ -134,6 +138,7 @@ esp_err_t book_progress_save(const char* path, const book_progress_t* progress) 
     put32(data + 10, progress->byte_off);
     data[14] = progress->px;
     data[15] = progress->pct;
+    data[20] = progress->approximate ? 1 : 0;
     size_t path_len = strlen(path) + 1;
     data[22] = (uint8_t)path_len;
     data[23] = (uint8_t)(path_len >> 8);
@@ -158,6 +163,7 @@ esp_err_t book_progress_save(const char* path, const book_progress_t* progress) 
     if (err == ESP_OK) err = nvs_set_blob(h, key, data, HEADER_SIZE + path_len);
     if (err == ESP_OK) err = nvs_commit(h);
     nvs_close(h);
+    if (err == ESP_OK) atomic_fetch_add(&s_revision, 1);
     return warn_error(err);
 }
 
@@ -173,6 +179,7 @@ esp_err_t book_progress_clear(const char* path) {
     if (err == ESP_ERR_NVS_NOT_FOUND) err = ESP_OK;
     if (err == ESP_OK) err = nvs_commit(h);
     nvs_close(h);
+    if (err == ESP_OK) atomic_fetch_add(&s_revision, 1);
     return warn_error(err);
 }
 
@@ -205,6 +212,7 @@ esp_err_t book_progress_forget(const char* path) {
     if (err == ESP_ERR_NVS_NOT_FOUND) err = ESP_OK;
     if (err == ESP_OK) err = nvs_commit(h);
     nvs_close(h);
+    if (err == ESP_OK) atomic_fetch_add(&s_revision, 1);
     return warn_error(err);
 }
 
@@ -231,5 +239,6 @@ esp_err_t book_progress_set_last_path(const char* path) {
     err = nvs_set_str(h, "last", path);
     if (err == ESP_OK) err = nvs_commit(h);
     nvs_close(h);
+    if (err == ESP_OK) atomic_fetch_add(&s_revision, 1);
     return warn_error(err);
 }

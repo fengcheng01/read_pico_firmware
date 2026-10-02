@@ -23,10 +23,10 @@ void app_settings_set_sync_auto(bool on) { test_auto=on; }
 void os_sync_set_password(const char* s) { (void)s; }
 bool os_sync_job_busy(void) { return test_sync_busy; }
 bool os_sync_pull_pending(void) { return test_sync_pending; }
-bool os_sync_job_start(os_sync_job_t job,char* note,size_t cap) { (void)job; ++test_sync_starts; snprintf(note,cap,"test"); test_sync_busy=test_start_ok; return test_start_ok; }
+bool os_sync_job_start(os_sync_job_t job,char* note,size_t cap) { (void)job; ++test_sync_starts; snprintf(note,cap,"test"); test_sync_busy=test_start_ok && read_pico_transfer_claim_sync(); return test_sync_busy; }
 bool os_sync_job_poll(char* note,size_t cap) { (void)note;(void)cap;return false; }
-bool os_sync_pull_confirm(bool apply,char* note,size_t cap) { (void)apply;snprintf(note,cap,"confirmed");test_sync_pending=false;return true; }
-void os_sync_job_cancel(void) { ++test_sync_cancels;test_sync_busy=test_sync_pending=false; }
+bool os_sync_pull_confirm(bool apply,char* note,size_t cap) { (void)apply;snprintf(note,cap,"confirmed");test_sync_pending=false;read_pico_transfer_release_sync();return true; }
+void os_sync_job_cancel(void) { ++test_sync_cancels;test_sync_busy=test_sync_pending=false;read_pico_transfer_release_sync(); }
 void os_sync_job_request_cancel(void) { test_sync_busy=false; }
 void os_time_network(bool up) { (void)up; }
 bool app_sleep_prepare_register(app_sleep_prepare_fn fn) { (void)fn;return true; }
@@ -45,6 +45,7 @@ static void qr_regression(app_ctx_t* ctx) {
     strcpy(test_status.ssid,"ReadPico-test");
     strcpy(test_status.url,"http://192.168.4.1");
     s_mode = READ_PICO_TRANSFER_MODE_AP;
+    test_configured = false;
     on_enter(ctx);
     on_tick(ctx);
     assert(s_qr_ready && !s_qr_url && !strcmp(test_qr_payload,"ReadPico-test"));
@@ -96,6 +97,7 @@ static void qr_regression(app_ctx_t* ctx) {
     test_status=(read_pico_transfer_status_t){0};
     s_mode=READ_PICO_TRANSFER_MODE_AP;
     test_qr_encodes=0;
+    test_configured=true;
     ctx->now_ms=0;
 }
 int main(void) {
@@ -221,9 +223,22 @@ int main(void) {
     int cancels=test_sync_cancels;
     cancel_sync();
     assert(test_sync_cancels==cancels+1 && !test_sync_claimed && !test_sync_busy);
-    test_sync_pending=true; test_sync_claimed=s_sync_claimed=true;
+    // 两次状态轮询间提交的文件，切入同步时仍须通知书架失效。
+    // A file committed between status polls must still invalidate the shelf when entering sync.
+    s_status.mode=READ_PICO_TRANSFER_MODE_AP; s_status.changed_count=0;
+    test_status.changed_count=1; s_session_started=true; s_any_changed=false;
+    assert(start_sync(OS_SYNC_JOB_AUTH) && s_any_changed && !s_session_started);
+    cancel_sync();
+    test_scan_error=0; test_scan_count=8;
+    enter_networks(); network_ui_tick(&ctx);
+    snprintf(s_saved_ssid,sizeof(s_saved_ssid),"%s",s_networks[0].ssid); s_saved_configured=true;
+    tap(&ctx, network_control_rect(0));
+    assert(s_view==TRANSFER_HOME && s_start_pending && s_mode==READ_PICO_TRANSFER_MODE_STA);
+    on_enter(&ctx); assert(s_mode==READ_PICO_TRANSFER_MODE_STA);
+    queue_network_start(READ_PICO_TRANSFER_MODE_AP); assert(s_mode==READ_PICO_TRANSFER_MODE_AP);
+    test_sync_pending=true; test_sync_claimed=true;
     sync_action(&ctx,912);
-    assert(!test_sync_pending && !test_sync_claimed && !s_sync_claimed);
+    assert(!test_sync_pending && !test_sync_claimed);
     test_auto=true; test_start_ok=false; s_sync_pushed=false;
     s_media_lost=false; s_start_pending=false; s_scan_pending=false;
     s_view=TRANSFER_HOME; s_session_started=true; s_mode=READ_PICO_TRANSFER_MODE_STA;

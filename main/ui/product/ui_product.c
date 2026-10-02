@@ -84,6 +84,16 @@ bool ui_product_navigate(app_ctx_t* ctx, os_app_id_t id) {
     ctx->request_app = next;
     return true;
 }
+void ui_product_cover_bitmap(uint8_t* fb, EpdRect r, const uint8_t* gray) {
+    if (!gray || r.width < 3 || r.height < 3) return;
+    int w = r.width - 2, h = w * BOOK_COVER_H / BOOK_COVER_W;
+    if (h > r.height - 2) { h = r.height - 2; w = h * BOOK_COVER_W / BOOK_COVER_H; }
+    int left = r.x + (r.width - w) / 2, top = r.y + (r.height - h) / 2;
+    epd_fill_rect(r, UI_GRAY_WHITE, fb);
+    for (int y = 0; y < h; ++y) for (int x = 0; x < w; ++x)
+        epd_draw_pixel(left + x, top + y, gray[(size_t)(y * BOOK_COVER_H / h) * BOOK_COVER_W + x * BOOK_COVER_W / w], fb);
+    ui_draw_round_rect(fb, r, 0, UI_GRAY_BLACK);
+}
 void ui_product_cover(uint8_t* fb, EpdRect r, const char* title, int px) {
     epd_fill_rect(r, UI_GRAY_WHITE, fb);
     epd_draw_rect(r, UI_GRAY_BLACK, fb);
@@ -174,17 +184,17 @@ void ui_product_reader_chrome(uint8_t* fb, const char* title, unsigned page, uns
 // 1..9 三行、0/清空/退格一行；绘制与命中共用几何。/ 1..9 in three rows plus 0/clear/backspace; drawing and hits share geometry.
 static EpdRect lock_key_rect(int index) {
     if (index <= 8) return ui_grid_rect(index % 3, 3, index / 3, 372, 104);
-    if (index == 9) return ui_grid_rect(1, 3, 3, 828, 104);
-    if (index == 10) return ui_grid_rect(0, 3, 3, 828, 104);
-    return ui_grid_rect(2, 3, 3, 828, 104);
+    if (index == 9) return ui_grid_rect(1, 3, 3, 372, 104);
+    if (index == 10) return ui_grid_rect(0, 3, 3, 372, 104);
+    return ui_grid_rect(2, 3, 3, 372, 104);
 }
 void ui_product_lock_keypad(uint8_t* fb, const char* title, const char* message, unsigned digits, bool back) {
     ui_clear_page(fb);
     ui_text(fb, UI_LOCK_WIDTH / 2, 128, 44, title, EPD_DRAW_ALIGN_CENTER, false);
     for (int i = 0; i < 4; ++i) {
-        EpdRect dot = {(i - 1) * 100 + 174, 224, 36, 36};
-        if ((unsigned)i < digits) ui_fill_round_rect(fb, dot, 8, UI_GRAY_BLACK);
-        else ui_draw_round_rect(fb, dot, 8, UI_GRAY_BLACK);
+        EpdRect dot = {(UI_LOCK_WIDTH - 336) / 2 + i * 100, 224, 36, 36};
+        if ((unsigned)i < digits) ui_fill_round_rect(fb, dot, 18, UI_GRAY_BLACK);
+        else ui_draw_round_rect(fb, dot, 18, UI_GRAY_BLACK);
     }
     for (int digit = 1; digit <= 9; ++digit) {
         EpdRect r = lock_key_rect(digit - 1);

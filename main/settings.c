@@ -77,7 +77,7 @@ static uint8_t s_book_align;
 static bool s_footer_clock, s_footer_battery, s_footer_bar = true;
 static uint8_t s_idle_lock;
 // 与 app_config.h 的原编译期档一致，保持升级无行为变化。/ Matches the old compile-time tier in app_config.h; upgrades keep behavior.
-static uint8_t s_gc_every = 14;
+static uint8_t s_gc_every = 5;
 
 static uint8_t valid_book_px(uint8_t px) {
     return px >= 36 && px <= 72 && (px - 36) % 4 == 0 ? px : 48;
@@ -147,7 +147,7 @@ void app_settings_init(void) {
     if (nvs_get_u8(h, NVS_KEY_F_BAR, &f_bar) == ESP_OK) s_footer_bar = f_bar != 0;
     if (nvs_get_u8(h, NVS_KEY_IDLE, &idle) == ESP_OK &&
         (idle == 0 || idle == 5 || idle == 10 || idle == 30)) s_idle_lock = idle;
-    uint8_t gc_every = 14;
+    uint8_t gc_every = 5;
     if (nvs_get_u8(h, NVS_KEY_GC_EVERY, &gc_every) == ESP_OK && gc_every_valid(gc_every)) s_gc_every = gc_every;
     size_t pin_len = sizeof(s_lock_pin);
     if (nvs_get_str(h, NVS_KEY_LOCK_PIN, s_lock_pin, &pin_len) != ESP_OK) s_lock_pin[0] = '\0';

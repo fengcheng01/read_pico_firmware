@@ -64,10 +64,10 @@ int main(void){
     book_progress_watch_destroy(watch_b);book_progress_watch_destroy(watch_a);
     watch_a=book_progress_watch_create(sd);assert(watch_a&&!book_progress_watch_invalidated(watch_a));
     book_progress_watch_destroy(watch_a);
-    book_progress_t p={.file_size=123456,.chapter=2047,.byte_off=9876,.px=48,.pct=83,.last_open_s=UINT32_MAX},q={.file_size=999};
+    book_progress_t p={.file_size=123456,.chapter=2047,.byte_off=9876,.px=48,.pct=83,.approximate=true,.last_open_s=UINT32_MAX},q={.file_size=999};
     assert(!book_progress_load(sd,p.file_size,&q));
     assert(book_progress_save(sd,&p)==ESP_OK);
-    assert(book_progress_load(sd,p.file_size,&q)&&q.last_open_s==1);
+    assert(book_progress_load(sd,p.file_size,&q)&&q.last_open_s==1 && q.approximate);
     assert(q.chapter==p.chapter&&q.byte_off==p.byte_off&&q.px==48&&q.pct==83);
     assert(!book_progress_load(sd,p.file_size+1,&q)&&q.file_size==p.file_size);
     p.last_open_s=0;assert(book_progress_save(sd,&p)==ESP_OK);

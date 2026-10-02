@@ -29,10 +29,13 @@ No second-device driver or flashable image is supplied without developer documen
 Agent-facing layout, `app_desc_t` contract, glossary and comment style are in
 [AGENTS.md](AGENTS.md).
 
-The refined toolbar exposes TOC/bookmarks, Add Bookmark, a size subpanel, More Settings, Clean and Library. Settings group typography and turns/display. Bookmark deletion requires confirmation. Sync runs in a worker, confirms pulled positions before applying, excludes uploads/deletions during sync and cancels on exit. Home avoids a permanent font notice; the reader offers a full-font entry only when glyphs are missing.
+The refined toolbar exposes TOC/bookmarks, Add Bookmark, a size subpanel, More Settings, Clean and Library. Settings group typography, turns/display and progress sync. Bookmark deletion requires confirmation. Sync runs in a worker, confirms pulled positions before applying, excludes uploads/deletions during sync and cancels on exit. Home avoids a permanent font notice; the reader offers a full-font entry only when glyphs are missing.
 
 
 TF also supports **USB computer connection**: Settings → Storage → USB connection. Confirm to reboot into disk mode; safely eject on the computer before exiting/restarting the device. Reading/transfer pause, and the flashing serial port returns after exit. See [USB disk usage](docs/USB_SD.md).
+
+
+Home/Today reuse complete summaries and Library retains its catalog/page until books or progress change. Tap a home book to open directly; EPUB uses its extracted cover with filename fallback for TXT/coverless books. Saved WiFi reconnects without password entry and is the default on Transfer entry. Reader tools → More Settings → Progress Sync connects automatically for testing/push/pull; pulls require confirmation and foreign positions use approximate percentages. Fresh installs default to cleanup every 5 updates; upgrades retain selected intervals (choose 5 under turns/display if desired). Cleaning covers the whole panel with complete GC16 and the product scan clock is 12 MHz. Wake transitions directly to centered PIN entry; enabled boxes show checkmarks.
 
 ## Documentation & More Devices
 
@@ -123,7 +126,7 @@ Global navigation lists only four roots; existing features below are grouped und
 | End-of-book picks | Paging past the last page suggests up to three same-source books (recency first) |
 | Reader status bar | Footer clock/battery percent/reading percentage toggles, without ruler ticks; Today always shows battery |
 | Idle lock | Auto-lock after off/5/10/30 idle minutes; auto page turns defer it |
-| Progress sync | Inside Transfer: kosync protocol (KOReader-compatible) with manual/auto push and manual pull of the last book |
+| Progress sync | Transfer and reader More Settings → Progress Sync: kosync (KOReader-compatible), on-demand saved-WiFi connection, manual push/pull and transfer auto-push |
 | Transfer | Device hotspot or existing WiFi, with browser TXT/EPUB upload and complete TTF font uploads to TF; TF card preferred, internal storage limited to 1 MB per file. Scan the hotspot QR to join, or select a 2.4 GHz network and enter its password on the touchscreen. Web provisioning remains available. The browser lists and searches books in the current upload destination, confirms replacement or deletion, and supports upload cancellation and retry. Saved WiFi can be forgotten on the device. Leaving the page stops networking. |
 
 In Books, KEY1 / KEY2 / KEY3 select previous page / toolbar / next page. The toolbar includes full refresh. Hold KEY2 for 500 ms to open the demo menu. Other pages retain KEY2 full GC16 refresh and KEY3 menu. Menu rows select on release; slide away to cancel.
@@ -170,7 +173,7 @@ The main loop stays untouched.
 EPD power enable, XOE, MODE, VCOM_EN, touch reset and card detection are on FCA9555
 Port-0; see the pin table in [main/apps/app_ioe.c](main/apps/app_ioe.c).
 
-Daily reading and Settings use the complete 48-phase GL16 grayscale update, retaining antialiasing. Body and footer update together; Settings navigation and font selection no longer force a black flash. One cleanup counter defaults to GC16 every 14 ordinary updates; Off allows continuous direct updates with manual ghost cleaning. Root typography is larger and the font picker shows six rows per page. Physical ghosting and speed need device testing.
+Daily reading and Settings use the complete 48-phase GL16 grayscale update, retaining antialiasing. Body and footer update together; Settings navigation and font selection no longer force a black flash. One cleanup counter defaults to GC16 every 5 ordinary updates; Off allows continuous direct updates with manual ghost cleaning. Root typography is larger and the font picker shows six rows per page. Physical ghosting and speed need device testing.
 
 ## Transfer and limitations
 

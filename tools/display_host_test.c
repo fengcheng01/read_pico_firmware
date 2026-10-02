@@ -20,6 +20,7 @@ static int clocks, powerons, clears, draws, full_draws, safe_clock, prefill;
 static bool white_baseline, correct_target_at_draw;
 static unsigned cleanup_every = 3;
 static enum EpdDrawMode last_mode;
+static bool last_area;
 static const EpdWaveform* last_waveform;
 uint8_t app_settings_gc_every(void) { return (uint8_t)cleanup_every; }
 
@@ -48,10 +49,10 @@ static enum EpdDrawError draw(EpdiyHighlevelState* hl, enum EpdDrawMode mode, in
     return EPD_DRAW_SUCCESS;
 }
 enum EpdDrawError epd_hl_update_screen(EpdiyHighlevelState* hl, enum EpdDrawMode mode, int temperature) {
-    return draw(hl, mode, temperature, false);
+    last_area = false; return draw(hl, mode, temperature, false);
 }
 enum EpdDrawError epd_hl_update_screen_full(EpdiyHighlevelState* hl, enum EpdDrawMode mode, int temperature) {
-    return draw(hl, mode, temperature, true);
+    last_area = false; return draw(hl, mode, temperature, true);
 }
 // 与 highlevel.c:142 相同：白后缓冲后，强制整屏推目标前缓冲。
 // Match highlevel.c:142: whiten the back buffer, then force a full update from the target front buffer.
@@ -61,10 +62,10 @@ enum EpdDrawError epd_hl_update_screen_from_white(EpdiyHighlevelState* hl, enum 
 }
 
 enum EpdDrawError epd_hl_update_area(EpdiyHighlevelState* hl, enum EpdDrawMode mode, int temperature, EpdRect area) {
-    (void)area; return draw(hl, mode, temperature, false);
+    (void)area; last_area = true; return draw(hl, mode, temperature, false);
 }
 enum EpdDrawError epd_hl_update_area_full(EpdiyHighlevelState* hl, enum EpdDrawMode mode, int temperature, EpdRect area) {
-    (void)area; return draw(hl, mode, temperature, true);
+    (void)area; last_area = true; return draw(hl, mode, temperature, true);
 }
 int main(void) {
     uint8_t front[FB_BYTES], back[FB_BYTES];
@@ -81,6 +82,15 @@ int main(void) {
         assert(last_waveform == &E0470_FULL_WAVEFORM && hl.waveform == &E0470_WAVEFORM);
     }
     assert(draws == 7 && full_draws == 7 && !clears);
+    update_display_full(&hl);
+    assert(last_mode == MODE_GC16 && last_waveform == &E0470_FULL_WAVEFORM && !last_area);
+    for (int i = 0; i < 3; ++i) {
+        update_display_area_with(&hl, &E0470_WAVEFORM, MODE_DU, (EpdRect){1,2,3,4});
+        assert(last_mode == (i == 2 ? MODE_GC16 : MODE_DU));
+        assert(last_area == (i != 2));
+        assert(hl.waveform == &E0470_WAVEFORM);
+        if (i == 2) assert(last_waveform == &E0470_FULL_WAVEFORM);
+    }
     cleanup_every = 0;
     for (int i = 0; i < 20; ++i) {
         update_display_mode(&hl, MODE_GL16); assert(last_mode == MODE_GL16);
@@ -99,7 +109,7 @@ int main(void) {
         assert(white_baseline && full_draws == 1 && draws == 1);
         assert(!memcmp(back, target, FB_BYTES));
         assert(clocks == 1 && safe_clock == DISPLAY_PCLK_SAFE_MHZ && display_pclk_mhz() == DISPLAY_PCLK_SAFE_MHZ);
-        assert(powerons == 1 && clears == 1 && prefill == (bulk ? 127 : 32));
+        assert(powerons == 1 && clears == 1 && prefill == 127);
     }
     puts("display underrun: front retained, white back baseline, full GC16 recovery and bulk prefill passed");
 }

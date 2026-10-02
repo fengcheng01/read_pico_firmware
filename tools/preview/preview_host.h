@@ -172,3 +172,5 @@ esp_err_t read_pico_sd_get_info(read_pico_sd_info_t* out);
 void read_pico_sd_start_probe(void);
 esp_err_t read_pico_sd_sync(void);
 esp_err_t read_pico_sd_remount(void);
+
+void epd_draw_line(int x0, int y0, int x1, int y1, uint8_t c, uint8_t* fb);

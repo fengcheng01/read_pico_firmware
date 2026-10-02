@@ -213,6 +213,16 @@ void ui_draw_choice_round_rect(
 ) {
     if (on) {
         ui_draw_selected_round_rect(framebuffer, rect, radius);
+        // 小方框用清晰勾选；大列表的文字和选中标记由页面布局。/ Check small boxes clearly; pages lay out labels/selection marks in large rows.
+        if (rect.width <= 96 && rect.height <= 96 && rect.width >= 24 && rect.height >= 24) {
+            int x0 = rect.x + rect.width / 4, y0 = rect.y + rect.height / 2;
+            int x1 = rect.x + rect.width * 9 / 20, y1 = rect.y + rect.height * 7 / 10;
+            int x2 = rect.x + rect.width * 4 / 5, y2 = rect.y + rect.height * 3 / 10;
+            for (int d = -2; d <= 2; ++d) {
+                epd_draw_line(x0, y0 + d, x1, y1 + d, UI_GRAY_BLACK, framebuffer);
+                epd_draw_line(x1, y1 + d, x2, y2 + d, UI_GRAY_BLACK, framebuffer);
+            }
+        }
     } else {
         ui_draw_round_rect(framebuffer, rect, radius, UI_GRAY_BLACK);
     }

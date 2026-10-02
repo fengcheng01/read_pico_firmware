@@ -19,7 +19,9 @@ static book_store_root_t s_roots[2];
 static int s_count = 2;
 static bool s_degraded;
 static char s_last[BOOK_STORE_PATH_MAX];
-static unsigned s_loads;
+static unsigned s_loads, s_store_revision, s_progress_revision;
+unsigned book_store_revision(void) { return s_store_revision; }
+uint32_t book_progress_revision(void) { return s_progress_revision; }
 esp_err_t book_store_read_roots(book_store_root_t out[2], int* n) {
     memcpy(out, s_roots, sizeof(s_roots)); *n = s_count; return ESP_OK;
 }
@@ -39,6 +41,7 @@ static void file(const char* root, const char* name, size_t bytes) {
     FILE* f = fopen(path, "wb"); assert(f); assert(ftruncate(fileno(f), (off_t)bytes) == 0); assert(fclose(f) == 0);
 }
 static const book_home_snapshot_t* scan(void) {
+    ++s_progress_revision;
     book_home_begin(); unsigned calls = 0;
     while (!book_home_step()) assert(++calls < 100);
     assert(calls > 0); return book_home_snapshot();
@@ -61,6 +64,10 @@ int main(int argc, char** argv) {
     assert(data->book_count == 67 && !data->degraded && data->recent_count == 3);
     assert(strstr(data->current.path, "book065.txt") && data->current.percent == 100);
     assert(strstr(data->recent[0].path, "book064.txt") && strstr(data->recent[2].path, "book062.txt"));
+    unsigned cached_loads = s_loads;
+    book_home_cancel(); book_home_begin();
+    assert(book_home_cached() && book_home_step() && s_loads == cached_loads);
+    ++s_progress_revision; assert(!book_home_cached());
     snprintf(s_last, sizeof(s_last), "%s/book005.txt", s_roots[0].path);
     data = scan(); assert(strstr(data->current.path, "book005.txt") && strstr(data->recent[0].path, "book065.txt"));
     snprintf(s_last, sizeof(s_last), "%s/book065.txt", s_roots[0].path);
@@ -69,10 +76,10 @@ int main(int argc, char** argv) {
     strcpy(s_last, "/missing/book.txt");
     data = scan(); assert(strstr(data->current.path, "book064.txt"));
     s_degraded = true; data = scan(); assert(data->degraded && data->current.path[0]);
-    s_count = 0; book_home_begin(); assert(book_home_step()); data = book_home_snapshot();
+    s_count = 0; ++s_store_revision; book_home_begin(); assert(book_home_step()); data = book_home_snapshot();
     assert(!data->book_count && !data->recent_count && !data->current.path[0]);
     s_count = 1; snprintf(s_roots[0].path, sizeof(s_roots[0].path), "%s/missing", argv[1]);
-    book_home_begin(); assert(book_home_step() && book_home_snapshot()->degraded);
+    ++s_store_revision; book_home_begin(); assert(book_home_step() && book_home_snapshot()->degraded);
 
     // 恢复桩根为 sd 目录：上面的扫描用例把它改成了 missing。
     // Restore the stub root to the sd dir: earlier scan cases repointed it to missing.

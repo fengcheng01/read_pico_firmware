@@ -76,6 +76,8 @@ void app_main(void) {
     if (!usb_requested) usb_disk_restore_serial();
     read_pico_handle_t hw;
     if (read_pico_init_with_sd(&hw, !usb_requested) != ESP_OK) return;
+    // 产品扫描余量统一来自 display 配置。/ Product scan margin follows the display configuration.
+    read_pico_epd_set_pclk(DISPLAY_PCLK_DEFAULT_MHZ);
     // 先记上次复位原因；异常复位在锁屏挑战前写入内置存储日志。
     // Record the last reset reason first; abnormal ones reach the internal log before the lock challenge.
     os_crash_boot_check();

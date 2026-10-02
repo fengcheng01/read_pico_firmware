@@ -40,6 +40,8 @@ typedef struct {
     uint8_t px;
     /// 全书百分比。/ Whole-book percentage.
     uint8_t pct;
+    /// 远端仅提供比例，开书时按全书字节近似定位。/ Remote percentage only; opening approximates by whole-book bytes.
+    bool approximate;
     /// 持久阅读顺序；保留旧字段名，v1 记录读取为 0。/ Persistent reading order; legacy field name, v1 records load as zero.
     uint32_t last_open_s;
 } book_progress_t;
@@ -60,3 +62,6 @@ esp_err_t book_progress_forget(const char* path);
 bool book_progress_last_path(char* out, size_t cap);
 /// 保存最后路径；空串清除自动恢复入口。/ Save last path; empty string clears automatic restore.
 esp_err_t book_progress_set_last_path(const char* path);
+
+/// 成功变更后的摘要失效序号。/ Summary invalidation revision after successful changes.
+uint32_t book_progress_revision(void);

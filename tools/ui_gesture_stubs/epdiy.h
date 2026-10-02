@@ -17,3 +17,5 @@ int epd_rotated_display_height(void);
 int epd_width(void);
 int epd_height(void);
 enum EpdRotation epd_get_rotation(void);
+
+void epd_draw_line(int x0, int y0, int x1, int y1, uint8_t c, uint8_t* fb);

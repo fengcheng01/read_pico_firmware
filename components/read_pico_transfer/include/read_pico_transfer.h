@@ -33,6 +33,7 @@ typedef enum {
 } read_pico_transfer_state_t;
 
 typedef struct {
+    bool network_only; ///< 仅 STA 联网，不启动文件服务或访问存储 / STA network only, without file service or storage access
     read_pico_transfer_mode_t mode; ///< 网络模式，默认热点 / Network mode, default AP
     const char *root_dir; ///< 已挂载根目录，start 内复制 / Mounted root, copied by start
     const char *font_dir; ///< 可选 TF 字体目录；调用方须暂停 SD 字体读取至 stop 返回 / Optional TF font directory; caller must suspend SD font reads until stop returns
@@ -84,3 +85,6 @@ esp_err_t read_pico_transfer_save_wifi(const char *ssid, const char *password);
 bool read_pico_transfer_claim_sync(void);
 /// 后台请求已收齐且 UI 完成进度操作后释放。/ Release after joining network work and finishing UI progress operations.
 void read_pico_transfer_release_sync(void);
+
+/// 控制任务用已保存凭据启动仅联网 STA。/ Owner task starts a network-only STA with saved credentials.
+esp_err_t read_pico_transfer_start_saved_network(void);

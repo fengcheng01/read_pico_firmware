@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  * 中文：阅读优先首页，展示真实已保存进度并通过类型化入口续读。
  * English: Reading-first home, showing real saved progress and resuming via typed entry requests.
- * 冻结：render 纯绘图；无示例书或假统计；不解析封面；显式点击才开书。
- * Frozen: Render only paints; no demo books or fake stats; no cover parsing; open only on explicit action.
+ * 冻结：render 纯绘图；无示例书或假统计；封面只在 tick 有界提取；显式点击才开书。
+ * Frozen: Render only paints; no demo books or fake stats; covers load with bounded work in ticks; open only on explicit action.
  */
 #include "app.h"
 #include "app_registry.h"
@@ -16,11 +16,25 @@
 #include "ui_menu.h"
 #include "ui_product.h"
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 static bool s_started, s_loading;
 static const char* s_notice;
 static unsigned s_revision;
 static int64_t s_probe_ms;
+static uint8_t* s_cover;
+static char s_cover_path[BOOK_STORE_PATH_MAX];
+static unsigned s_cover_revision;
+static bool load_cover(void) {
+    const char* path = book_home_snapshot()->current.path;
+    if (!strcmp(path, s_cover_path) && s_cover_revision == book_store_revision()) return false;
+    free(s_cover); s_cover = NULL;
+    snprintf(s_cover_path, sizeof(s_cover_path), "%s", path);
+    s_cover_revision = book_store_revision();
+    if (*path) (void)book_cover_load(path, &s_cover);
+    return true;
+}
 
 static EpdRect continue_rect(void) {
     return (EpdRect){UI_MARGIN, 560, ui_content_width(), 88};
@@ -31,13 +45,16 @@ static EpdRect recent_rect(unsigned i) {
 static bool transfer_enabled(void) { return os_device()->transfer == OS_CAP_PRESENT; }
 static void on_enter(app_ctx_t* ctx) {
     book_home_cancel();
-    s_started = false; s_loading = true; s_notice = NULL;
+    s_started = book_home_cached(); s_loading = !s_started; s_notice = NULL;
     s_revision = book_store_revision(); s_probe_ms = ctx->now_ms;
-    os_storage_probe();
+    if (s_loading) os_storage_probe();
+
 }
 static void home_on_exit(app_ctx_t* ctx) { (void)ctx; book_home_cancel(); }
 static void on_media_lost(app_ctx_t* ctx) {
     (void)ctx;
+    free(s_cover); s_cover = NULL; s_cover_path[0] = 0;
+    book_home_invalidate();
     book_home_cancel(); s_started = false; s_loading = true;
     s_notice = "TF 卡已移除，正在检查内置图书";
 }
@@ -51,7 +68,8 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
         ui_text(fb, UI_MARGIN, 312, 34, "可以先打开书架或导入图书", EPD_DRAW_ALIGN_LEFT, false);
     } else if (data->current.path[0]) {
         EpdRect cover = {UI_MARGIN, 216, 224, 310};
-        ui_product_cover(fb, cover, data->current.title, 40);
+        if (s_cover) ui_product_cover_bitmap(fb, cover, s_cover);
+        else ui_product_cover(fb, cover, data->current.title, 40);
         int x = cover.x + cover.width + 38;
         ui_text(fb, x, 234, 32, "上次阅读", EPD_DRAW_ALIGN_LEFT, false);
         ui_product_title(fb, (EpdRect){x, 292, ui_content_right() - x, 180}, data->current.title, 48, 3);
@@ -102,7 +120,7 @@ static app_redraw_t navigate(app_ctx_t* ctx, os_app_id_t id, const char* path) {
     return APP_REDRAW_NONE;
 }
 static int hit(uint16_t x, uint16_t y) {
-    if (ui_rect_hit(continue_rect(), x, y)) return 0;
+    if (ui_rect_hit(continue_rect(), x, y) || ui_rect_hit((EpdRect){UI_MARGIN, 216, ui_content_width(), 310}, x, y)) return 0;
     for (unsigned i = 0; i < BOOK_HOME_RECENT_MAX; ++i) if (ui_rect_hit(recent_rect(i), x, y)) return (int)i + 1;
     return -1;
 }
@@ -131,10 +149,10 @@ static app_redraw_t on_key(app_ctx_t* ctx, int key) {
 }
 static app_redraw_t on_tick(app_ctx_t* ctx) {
     if (ctx->consumed) return APP_REDRAW_NONE;
-    if (s_revision != book_store_revision()) {
+    if (s_revision != book_store_revision() || (!s_loading && !book_home_cached())) {
         book_home_cancel(); s_started = false; s_loading = true; s_revision = book_store_revision();
     }
-    if (!s_loading) return APP_REDRAW_NONE;
+    if (!s_loading) return load_cover() ? APP_REDRAW_PAGE : APP_REDRAW_NONE;
     if (!s_started) {
         if (!os_storage_probe_complete()) {
             if (ctx->now_ms - s_probe_ms >= 15000 && !s_notice) {
@@ -147,6 +165,7 @@ static app_redraw_t on_tick(app_ctx_t* ctx) {
     }
     if (!book_home_step()) return APP_REDRAW_NONE;
     s_loading = false;
+    load_cover();
     return APP_REDRAW_PAGE;
 }
 const app_desc_t app_os_home = {

@@ -15,6 +15,13 @@
 #include <sys/stat.h>
 
 static book_home_snapshot_t s_snapshot;
+static bool s_valid;
+static uint32_t s_store_revision, s_progress_revision;
+bool book_home_cached(void) {
+    return s_valid && s_store_revision == book_store_revision() &&
+           s_progress_revision == book_progress_revision();
+}
+void book_home_invalidate(void) { s_valid = false; }
 static book_store_root_t s_roots[2];
 static int s_root_count, s_root;
 static DIR* s_dir;
@@ -24,10 +31,15 @@ static unsigned s_candidates_count;
 
 void book_home_cancel(void) {
     if (s_dir) { closedir(s_dir); s_dir = NULL; }
+    if (!s_snapshot.complete) s_valid = false;
     s_snapshot.complete = true;
 }
 void book_home_begin(void) {
+    if (book_home_cached()) return;
     book_home_cancel();
+    s_valid = false;
+    s_store_revision = book_store_revision();
+    s_progress_revision = book_progress_revision();
     memset(&s_snapshot, 0, sizeof(s_snapshot));
     memset(s_candidates, 0, sizeof(s_candidates));
     s_candidates_count = 0;
@@ -53,6 +65,7 @@ static void finish(void) {
         if (strcmp(s_candidates[i].path, s_snapshot.current.path))
             s_snapshot.recent[s_snapshot.recent_count++] = s_candidates[i];
     s_snapshot.complete = true;
+    s_valid = true;
 }
 bool book_home_step(void) {
     if (s_snapshot.complete) return true;

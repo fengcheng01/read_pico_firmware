@@ -15,7 +15,7 @@
  * 用户批准补全产品功能：已有 WiFi 会话取得上行后驱动 SNTP 校时，校准写入 PMU 后即停；不影响传书生命周期。
  * 用户批准优化：单请求后台同步，离页取消并收齐；UI 串行准备/应用进度，下载明确确认，文件变更与同步互斥。
  * User-approved optimization: one network worker, cancel/join on exit; UI serializes progress snapshots/applications, confirms pulls and excludes file mutations during sync.
- * 用户批准补全产品功能：新增进度同步视图（kosync 协议，兼容 KOReader），仅在传书 STA 会话期间联网，可手动上传/下载或自动上传；密码仅存 MD5。
+ * 用户批准补全产品功能：新增进度同步视图（kosync 协议，兼容 KOReader），用户反馈后按需自动连接保存的 WiFi；传书与阅读设置均可手动同步，传书上行可自动上传；密码仅存 MD5。
  * Frozen: user-requested AP/STA modes stop networking on exit; retain global lock/sleep policy without coordination; deep sleep or power loss interrupts transfer.
  * Render only paints snapshots; book_store defines the flash file limit. Never format the TF card.
  * Concurrent uploads underrun scan queues; increase prefill until service exit without changing waveforms or pixel clocks.
@@ -24,7 +24,7 @@
  * User-requested URL QR follows network readiness; AP switches one code between joining and browsing, discarding stale codes on changes.
  * Lost media stops and joins reception and clears capacity/QR; never switch storage beneath an active request.
  * User-approved completion: STA sessions with an uplink drive SNTP calibration that writes the PMU once and stops; the transfer lifecycle itself is unchanged.
- * User-approved completion: a progress-sync view (kosync protocol, KOReader-compatible) networks only inside transfer STA sessions with manual push/pull or auto-push; passwords persist only as MD5.
+ * User-approved completion: a progress-sync view (kosync protocol, KOReader-compatible) now automatically connects saved WiFi on demand from transfer or reader settings, while transfer uplinks may auto-push; passwords persist only as MD5.
  */
 // 整个传书页暂停 SD 字体并使用内置字库；HTTP 停止后才恢复读取。
 // Use the built-in font and suspend SD font opens for this page; resume only after HTTP stops.
@@ -93,7 +93,7 @@ static char s_saved_ssid[33], s_password[PASSWORD_MAX + 1], s_network_message[96
 static int s_keyboard_mode;
 static transfer_edit_t s_edit_field;
 static char s_sync_message[96];
-static bool s_sync_pushed, s_sync_claimed;
+static bool s_sync_pushed;
 
 static void render(app_ctx_t* ctx, uint8_t* fb);
 static void stop_session(void);
@@ -188,7 +188,7 @@ static void draw_networks(uint8_t* fb) {
         fit_label(name, UI_PX_BTN, rect.width - 2 * UI_PAD);
         ui_text(fb, rect.x + UI_PAD, rect.y + 8, UI_PX_BTN, name, EPD_DRAW_ALIGN_LEFT, false);
         snprintf(detail, sizeof(detail), "%d dBm · %s", network->rssi,
-                 !network->supported ? "暂不支持" : network->requires_password ? "需要密码" : "开放网络");
+                 !network->supported ? "暂不支持" : s_saved_configured && !strcmp(network->ssid, s_saved_ssid) ? "已保存，点按连接" : network->requires_password ? "需要密码" : "开放网络");
         ui_text(fb, rect.x + UI_PAD, rect.y + 50, UI_PX_CAPTION, detail, EPD_DRAW_ALIGN_LEFT, false);
     }
     provisioning_button(fb, network_control_rect(7), "上一页", 7);
@@ -250,8 +250,9 @@ static void queue_network_start(read_pico_transfer_mode_t mode) {
     s_pressed = -1;
     clear_password();
     memset(&s_status, 0, sizeof(s_status));
-    s_status.mode = s_mode;
     read_pico_transfer_get_saved_wifi(s_status.wifi_ssid, &s_status.wifi_configured);
+    s_status.mode = s_mode;
+    s_qr_url = s_mode == READ_PICO_TRANSFER_MODE_STA;
     s_start_pending = true;
 }
 
@@ -325,6 +326,9 @@ static app_redraw_t provisioning_action(int id) {
             if (!s_selected.supported) {
                 snprintf(s_network_message, sizeof(s_network_message), "此网络认证暂不支持，请选择其他网络");
                 return APP_REDRAW_PAGE;
+            }
+            if (s_saved_configured && !strcmp(s_selected.ssid, s_saved_ssid)) {
+                queue_network_start(READ_PICO_TRANSFER_MODE_STA); return APP_REDRAW_PAGE;
             }
             clear_password();
             s_network_message[0] = 0;
@@ -453,7 +457,7 @@ static void draw_sync(uint8_t* fb) {
         ui_product_title(fb, (EpdRect){r.x + 180, r.y + 20, r.width - 180, 34}, values[i], 26, 1);
         ui_hairline(fb, r.y + r.height, r.x, r.width, UI_GRAY_LIGHT);
     }
-    bool enabled = sync_online() && !os_sync_job_busy() && !os_sync_pull_pending();
+    bool enabled = !os_sync_job_busy() && !os_sync_pull_pending();
     sync_button(fb, 0, "测试连接", enabled);
     sync_button(fb, 1, "注册账号", enabled);
     sync_button(fb, 2, os_sync_pull_pending() ? "保留本地" : "上传进度", enabled || os_sync_pull_pending());
@@ -461,7 +465,7 @@ static void draw_sync(uint8_t* fb) {
     if (s_sync_message[0])
         ui_product_title(fb, (EpdRect){UI_MARGIN, 726, ui_content_width(), 80}, s_sync_message, 28, 2);
     else
-        ui_text(fb, UI_MARGIN, 728, 26, sync_online() ? "已连接，可上传或下载" : "上传/下载需先连接已有 WiFi",
+        ui_text(fb, UI_MARGIN, 728, 26, sync_online() ? "已连接，可上传或下载" : "操作时自动连接已保存 WiFi",
                 EPD_DRAW_ALIGN_LEFT, false);
     ui_product_title(fb, (EpdRect){UI_MARGIN, 850, ui_content_width(), 160},
                      "上传/下载针对最后一本读过的书；下载完成后确认应用，取消保留本地位置。同步时暂停文件上传与删除；自动上传每次联网一次。兼容 KOReader 与 kosync 服务器；自建服务器 http/https 均可，https 需有效证书。",
@@ -470,37 +474,33 @@ static void draw_sync(uint8_t* fb) {
 }
 static void cancel_sync(void) {
     os_sync_job_cancel();
-    if (s_sync_claimed) read_pico_transfer_release_sync();
-    s_sync_claimed = false;
 }
 static bool start_sync(os_sync_job_t job) {
     if (os_sync_job_busy() || os_sync_pull_pending()) return false;
-    if (!read_pico_transfer_claim_sync()) {
-        snprintf(s_sync_message, sizeof(s_sync_message), "正在上传或删除，请完成后再同步");
-        return false;
+    if (s_status.mode == READ_PICO_TRANSFER_MODE_AP || s_status.state == READ_PICO_TRANSFER_ERROR) {
+        if (!read_pico_transfer_try_stop_if_idle()) {
+            snprintf(s_sync_message, sizeof(s_sync_message), "正在上传或删除，请完成后再同步"); return false;
+        }
+        read_pico_transfer_get_status(&s_status);
+        if (s_session_started && s_status.changed_count) s_any_changed = true;
+        s_session_started = false; s_start_pending = false; s_mode = READ_PICO_TRANSFER_MODE_STA;
     }
-    s_sync_claimed = true;
-    if (os_sync_job_start(job, s_sync_message, sizeof(s_sync_message))) return true;
-    read_pico_transfer_release_sync(); s_sync_claimed = false;
-    return false;
+    return os_sync_job_start(job, s_sync_message, sizeof(s_sync_message));
 }
 static app_redraw_t sync_action(app_ctx_t* ctx, int id) {
     (void)ctx;
-    if (id == 914) { cancel_sync(); s_view = TRANSFER_HOME; return APP_REDRAW_PAGE; }
+    if (id == 914) { cancel_sync(); s_view = TRANSFER_HOME;
+        read_pico_transfer_get_status(&s_status);
+        s_start_pending = s_status.state == READ_PICO_TRANSFER_STOPPED; return APP_REDRAW_PAGE; }
     if (os_sync_pull_pending()) {
         if (id == 912 || id == 913) {
             os_sync_pull_confirm(id == 913, s_sync_message, sizeof(s_sync_message));
-            read_pico_transfer_release_sync(); s_sync_claimed = false;
         }
         return APP_REDRAW_PAGE;
     }
     if (os_sync_job_busy()) return APP_REDRAW_NONE;
     if (id >= 900 && id < 903) { open_sync_edit((transfer_edit_t)(EDIT_SYNC_URL + id - 900)); return APP_REDRAW_PAGE; }
     if (id == 903) { app_settings_set_sync_auto(!app_settings_sync_auto()); return APP_REDRAW_PAGE; }
-    if (!sync_online()) {
-        snprintf(s_sync_message, sizeof(s_sync_message), "请先用已有 WiFi 连接");
-        return APP_REDRAW_PAGE;
-    }
     if (id >= 910 && id <= 913) start_sync((os_sync_job_t)(id - 910));
     else return APP_REDRAW_NONE;
     return APP_REDRAW_PAGE;
@@ -652,10 +652,11 @@ static void on_enter(app_ctx_t* ctx) {
     s_edit_field = EDIT_WIFI;
     s_sync_pushed = false;
     s_sync_message[0] = 0;
-    s_sync_claimed = false;
     s_settle = s_any_changed = false;
-    s_status.mode = s_mode;
     read_pico_transfer_get_saved_wifi(s_status.wifi_ssid, &s_status.wifi_configured);
+    s_mode = s_status.wifi_configured ? READ_PICO_TRANSFER_MODE_STA : READ_PICO_TRANSFER_MODE_AP;
+    s_status.mode = s_mode;
+    s_qr_url = s_mode == READ_PICO_TRANSFER_MODE_STA;
     s_poll_ms = 0;
     s_free = 0;
 }
@@ -704,9 +705,6 @@ static void transfer_on_exit(app_ctx_t* ctx) {
 
 static app_redraw_t on_tick(app_ctx_t* ctx) {
     if (os_sync_job_poll(s_sync_message, sizeof(s_sync_message))) {
-        if (!os_sync_pull_pending() && s_sync_claimed) {
-            read_pico_transfer_release_sync(); s_sync_claimed = false;
-        }
         return APP_REDRAW_PAGE;
     }
     if (s_view != TRANSFER_HOME && s_view != TRANSFER_SYNC) return network_ui_tick(ctx);
@@ -741,7 +739,7 @@ static app_redraw_t on_tick(app_ctx_t* ctx) {
     // Calibrate opportunistically once STA has an uplink; false for AP or stopped states releases SNTP with the session.
     bool sta_uplink = next.mode == READ_PICO_TRANSFER_MODE_STA && next.network_ready;
     os_time_network(sta_uplink);
-    if (!sta_uplink) { if (os_sync_job_busy() || os_sync_pull_pending()) cancel_sync(); s_sync_pushed = false; }
+    if (!sta_uplink) s_sync_pushed = false;
     // 自动上传：每次 STA 上行会话只推一次，结果留在同步页可见。
     // Auto-push: once per STA uplink session, with the result visible on the sync view.
     if (sta_uplink && app_settings_sync_auto() && !s_sync_pushed &&

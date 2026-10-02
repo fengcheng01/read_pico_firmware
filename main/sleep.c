@@ -326,12 +326,11 @@ bool app_lock_pin_challenge(EpdiyHighlevelState* hl, cst836u_handle_t tp) {
     char message[64] = {0};
     unsigned count = 0;
     uint8_t* fb = epd_hl_get_framebuffer(hl);
-    epd_poweron();
-    epd_clear();
-    epd_hl_set_all_white(hl);
+    bool first = true;
     for (;;) {
         ui_product_lock_keypad(fb, "输入锁屏密码", message, count, false);
-        epd_hl_update_screen(hl, MODE_GC16, 25);
+        guard_draw_result(hl, first ? update_display_full(hl) : update_display_mode(hl, MODE_GL16));
+        first = false;
         int key = -1;
         for (;;) {
             vTaskDelay(pdMS_TO_TICKS(20));
@@ -357,8 +356,6 @@ bool app_lock_pin_challenge(EpdiyHighlevelState* hl, cst836u_handle_t tp) {
         if (count == 4) {
             input[4] = 0;
             if (!strcmp(input, pin)) {
-                epd_hl_set_all_white(hl);
-                epd_clear();
                 return true;
             }
             snprintf(message, sizeof(message), "密码错误，请重试");
@@ -374,11 +371,8 @@ void enter_lock_and_sleep(
     // Save uniformly first (reader progress, stats checkpoints), then paint the lock face; failures never block sleep.
     app_sleep_prepare_run();
     uint8_t* framebuffer = epd_hl_get_framebuffer(hl);
-    epd_poweron();
-    epd_clear();
-    epd_hl_set_all_white(hl);
     draw_lock_face(framebuffer);
-    epd_hl_update_screen_from_white(hl, MODE_GC16, 25);
+    guard_draw_result(hl, update_display_full(hl));
 
     app_lock_wait_key_idle(800);
     app_sleep_mode_t mode = app_settings_sleep_mode();
@@ -396,12 +390,8 @@ void enter_lock_and_sleep(
             break;
     }
 
-    // 参考帧和屏幕都归零，回到主循环后由当前页自己画一遍，不必知道是哪一页。
-    // Zero the reference frame and the panel; the current page redraws after the loop resumes, without knowing which page it is.
-    read_pico_pmu_drain_events();
-    epd_poweron();
-    epd_clear();
-    epd_hl_set_all_white(hl);
+    // 保留真实锁屏参考帧，下一页直接覆盖；唤醒不再展示两次清屏过渡。
+    // Retain the actual lock reference for the next page; wake no longer presents two blank clearing transitions.
     read_pico_pmu_drain_events();
     if (ignore_until_ms) {
         *ignore_until_ms = esp_timer_get_time() / 1000 + APP_LOCK_IGNORE_BOOT_MS;

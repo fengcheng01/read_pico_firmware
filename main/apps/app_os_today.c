@@ -8,9 +8,8 @@
  * and stays visibly uncalibrated; the reading summary uses real progress and
  * local reading stats; the approved continue-reading action replaces the unimplemented todo area.
  *
- * 冻结：不伪造时间、任务或阅读数字；分钟变化只用 DU 刷时钟区；render 只绘图。
- * Frozen: Never invent time, tasks or reading numbers; minute changes DU-refresh
- * only the clock band; render only paints.
+ * 冻结：不伪造时间、任务或阅读数字；用户反馈残影后，分钟变化使用灰阶页刷新；render 只绘图。
+ * Frozen: Never invent time, tasks or reading numbers; hardware feedback changes minute updates to grayscale pages; render only paints.
  */
 #include "app.h"
 #include "app_registry.h"
@@ -29,8 +28,8 @@ static int64_t s_probe_ms;
 static int s_drawn_minute = -1;
 static EpdRect s_area;
 
-// 时钟带：大字时间 + 日期/未校时说明，分钟变化只 DU 这块。/ Clock band: big time plus date or the uncalibrated notice; minute changes DU only this band.
-static EpdRect clock_rect(void) { return (EpdRect){UI_MARGIN, 200, ui_content_width(), 264}; }
+// 时钟带包含完整未校时说明，分钟变化交给灰阶页刷新。/ The clock band includes the full uncalibrated notice; minute changes use grayscale page presentation.
+static EpdRect clock_rect(void) { return (EpdRect){UI_MARGIN, 200, ui_content_width(), 296}; }
 static EpdRect reading_row_rect(int i) { return (EpdRect){UI_MARGIN, 604 + i * 64, ui_content_width(), 58}; }
 
 static void paint_clock(uint8_t* fb) {
@@ -58,14 +57,15 @@ static void format_minutes(unsigned long minutes, char* out, size_t cap) {
 
 static void on_enter(app_ctx_t* ctx) {
     book_home_cancel();
-    s_started = false; s_loading = true; s_drawn_minute = -1;
+    s_started = book_home_cached(); s_loading = !s_started; s_drawn_minute = -1;
     s_revision = book_store_revision(); s_probe_ms = ctx->now_ms;
-    os_storage_probe();
+    if (s_loading) os_storage_probe();
     os_time_poll(ctx->now_ms);
 }
 static void today_on_exit(app_ctx_t* ctx) { (void)ctx; book_home_cancel(); }
 static void on_media_lost(app_ctx_t* ctx) {
     (void)ctx;
+    book_home_invalidate();
     book_home_cancel(); s_started = false; s_loading = true;
 }
 static void render(app_ctx_t* ctx, uint8_t* fb) {
@@ -139,7 +139,7 @@ static app_redraw_t gesture(app_ctx_t* ctx, const ui_gesture_event_t* ev) {
 static app_redraw_t on_tick(app_ctx_t* ctx) {
     if (ctx->consumed) return APP_REDRAW_NONE;
     os_time_poll(ctx->now_ms);
-    if (s_revision != book_store_revision()) {
+    if (s_revision != book_store_revision() || (!s_loading && !book_home_cached())) {
         book_home_cancel(); s_started = false; s_loading = true; s_revision = book_store_revision();
     }
     if (s_loading) {
@@ -153,10 +153,10 @@ static app_redraw_t on_tick(app_ctx_t* ctx) {
     }
     const os_time_info_t* info = os_time_info();
     if (info->state == OS_TIME_VALID && info->minute != s_drawn_minute) {
-        // 分钟变了才 DU 时钟带；日期行随同带重画。/ DU the clock band only on a minute change; the date line rides along.
+        // 分钟变化保留字形灰阶，统一出口周期清理。/ Preserve glyph grayscale on minute changes; the shared path counts cleanup intervals.
         paint_clock(ctx->fb);
         s_area = clock_rect();
-        return APP_REDRAW_AREA;
+        return APP_REDRAW_PAGE;
     }
     return APP_REDRAW_NONE;
 }

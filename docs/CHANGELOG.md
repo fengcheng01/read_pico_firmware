@@ -3,6 +3,15 @@
 按日期和作者简述对用户可见的功能变化；详细实现历史见 Git。使用方法见 [README](../README.zh-CN.md)。
 User-visible changes by date and author; Git retains implementation history. See [README](../README.md) for usage.
 
+## 2026-10-02 · Codex · 锁屏、残影与同步 / Lock, ghosting and sync
+
+- 清理使用完整厂家 GC16，局部刷新到期后清理整屏；默认周期 5 次，已有选择保留。产品扫描采用 12 MHz 和更高预填，封面灰阶刷新前先绘制缓冲；锁屏唤醒去掉空白清屏过渡，密码四点居中，0/清空/退格回到键盘第四行。
+  Cleaning uses complete vendor GC16 and covers the whole panel after accumulated partial updates. The default interval is 5, retaining saved choices. Product scan uses 12 MHz and more prefill; paint covers before grayscale presentation. Wake removes blank clear transitions, centers PIN dots and restores 0/Clear/Backspace to the fourth keypad row.
+- 已保存 WiFi 默认重连，选中同网络免重复输密码；同步自动按需联网，阅读「更多设置 → 进度同步」可测试/上传/下载。下载仍须确认；跨固件位置按百分比近似并持久保存，打开当前正文后应用，避免旧进度覆盖结果。
+  Saved WiFi reconnects by default without repeat password entry. Sync connects on demand, also via reader More Settings → Progress Sync. Pulls require confirmation; foreign positions persist as approximate percentages and are applied to the open reader without old progress overwriting them.
+- 正在读/今日摘要与书架目录、封面跨根页面复用，来源/进度变化时失效；首页点击书籍直接打开并显示真实 EPUB 封面，无封面保留排版回退。设置小方框增加明确勾选。
+  Home/Today summaries and shelf catalogs/covers survive root changes until their sources/progress change. Home opens books directly and shows real EPUB covers with typographic fallback; small Settings boxes show explicit checkmarks.
+
 ## 2026-10-02 · Codex · 字体、图文与灰阶阅读 / Fonts, inline images and grayscale reading
 
 - 内置字库补齐 GB2312 的 6763 个汉字，压缩字库与静态图片保持原分区；字体列表每页六条，保留当前标记和正文示例，四根页面放大字号与调整排版。

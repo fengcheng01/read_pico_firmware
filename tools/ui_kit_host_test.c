@@ -9,6 +9,7 @@
 #include <assert.h>
 #include <limits.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #define W 100
 #define H 100
@@ -25,6 +26,11 @@ void epd_fill_circle_helper(int x, int y, int radius, int corners, int delta, ui
 static void rect_eq(EpdRect r, int x, int y, int w, int h) {
     assert(r.x == x && r.y == y && r.width == w && r.height == h);
 }
+void epd_draw_line(int x0, int y0, int x1, int y1, uint8_t c, uint8_t* fb) {
+    int dx = abs(x1-x0), dy = -abs(y1-y0), sx = x0<x1?1:-1, sy = y0<y1?1:-1, err = dx+dy;
+    for (;;) { epd_draw_pixel(x0,y0,c,fb); if (x0==x1 && y0==y1) break;
+        int e2=err*2; if (e2>=dy) {err+=dy;x0+=sx;} if (e2<=dx) {err+=dx;y0+=sy;} }
+}
 int main(void) {
     rect_eq(ui_rect_union((EpdRect){0}, (EpdRect){10,20,30,40}), 10,20,30,40);
     rect_eq(ui_rect_union((EpdRect){10,20,30,40}, (EpdRect){5,30,50,10}), 5,20,50,40);
@@ -38,5 +44,10 @@ int main(void) {
     assert(fb[30 * W + 9] == UI_GRAY_WHITE);
     // 按压底图之后绘制黑字像素，文字不反色。/ Draw black text pixels after the pressed background, without inversion.
     epd_draw_pixel(40,30,UI_GRAY_BLACK,fb); assert(fb[30 * W + 40] == UI_GRAY_BLACK);
+    memset(fb, UI_GRAY_WHITE, sizeof(fb));
+    ui_draw_choice_round_rect(fb, (EpdRect){10,10,48,48}, 6, false);
+    assert(fb[44 * W + 31] == UI_GRAY_WHITE);
+    ui_draw_choice_round_rect(fb, (EpdRect){10,10,48,48}, 6, true);
+    assert(fb[44 * W + 31] == UI_GRAY_BLACK);
     puts("ui kit host tests passed");
 }

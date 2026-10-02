@@ -40,7 +40,7 @@ with tempfile.TemporaryDirectory(prefix="rp-os.", dir="/tmp") as folder:
             target_includes = ["-Itools/usb_disk_stubs", "-Imain/os"]
             target_flags = flags + ["-Wno-unused-function"]
         elif name == "sync_device":
-            target_includes = ["-Itools/os_sync_device_stubs", *includes]
+            target_includes = ["-Itools/os_sync_device_stubs", "-Icomponents/read_pico_transfer/include", *includes]
             target_flags = target_flags + ["-Wno-unused-variable", "-pthread"]
         elif name == "device":
             target_includes = includes + ["-DESP_ERR_NOT_FINISHED=6"]

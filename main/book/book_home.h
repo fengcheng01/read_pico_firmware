@@ -40,3 +40,7 @@ void book_home_cancel(void);
 bool book_home_step(void);
 /// 只读快照；未完成时不得据此发起开书。/ Read-only snapshot; never open from incomplete data.
 const book_home_snapshot_t* book_home_snapshot(void);
+
+/// 来源或进度未变时复用完整摘要；移除媒体时显式失效。/ Reuse complete summaries until source/progress changes; explicitly invalidate lost media.
+bool book_home_cached(void);
+void book_home_invalidate(void);

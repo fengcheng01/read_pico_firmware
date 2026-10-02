@@ -54,3 +54,6 @@ void ui_product_reader_chrome(uint8_t* fb, const char* title, unsigned page, uns
 /// Lock-PIN keypad draw/hit; digits are entered dots, back adds a return button, hits return 0..9 digits, 10 clear, 11 backspace.
 void ui_product_lock_keypad(uint8_t* fb, const char* title, const char* message, unsigned digits, bool back);
 int ui_product_lock_keypad_hit(uint16_t x, uint16_t y);
+
+/// 缩放内存封面，保留灰阶和比例；不读取文件。/ Scale an in-memory cover preserving grayscale and aspect; never read files.
+void ui_product_cover_bitmap(uint8_t* fb, EpdRect rect, const uint8_t* gray);
