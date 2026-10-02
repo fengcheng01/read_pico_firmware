@@ -68,7 +68,7 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
         ui_draw_choice_round_rect(fb, (EpdRect){ui_content_right() - 52, r.y + r.height / 2 - 26, 52, 52}, 8, getters[i]());
         ui_hairline(fb, r.y + r.height, r.x, r.width, UI_GRAY_LIGHT);
     }
-    ui_text(fb, UI_MARGIN, 1062, 22, "状态栏在正文页脚左侧显示时钟与电量；进度条可整体关闭。", EPD_DRAW_ALIGN_LEFT, false);
+    ui_text(fb, UI_MARGIN, 1062, 26, "时钟与电量按需显示；阅读百分比可关闭。", EPD_DRAW_ALIGN_LEFT, false);
     ui_draw_menu_handle(fb, false);
 }
 
