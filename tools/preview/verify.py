@@ -228,6 +228,29 @@ class PreviewTests(unittest.TestCase):
         self.assertEqual(self.preview.state["page"], self.indices["app_os_settings"])
         self.assertNotEqual(plain, probing)
 
+    def test_storage_usb_entry_confirmation_and_failure(self):
+        self.page("app_os_storage")
+        self.preview.command("tick")
+        empty = self.preview.png
+        self.preview.command("tap 480 920")
+        self.assertNotEqual(empty, self.preview.png)
+        self.preview.command("key 0")
+        self.assertEqual(empty, self.preview.png)
+        self.preview.command("sd 1")
+        self.page("app_os_storage")
+        self.preview.command("tick")
+        ready = self.preview.png
+        self.preview.command("tap 480 920")
+        confirm = self.preview.png
+        self.assertNotEqual(ready, confirm)
+        self.preview.command("tap 140 920")
+        self.assertEqual(ready, self.preview.png)
+        self.preview.command("tap 480 920")
+        self.preview.command("tap 480 920")
+        self.preview.command("tick")
+        self.assertEqual(self.state()["page"], self.indices["app_os_storage"])
+        self.assertNotEqual(confirm, self.preview.png)
+
     def test_reader_typography_menu_and_night(self):
         self.preview.command("fixture 1")
         self.preview.command("tap 220 1140")

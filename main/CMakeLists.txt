@@ -1,5 +1,6 @@
 set(main_requires
     read_pico
+    espressif__esp_tinyusb
     read_pico_transfer
     read_pico_search
     espressif__qrcode
@@ -47,6 +48,8 @@ idf_component_register(
         "apps/app_os_storage.c"
         "apps/app_os_tools.c"
         "os/os_device_pico.c"
+        "os/os_usb_disk_pico.c"
+        "usb/usb_disk.c"
         "os/os_time.c"
         "os/os_time_pico.c"
         "os/os_sync.c"
@@ -91,7 +94,7 @@ idf_component_register(
         "factory/pmu_selftest.c"
         "factory/vcom_setup.c"
     REQUIRES ${main_requires}
-    INCLUDE_DIRS "." "app" "apps" "font" "ui" "ui/product" "os" "factory" "book"
+    INCLUDE_DIRS "." "app" "apps" "font" "ui" "ui/product" "os" "factory" "book" "usb"
     EMBED_FILES
         "assets/lock_4bpp.bin"
         "assets/loading_4bpp.bin"

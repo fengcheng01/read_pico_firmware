@@ -31,6 +31,9 @@ Agent-facing layout, `app_desc_t` contract, glossary and comment style are in
 
 The refined toolbar exposes TOC/bookmarks, Add Bookmark, a size subpanel, More Settings, Clean and Library. Settings group typography and turns/display. Bookmark deletion requires confirmation. Sync runs in a worker, confirms pulled positions before applying, excludes uploads/deletions during sync and cancels on exit. Home avoids a permanent font notice; the reader offers a full-font entry only when glyphs are missing.
 
+
+TF also supports **USB computer connection**: Settings → Storage → USB connection. Confirm to reboot into disk mode; safely eject on the computer before exiting/restarting the device. Reading/transfer pause, and the flashing serial port returns after exit. See [USB disk usage](docs/USB_SD.md).
+
 ## Documentation & More Devices
 
 - [Official Read Pico documentation](https://dot.mindreset.tech/docs/read_0)

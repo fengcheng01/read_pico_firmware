@@ -95,3 +95,10 @@ void preview_home_fixture(int value) {
     seed_progress("纸上的时间.txt", 48, 200);
     seed_progress("阅读记录.txt", 58, 100);
 }
+
+// 电脑预览不占用 USB 或重启设备。/ Desktop preview never claims USB or reboots hardware.
+esp_err_t os_usb_disk_request(void) { return ESP_ERR_INVALID_STATE; }
+bool os_usb_disk_take_request(void) { return false; }
+
+esp_err_t read_pico_sd_sync(void) { return ESP_OK; }
+esp_err_t read_pico_sd_remount(void) { return ESP_OK; }

@@ -44,7 +44,9 @@ static int64_t s_time_bias_ms;
 static int64_t preview_now_ms(void) { return esp_timer_get_time() / 1000 + s_time_bias_ms; }
 
 const char* esp_err_to_name(esp_err_t err) { return err == ESP_OK ? "ESP_OK" : "HOST_ERROR"; }
-esp_err_t read_pico_sd_get_info(read_pico_sd_info_t* out) { *out = (read_pico_sd_info_t){0}; return ESP_OK; }
+// 卡状态夹具仅验证 UI，不挂载真实卡。/ Card-state fixture verifies UI without real card mounting.
+static bool s_sd_fixture;
+esp_err_t read_pico_sd_get_info(read_pico_sd_info_t* out) { *out = (read_pico_sd_info_t){.present=s_sd_fixture,.mounted=s_sd_fixture,.capacity_bytes=32ULL*1024*1024*1024,.free_bytes=16ULL*1024*1024*1024}; return ESP_OK; }
 uint8_t* epd_hl_get_framebuffer(EpdiyHighlevelState* state) { return state->front_fb; }
 void epd_clear_area(EpdRect area) { (void)area; }
 void guard_draw_result(EpdiyHighlevelState* state, enum EpdDrawError err) { (void)state; (void)err; }
@@ -202,6 +204,7 @@ int main(int argc, char** argv) {
         int value, x, y;
         unsupported = -1;
         if (sscanf(command, "page %d", &value) == 1) choose_page(value);
+        else if (sscanf(command, "sd %d", &value) == 1) s_sd_fixture = value == 1;
         else if (sscanf(command, "tap %d %d", &x, &y) == 2) tap(x, y);
         else if (sscanf(command, "key %d", &value) == 1 && value >= 0 && value < 3) key(value);
         else if (sscanf(command, "asset %d", &value) == 1 && (value == 0 || value == 1)) {

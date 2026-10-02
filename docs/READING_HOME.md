@@ -109,3 +109,6 @@ The UI prepares config/file-identity/progress snapshots, and one worker with an 
 
 预览使用离线设备边界替身，不验证真实网络时序；`tools/run_os_home_tests.py` 额外编译真实设备同步桥，以 pthread/HTTP 替身验证网络线程与 UI NVS 分离、取消、确认及冲突，验证 HTTP 流边界和无 NUL XML。宿主构建需先有 IDF 锁定的 `managed_components/espressif__cjson`（通过 `idf.py reconfigure` 获取），不另复制 JSON 解析器。
 Preview uses offline device boundaries rather than validating network timing. `tools/run_os_home_tests.py` also compiles the real sync bridge with pthread/HTTP fakes to check worker/UI-NVS separation, cancellation, confirmation and conflicts, plus HTTP stream bounds and raw XML without NUL. Host builds require the IDF-locked `managed_components/espressif__cjson` populated by `idf.py reconfigure`; no duplicate JSON parser is maintained.
+
+
+USB 卡盘经设置 → 存储确认重启进入，完整操作、独占/引导/刷机串口契约见 [USB_SD.md](USB_SD.md)。/ USB disk entry, exclusive ownership, boot and serial recovery are documented in USB_SD.md.

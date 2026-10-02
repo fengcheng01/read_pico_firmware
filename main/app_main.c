@@ -18,9 +18,12 @@
 #include "epdiy.h"
 #include "esp_log.h"
 #include "os_crash.h"
+#include "os_usb_disk.h"
+#include "usb_disk.h"
 #include "pmu_selftest.h"
 #include "read_pico_board.h"
 #include "read_pico_init.h"
+#include "read_pico_sd.h"
 #include "read_pico_pmu.h"
 #include "settings.h"
 #include "ttf_font.h"
@@ -67,9 +70,11 @@ static bool images_match_panel(void) {
 }
 
 void app_main(void) {
-    read_pico_handle_t hw;
-    if (read_pico_init(&hw) != ESP_OK) return;
     app_settings_init();
+    const bool usb_requested = os_usb_disk_take_request();
+    if (!usb_requested) usb_disk_restore_serial();
+    read_pico_handle_t hw;
+    if (read_pico_init_with_sd(&hw, !usb_requested) != ESP_OK) return;
     // 先记上次复位原因；异常复位在锁屏挑战前写入内置存储日志。
     // Record the last reset reason first; abnormal ones reach the internal log before the lock challenge.
     os_crash_boot_check();
@@ -89,7 +94,8 @@ void app_main(void) {
     ui_draw_full_image(framebuffer, loading_4bpp_bin_start);
     update_display_from_white(&hl);
 
-    ttf_font_init();
+    if (usb_requested) ttf_font_open_builtin();
+    else ttf_font_init();
 
     if (!hw.touch_ready) {
         ESP_LOGE(TAG, "No touch controller, UI cannot run");
@@ -106,6 +112,11 @@ void app_main(void) {
     // 设有锁屏密码时先阻塞校验；主循环、菜单与页面在通过前都不可达。
     // With a lock PIN armed, block here first; the loop, menus and pages stay unreachable until it passes.
     app_lock_pin_challenge(&hl, hw.touch);
+
+    // 用户请求 USB 独占卡盘：通过工厂/PIN 检查后，不启动普通页面或后台消费者。
+    // User-requested exclusive USB disk: after factory/PIN gates, never start normal pages or background consumers.
+    if (usb_requested && !st_resume) usb_disk_run(&hl, framebuffer, hw.touch);
+    if (usb_requested) read_pico_sd_start_probe();
 
     app_loop_run(&(app_loop_config_t){
         .hl = &hl,

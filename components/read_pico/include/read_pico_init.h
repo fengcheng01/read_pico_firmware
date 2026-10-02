@@ -38,6 +38,8 @@ typedef struct {
 /// / EPD, SD probe, accelerometer (power-down after check), PMU, touch.
 /// Peripheral failures clear that ready flag; only EPD failure is fatal.
 esp_err_t read_pico_init(read_pico_handle_t* handle);
+/// USB 专用启动跳过 SD 文件系统探测；其余装配不变。/ Dedicated USB boot skips SD filesystem probing; other bring-up stays the same.
+esp_err_t read_pico_init_with_sd(read_pico_handle_t* handle, bool probe_sd);
 void read_pico_deinit(read_pico_handle_t* handle);
 
 /// 加速度计只在 AXIS 页采样，离开后关掉 ODR。

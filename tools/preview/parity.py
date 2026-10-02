@@ -26,6 +26,8 @@ DEVICE_ONLY = {
     "display.c",           # 波形/推屏驱动 / waveform and present driver
     "sleep.c",             # PMU/GPIO 睡眠路径 / PMU/GPIO sleep path
     "app/app_loop.c",      # 真机事件循环 / the real event loop
+    "os/os_usb_disk_pico.c", # USB 重启请求 / USB reboot request
+    "usb/usb_disk.c", # USB 专用启动与 SDMMC/TinyUSB / dedicated USB boot + SDMMC/TinyUSB
     "os/os_time_pico.c",   # PMU/SNTP 设备桥 / PMU/SNTP bridge
     "os/os_sync_pico.c",
     "os/os_crash_pico.c",  # esp_reset_reason 与内置 FAT 追加 / reset reason + internal-FAT append   # HTTP/MD5 设备桥 / HTTP/MD5 bridge

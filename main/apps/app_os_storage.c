@@ -8,8 +8,10 @@
  * status with capacities plus the crash-record summary and manual re-probing;
  * formatting and the buzzer stay in diagnostics and never appear here.
  *
- * 冻结：不格式化、不建目录、不写卡；探测失败如实显示；render 只绘图。
- * Frozen: Never format, create directories or write cards; probe failures
+ * 用户批准 USB 卡盘入口：确认后重启进入电脑独占模式，避免两端同时挂载。
+ * User-approved USB disk entry: confirm then reboot to computer-exclusive mode to avoid dual mounts.
+ * 冻结：不格式化、不建目录、不写卡；USB 导出整张 TF 卡由电脑写入；探测失败如实显示；render 只绘图。
+ * Frozen: Never format, create directories or write cards locally; USB exports TF for host writes; probe failures
  * display as-is; render only paints.
  */
 #include "app.h"
@@ -18,6 +20,8 @@
 #include "os_catalog.h"
 #include "os_crash.h"
 #include "os_device.h"
+#include "os_usb_disk.h"
+#include "ttf_font.h"
 #include "read_pico_sd.h"
 #include "ui_gesture.h"
 #include "ui_menu.h"
@@ -27,6 +31,9 @@
 static EpdRect back_rect(void) { return ui_product_back_rect(); }
 static EpdRect refresh_rect(void) { return (EpdRect){UI_MARGIN, 880, 260, 84}; }
 
+static EpdRect usb_rect(void) { return (EpdRect){324, 880, 320, 84}; }
+static bool s_usb_confirm, s_usb_start;
+static char s_usb_message[96];
 static bool s_probing = true;
 static read_pico_sd_info_t s_sd;
 static book_store_root_t s_roots[2];
@@ -51,10 +58,23 @@ static void start_probe(app_ctx_t* ctx) {
     os_storage_probe();
 }
 
-static void on_enter(app_ctx_t* ctx) { start_probe(ctx); }
+static void on_enter(app_ctx_t* ctx) { s_usb_confirm = s_usb_start = false; s_usb_message[0] = 0; start_probe(ctx); }
 
 static app_redraw_t on_tick(app_ctx_t* ctx) {
-    if (ctx->consumed || !s_probing) return APP_REDRAW_NONE;
+    if (ctx->consumed) return APP_REDRAW_NONE;
+    if (s_usb_start) {
+        esp_err_t err = ttf_font_suspend_sd(true);
+        if (err == ESP_OK) err = read_pico_sd_sync();
+        if (err == ESP_ERR_NOT_FINISHED) return APP_REDRAW_NONE;
+        if (err == ESP_OK) err = os_usb_disk_request();
+        ttf_font_suspend_sd(false);
+        s_usb_start = s_usb_confirm = false;
+        snprintf(s_usb_message, sizeof(s_usb_message), "USB 模式未启动：%s", esp_err_to_name(err));
+        read_pico_sd_remount();
+        start_probe(ctx);
+        return APP_REDRAW_PAGE;
+    }
+    if (!s_probing) return APP_REDRAW_NONE;
     if (!os_storage_probe_complete()) return APP_REDRAW_NONE;
     s_probing = false;
     read_pico_sd_get_info(&s_sd);
@@ -104,11 +124,35 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
                      "图书优先保存到 TF 卡；未插卡时使用内置存储。拔插卡或上传后可重新检测，结果只用于展示，不改动数据。",
                      26, 3);
     ui_draw_button(fb, refresh_rect(), "重新检测", !s_probing);
+    ui_draw_button(fb, usb_rect(), "USB 连接电脑", false);
+    if (s_usb_confirm || s_usb_start || s_usb_message[0]) {
+        EpdRect panel = {UI_MARGIN - 16, 726, ui_content_width() + 32, 320};
+        ui_clear_rect_fast(fb, panel);
+        ui_draw_round_rect(fb, panel, UI_BTN_RADIUS, UI_GRAY_BLACK);
+        ui_product_title(fb, (EpdRect){UI_MARGIN, 750, ui_content_width(), 100},
+            s_usb_start ? "正在重启进入 USB 卡盘…" : s_usb_message[0] ? s_usb_message : "重启后电脑独占 TF 卡；阅读和传书暂停。退出前先在电脑安全弹出。", 28, 3);
+        if (s_usb_confirm && !s_usb_start) {
+            ui_draw_button(fb, refresh_rect(), "取消", false);
+            ui_draw_button(fb, usb_rect(), "确认连接", false);
+        }
+    }
     ui_draw_menu_handle(fb, false);
 }
 
 static app_redraw_t gesture(app_ctx_t* ctx, const ui_gesture_event_t* ev) {
     if (ev->type != UI_GESTURE_TAP) return APP_REDRAW_NONE;
+    if (s_usb_start) return APP_REDRAW_NONE;
+    if (s_usb_confirm) {
+        if (ui_rect_hit(refresh_rect(), ev->x0, ev->y0) && ui_rect_hit(refresh_rect(), ev->x, ev->y)) s_usb_confirm = false;
+        else if (ui_rect_hit(usb_rect(), ev->x0, ev->y0) && ui_rect_hit(usb_rect(), ev->x, ev->y)) s_usb_start = true;
+        return APP_REDRAW_PAGE;
+    }
+    if (ui_rect_hit(usb_rect(), ev->x0, ev->y0) && ui_rect_hit(usb_rect(), ev->x, ev->y)) {
+        if (s_probing) snprintf(s_usb_message, sizeof(s_usb_message), "请等待 TF 卡检测完成");
+        else if (!s_sd.present) snprintf(s_usb_message, sizeof(s_usb_message), "请先插入 TF 卡，再重新检测");
+        else { s_usb_message[0] = 0; s_usb_confirm = true; }
+        return APP_REDRAW_PAGE;
+    }
     if (ui_rect_hit(back_rect(), ev->x0, ev->y0) && ui_rect_hit(back_rect(), ev->x, ev->y)) {
         ctx->request_app = app_by_id(OS_APP_SETTINGS);
         return APP_REDRAW_NONE;
@@ -122,6 +166,8 @@ static app_redraw_t gesture(app_ctx_t* ctx, const ui_gesture_event_t* ev) {
 }
 
 static app_redraw_t key(app_ctx_t* ctx, int key) {
+    if (s_usb_start) return APP_REDRAW_NONE;
+    if (key == UI_KEY_1 && (s_usb_confirm || s_usb_message[0])) { s_usb_confirm = false; s_usb_message[0] = 0; return APP_REDRAW_PAGE; }
     if (key == UI_KEY_1) ctx->request_app = app_by_id(OS_APP_SETTINGS);
     return APP_REDRAW_NONE;
 }

@@ -35,10 +35,11 @@ typedef int esp_err_t;
 #define GPIO_NUM_44 44
 #define GPIO_NUM_NC -1
 #define SDMMC_FREQ_HIGHSPEED 40000
+#define SDMMC_FREQ_DEFAULT 20000
 #define SDMMC_SLOT_FLAG_INTERNAL_PULLUP 1
 #define SDMMC_HOST_DEFAULT() ((sdmmc_host_t){0})
 #define SDMMC_SLOT_CONFIG_DEFAULT() ((sdmmc_slot_config_t){0})
-typedef struct { int max_freq_khz; } sdmmc_host_t;
+typedef struct { int max_freq_khz,slot; } sdmmc_host_t;
 typedef struct { int width,clk,cmd,d0,d1,d2,d3,cd,wp,flags; } sdmmc_slot_config_t;
 typedef struct { bool format_if_mount_failed; int max_files,allocation_unit_size; } esp_vfs_fat_sdmmc_mount_config_t;
 typedef struct { struct { char name[8]; } cid; struct { int capacity,sector_size; } csd; } sdmmc_card_t;
@@ -51,8 +52,9 @@ typedef int BaseType_t;
 #define pdMS_TO_TICKS(x) (x)
 #define ESP_LOGW(...) ((void)0)
 #define ESP_LOGI(...) ((void)0)
+static int raw_init_error, raw_slot_error, raw_card_error, raw_deinits, raw_card_calls;
 static bool present=true, drop_during_mount=false;
-static int mounts, unmounts, formats;
+static int mounts, unmounts, formats, unmount_error;
 static sdmmc_card_t mock_card={.cid={"MOCK"},.csd={2048,512}};
 static void (*pending)(void*);
 static bool read_pico_sd_present(void) { return present; }
@@ -61,11 +63,19 @@ static void vTaskDelete(void* p) {(void)p;}
 static int xTaskCreate(void (*f)(void*), const char* n,int z,void* a,int pr,void* h) {
     (void)n;(void)z;(void)a;(void)pr;(void)h;assert(!pending);pending=f;return pdPASS;
 }
+static int sdmmc_host_init(void) { return raw_init_error; }
+static int sdmmc_host_deinit(void) { ++raw_deinits;return ESP_OK; }
+static int sdmmc_host_init_slot(int slot,const sdmmc_slot_config_t* cfg) {
+    (void)slot;assert(cfg->width==1&&cfg->clk==38&&cfg->cmd==42&&cfg->d0==44);return raw_slot_error;
+}
+static int sdmmc_card_init(const sdmmc_host_t* host,sdmmc_card_t* out) {
+    assert(host->max_freq_khz==20000);++raw_card_calls;*out=mock_card;return raw_card_error;
+}
 static int esp_vfs_fat_info(const char* p,uint64_t* total,uint64_t* freeb) {(void)p;*total=1048576;*freeb=524288;return 0;}
 static int esp_vfs_fat_sdmmc_mount(const char* p,const sdmmc_host_t* h,const sdmmc_slot_config_t* s,const esp_vfs_fat_sdmmc_mount_config_t* c,sdmmc_card_t** card) {
     (void)p;(void)h;(void)s;assert(!c->format_if_mount_failed);mounts++;*card=&mock_card;if(drop_during_mount)present=false;return 0;
 }
-static int esp_vfs_fat_sdcard_unmount(const char* p,sdmmc_card_t* c){(void)p;assert(c==&mock_card);unmounts++;return 0;}
+static int esp_vfs_fat_sdcard_unmount(const char* p,sdmmc_card_t* c){(void)p;assert(c==&mock_card);unmounts++;return unmount_error;}
 static int esp_vfs_fat_sdcard_format(const char* p,sdmmc_card_t* c){(void)p;(void)c;formats++;return 0;}
 static int mock_mkdir(const char* p,int mode){(void)p;(void)mode;return 0;}
 #define mkdir mock_mkdir
@@ -125,7 +135,32 @@ int main(void) {
     }
     assert(pthread_join(reader,NULL)==0);
     assert(formats==0);
-    puts("PASS: removal, stale reinsertion, busy lifecycle, mid-probe removal, explicit recovery, concurrent snapshots, no autoformat");
+    unmount_error=ESP_FAIL;
+    assert(read_pico_sd_sync()==ESP_FAIL && card!=NULL);
+    assert(read_pico_sd_remount()==ESP_FAIL && card!=NULL);
+    unmount_error=0;
+    assert(read_pico_sd_sync()==ESP_OK && card==NULL);
+    sdmmc_card_t* raw=NULL;
+    assert(read_pico_sd_open_raw(&raw)==ESP_ERR_INVALID_STATE && !raw);
+    probe_state=0; card=NULL;
+    present=false;
+    assert(read_pico_sd_open_raw(&raw)==ESP_ERR_NOT_FOUND && !raw);
+    probe_state=0; present=true; raw_init_error=ESP_FAIL;
+    assert(read_pico_sd_open_raw(&raw)==ESP_FAIL && !raw && raw_deinits==0);
+    probe_state=0; raw_init_error=0; raw_slot_error=ESP_ERR_TIMEOUT;
+    assert(read_pico_sd_open_raw(&raw)==ESP_ERR_TIMEOUT && raw_card_calls==0 && raw_deinits==1);
+    probe_state=0; raw_slot_error=0; raw_card_error=ESP_ERR_TIMEOUT;
+    assert(read_pico_sd_open_raw(&raw)==ESP_ERR_TIMEOUT && raw_card_calls==2 && raw_deinits==2);
+    probe_state=0; raw_card_error=0;
+    int old_mounts=mounts;
+    assert(read_pico_sd_open_raw(&raw)==ESP_OK && raw);
+    assert(read_pico_sd_start_probe()==ESP_ERR_INVALID_STATE);
+    assert(read_pico_sd_remount()==ESP_ERR_NOT_FINISHED);
+    assert(read_pico_sd_format()==ESP_ERR_NOT_FINISHED);
+    assert(mounts==old_mounts && formats==0);
+    read_pico_sd_close_raw(raw);
+    assert(raw_deinits==3 && read_pico_sd_start_probe()==ESP_ERR_INVALID_STATE);
+    puts("PASS: removal, stale reinsertion, busy lifecycle, mid-probe removal, explicit recovery, concurrent snapshots, no autoformat, raw USB ownership and unmount failure");
 }
 '''
 (out / 'test.c').write_text(source, encoding='utf-8')

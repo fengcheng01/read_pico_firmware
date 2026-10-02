@@ -45,3 +45,5 @@ Display is 684×1216 with sixteen gray levels; browser scaling changes presentat
 
 适配器使用 Apache-2.0。构建时抽取的 epdiy CPU 绘图库仍遵循 LGPL-3.0-or-later，字体与资源保留原许可。分发编译程序需遵守依赖许可，见 [epdiy LICENSE](../../components/epdiy/LICENSE)。
 Adapters use Apache-2.0. Extracted epdiy CPU graphics remain LGPL-3.0-or-later, and fonts/assets retain their licenses. Binary distribution must comply with dependency licenses; see [epdiy LICENSE](../../components/epdiy/LICENSE).
+
+USB 卡盘入口使用真实存储页，`sd 0/1` 提供无卡/有卡状态，USB 重启请求明确返回失败；专用 USB 启动与线协议不在预览中。/ The real storage UI uses sd 0/1 card-state fixtures; USB reboot requests explicitly fail, and the dedicated USB boot/wire protocol is outside preview coverage.

@@ -169,3 +169,5 @@ typedef struct { int unused; } cst836u_info_t;
 typedef struct { bool present, mounted; uint64_t capacity_bytes, free_bytes; } read_pico_sd_info_t;
 esp_err_t read_pico_sd_get_info(read_pico_sd_info_t* out);
 void read_pico_sd_start_probe(void);
+esp_err_t read_pico_sd_sync(void);
+esp_err_t read_pico_sd_remount(void);

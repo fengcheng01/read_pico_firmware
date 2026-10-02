@@ -23,7 +23,7 @@ static const char* TAG = "read_pico_init";
 #define READ_PICO_VCOM_MV 1290
 #define READ_PICO_ACCEL_INT1 GPIO_NUM_1
 
-esp_err_t read_pico_init(read_pico_handle_t* hw) {
+esp_err_t read_pico_init_with_sd(read_pico_handle_t* hw, bool probe_sd) {
     if (hw == NULL) return ESP_ERR_INVALID_ARG;
     *hw = (read_pico_handle_t){ 0 };
 
@@ -34,7 +34,7 @@ esp_err_t read_pico_init(read_pico_handle_t* hw) {
     epd_init(&epd_board_read_pico, &E0470_DISPLAY, EPD_LUT_1K);
     // CD 走 FCA9555，必须等板级 I2C 起来再探测。
     // / CD is on the FCA9555; probe after board I2C is up.
-    read_pico_sd_start_probe();
+    if (probe_sd) read_pico_sd_start_probe();
     epd_set_rotation(EPD_ROT_INVERTED_PORTRAIT);
     // 板级默认 12MHz，锁到实测稳定的 18MHz；消隐和 CKV 一起按新频率重解。
     // / Board default is 12 MHz; lock to the bench-stable 18 MHz and re-solve blanking/CKV.
@@ -159,3 +159,5 @@ esp_err_t read_pico_accel_read(sc7a20h_handle_t h, sc7a20h_sample_t* sample) {
     if (err == ESP_OK) read_pico_accel_to_device(sample);
     return err;
 }
+
+esp_err_t read_pico_init(read_pico_handle_t* hw) { return read_pico_init_with_sd(hw, true); }

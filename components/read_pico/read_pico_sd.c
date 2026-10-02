@@ -21,6 +21,8 @@
 #include "freertos/task.h"
 #include "read_pico_board.h"
 #include "sdmmc_cmd.h"
+#include "read_pico_sd_raw.h"
+#include <stdlib.h>
 
 #define SD_MOUNT_POINT "/sdcard"
 #define SD_PIN_CLK GPIO_NUM_38
@@ -29,6 +31,7 @@
 
 static const char* TAG = "sd_card";
 static sdmmc_card_t* card;
+// 0 未探测，1 操作中，2 普通快照，3 USB 独占。/ 0 unprobed, 1 busy, 2 ordinary snapshot, 3 USB-exclusive.
 static int probe_state;
 static portMUX_TYPE state_lock = portMUX_INITIALIZER_UNLOCKED;
 static bool media_invalidated;
@@ -133,14 +136,16 @@ static esp_err_t mount_card(bool format_if_failed) {
     return err;
 }
 
-static void close_card(void) {
+static esp_err_t close_card(void) {
     if (card != NULL) {
         esp_err_t err = esp_vfs_fat_sdcard_unmount(SD_MOUNT_POINT, card);
         if (err != ESP_OK) {
             ESP_LOGW(TAG, "unmount %s", esp_err_to_name(err));
+            return err;
         }
         card = NULL;
     }
+    return ESP_OK;
 }
 
 static void probe_task(void* arg) {
@@ -178,7 +183,8 @@ esp_err_t read_pico_sd_start_probe(void) {
     portENTER_CRITICAL(&state_lock);
     observe_media_locked(present);
     esp_err_t err = ESP_OK;
-    if (probe_state == 1) err = ESP_ERR_NOT_FINISHED;
+    if (probe_state == 3) err = ESP_ERR_INVALID_STATE;
+    else if (probe_state == 1) err = ESP_ERR_NOT_FINISHED;
     else if (media_invalidated) err = cached_info.error;
     else if (probe_state == 2) err = cached_info.mounted ? ESP_OK :
         cached_info.error != ESP_OK ? cached_info.error : ESP_FAIL;
@@ -214,7 +220,7 @@ esp_err_t read_pico_sd_get_info(read_pico_sd_info_t* info) {
     observe_media_locked(present);
     *info = cached_info;
     esp_err_t err = !present || media_invalidated ? info->error :
-        probe_state == 0 ? ESP_ERR_INVALID_STATE :
+        probe_state == 0 || probe_state == 3 ? ESP_ERR_INVALID_STATE :
         probe_state == 1 ? ESP_ERR_NOT_FINISHED : info->error;
     portEXIT_CRITICAL(&state_lock);
     return err;
@@ -223,7 +229,7 @@ esp_err_t read_pico_sd_get_info(read_pico_sd_info_t* info) {
 // 驱动操作期间占用忙状态，不在临界区执行 I/O。/ Reserve busy state across driver I/O outside the critical section.
 static bool begin_operation(void) {
     portENTER_CRITICAL(&state_lock);
-    bool ready = probe_state != 1;
+    bool ready = probe_state != 1 && probe_state != 3;
     if (ready) probe_state = 1;
     portEXIT_CRITICAL(&state_lock);
     return ready;
@@ -231,7 +237,8 @@ static bool begin_operation(void) {
 
 esp_err_t read_pico_sd_remount(void) {
     if (!begin_operation()) return ESP_ERR_NOT_FINISHED;
-    close_card();
+    esp_err_t err = close_card();
+    if (err != ESP_OK) { read_pico_sd_info_t info; fill_info(&info, ESP_OK); info.error = err; publish_info(&info); return err; }
     portENTER_CRITICAL(&state_lock);
     memset(&cached_info, 0, sizeof(cached_info));
     media_invalidated = false;
@@ -242,7 +249,8 @@ esp_err_t read_pico_sd_remount(void) {
 
 esp_err_t read_pico_sd_sync(void) {
     if (!begin_operation()) return ESP_ERR_NOT_FINISHED;
-    close_card();
+    esp_err_t err = close_card();
+    if (err != ESP_OK) { read_pico_sd_info_t info; fill_info(&info, ESP_OK); info.error = err; publish_info(&info); return err; }
     read_pico_sd_info_t info = { .error = ESP_ERR_INVALID_STATE };
     publish_info(&info);
     return ESP_OK;
@@ -253,7 +261,7 @@ esp_err_t read_pico_sd_format(void) {
     (void)read_pico_sd_get_info(&current);
     portENTER_CRITICAL(&state_lock);
     bool invalid = media_invalidated;
-    bool busy = probe_state == 1;
+    bool busy = probe_state == 1 || probe_state == 3;
     if (!invalid && !busy) probe_state = 1;
     portEXIT_CRITICAL(&state_lock);
     if (invalid) return current.present ? ESP_ERR_INVALID_STATE : ESP_ERR_NOT_FOUND;
@@ -283,4 +291,39 @@ esp_err_t read_pico_sd_format(void) {
     }
     publish_info(&info);
     return err;
+}
+
+/* ---- USB 独占裸卡 / USB-exclusive raw card ---- */
+esp_err_t read_pico_sd_open_raw(sdmmc_card_t** out) {
+    if (!out) return ESP_ERR_INVALID_ARG;
+    *out = NULL;
+    portENTER_CRITICAL(&state_lock);
+    bool fresh = probe_state == 0 && card == NULL;
+    if (fresh) probe_state = 3;
+    portEXIT_CRITICAL(&state_lock);
+    if (!fresh) return ESP_ERR_INVALID_STATE;
+    if (!read_pico_sd_present()) return ESP_ERR_NOT_FOUND;
+    sdmmc_card_t* raw = calloc(1, sizeof(*raw));
+    if (!raw) return ESP_ERR_NO_MEM;
+    sdmmc_host_t host = SDMMC_HOST_DEFAULT();
+    host.max_freq_khz = SDMMC_FREQ_DEFAULT;
+    sdmmc_slot_config_t slot = SDMMC_SLOT_CONFIG_DEFAULT();
+    slot.width = 1; slot.clk = SD_PIN_CLK; slot.cmd = SD_PIN_CMD; slot.d0 = SD_PIN_D0;
+    slot.d1 = slot.d2 = slot.d3 = slot.cd = slot.wp = GPIO_NUM_NC;
+    slot.flags |= SDMMC_SLOT_FLAG_INTERNAL_PULLUP;
+    esp_err_t err = sdmmc_host_init();
+    bool initialized = err == ESP_OK;
+    if (err == ESP_OK) err = sdmmc_host_init_slot(host.slot, &slot);
+    if (err == ESP_OK) {
+        err = sdmmc_card_init(&host, raw);
+        if (err == ESP_ERR_TIMEOUT) { vTaskDelay(pdMS_TO_TICKS(200)); err = sdmmc_card_init(&host, raw); }
+    }
+    if (err == ESP_OK && (!read_pico_sd_present() || !raw->csd.capacity || raw->csd.sector_size != 512)) err = ESP_ERR_INVALID_STATE;
+    if (err != ESP_OK) { if (initialized) sdmmc_host_deinit(); free(raw); return err; }
+    *out = raw;
+    return ESP_OK;
+}
+void read_pico_sd_close_raw(sdmmc_card_t* raw) {
+    if (raw) { sdmmc_host_deinit(); free(raw); }
+    // 本次启动保持独占，返回阅读必须重启。/ Keep exclusive ownership for this boot; returning to reading requires a reboot.
 }

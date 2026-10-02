@@ -51,3 +51,9 @@ CONFIG_HTTPD_MAX_URI_LEN=1024
 CONFIG_LWIP_SNTP_MAX_SERVERS=2
 # kosync 协议用 MD5 做密码哈希与文档标识 / kosync uses MD5 for password hashing and doc identity
 CONFIG_MBEDTLS_MD5_C=y
+
+# USB 卡盘，仅在专用模式启动。/ USB card disk starts only in dedicated mode.
+CONFIG_TINYUSB_MSC_ENABLED=y
+CONFIG_TINYUSB_MSC_BUFSIZE=4096
+CONFIG_TINYUSB_DESC_PRODUCT_STRING="Read Pico SD"
+CONFIG_TINYUSB_DESC_MANUFACTURER_STRING="mindreset"

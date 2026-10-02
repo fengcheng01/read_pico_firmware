@@ -3,6 +3,11 @@
 按日期和作者简述对用户可见的功能变化；详细实现历史见 Git。使用方法见 [README](../README.zh-CN.md)。
 User-visible changes by date and author; Git retains implementation history. See [README](../README.md) for usage.
 
+## 2026-10-02 · Codex · USB 连接电脑 / USB card disk
+
+- 设置中的存储页新增 USB 连接电脑入口，确认后重启让电脑独占 TF 卡；电脑可读写图书/字体，安全弹出后退出重启恢复阅读与刷机串口。暂停阅读、传书和自动睡眠，不导出内置存储、不自动格式化；拔卡停止当前会话。
+  Storage adds USB computer connection: confirm to reboot and grant the host TF ownership for books/fonts; safely eject, exit/reboot to restore reading and flashing serial. Reading, transfer and idle sleep pause; no internal-storage export or auto-format. Removal stops the session.
+
 ## 2026-10-01 · Codex · 阅读界面优化 / Reader UI improvements
 
 - 阅读工具新增直接加书签与字号子面板；“更多设置”分为文字排版、翻页与显示两组，保留清残影和书架出口。书签管理和长按删除均须确认，取消保留原记录。

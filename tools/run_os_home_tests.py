@@ -26,6 +26,7 @@ with tempfile.TemporaryDirectory(prefix="rp-os.", dir="/tmp") as folder:
                           ("sync", ["tools/os_sync_host_test.c", "main/os/os_sync.c", "managed_components/espressif__cjson/cJSON/cJSON.c"]),
                           ("cover", ["tools/book_cover_host_test.c", "main/book/book_cover.c"]),
                           ("sync_device", ["tools/os_sync_device_host_test.c", "main/os/os_sync_pico.c", "main/os/os_sync.c", "main/os/os_sync_http.c", "managed_components/espressif__cjson/cJSON/cJSON.c"]),
+                          ("usb_disk", ["tools/usb_disk_host_test.c"]),
                           ("sync_http", ["tools/os_sync_http_host_test.c", "main/os/os_sync_http.c"]),
                           ("lunar", ["tools/os_lunar_host_test.c", "main/os/os_lunar.c"]),
                           ("marks", ["tools/book_marks_host_test.c", "main/book/book_marks.c"]),
@@ -35,7 +36,10 @@ with tempfile.TemporaryDirectory(prefix="rp-os.", dir="/tmp") as folder:
         target_flags = flags
         if name in ("sync", "sync_device") and os.uname().sysname == "Darwin":
             target_flags = flags + ["-Wno-deprecated-declarations"]
-        if name == "sync_device":
+        if name == "usb_disk":
+            target_includes = ["-Itools/usb_disk_stubs", "-Imain/os"]
+            target_flags = flags + ["-Wno-unused-function"]
+        elif name == "sync_device":
             target_includes = ["-Itools/os_sync_device_stubs", *includes]
             target_flags = target_flags + ["-Wno-unused-variable", "-pthread"]
         elif name == "device":
