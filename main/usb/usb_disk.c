@@ -163,8 +163,9 @@ void usb_disk_run(EpdiyHighlevelState* hl, uint8_t* fb, cst836u_handle_t tp) {
             if (!confirm && ui_rect_hit(exit_rect(), x0, y0)) { confirm = true; previous = -1; }
             else if (confirm && ui_rect_hit(confirm_rect(0), x0, y0)) { confirm = false; previous = -1; }
             else if (confirm && ui_rect_hit(confirm_rect(1), x0, y0)) {
-                if (!attached || ejected || err != ESP_OK || removed) { closing = true; previous = -1; }
-                else { draw(hl, fb, "请先在电脑安全弹出，或断开 USB", true); }
+                // USB 配置状态不能证明物理拔线；由用户在确认框确认电脑已安全弹出。
+                // USB configuration state cannot prove cable removal; the user confirms host safe-ejection in the dialog.
+                closing = true; previous = -1;
             }
             valid_press = false;
         }

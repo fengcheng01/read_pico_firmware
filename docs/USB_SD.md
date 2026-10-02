@@ -8,8 +8,8 @@ Read Pico exposes the TF card as a USB MSC disk. Open **Settings → Storage →
    Insert TF, wait for probing and connect a USB data cable. Confirm on the device; it reboots and enumerates as `Read Pico SD`. The host/card determines drive letters and volume names.
 2. 图书放进卡根目录 `books/`（TXT/EPUB）；完整 TTF 字体放进 `assets/fonts/` 或 `fonts/`。没有文件夹时可在电脑创建。卡上的文件系统须能被设备 FatFs 读取；USB 模式不替用户格式化。电脑提示初始化/格式化时先取消并检查卡，尤其已有数据时。
    Put TXT/EPUB in `books/`, TTF in `assets/fonts/` or `fonts/`; create directories on the computer if needed. Use a filesystem supported by device FatFs. USB mode never auto-formats; cancel host initialization/format prompts and inspect existing media first.
-3. 写入完成后先在电脑“安全弹出”，再点设备“结束连接 → 退出并重启”。如果电脑只卸载文件系统而未发送介质弹出，先安全卸载，再拔 USB 数据线后退出。重新开机后阅读、字体与刷机串口恢复。
-   Safely eject on the computer, then select End connection → Exit and restart. If the host only unmounts without a media-eject command, safely unmount, disconnect the cable, then exit. Reading, fonts and the flashing serial port return on boot.
+3. 写入完成后先在电脑“安全弹出”，再点设备“结束连接 → 退出并重启”。如果电脑只卸载文件系统而未发送介质弹出，先安全卸载，再拔 USB 数据线后退出。USB 配置状态不能可靠证明线缆已断开，因此退出依赖屏幕上的明确确认，不会自动重启；重新开机后阅读、字体与刷机串口恢复。
+   Safely eject on the computer, then select End connection → Exit and restart. If the host only unmounts without a media-eject command, safely unmount, disconnect the cable, then exit. USB configuration state cannot reliably prove cable removal, so exit requires the explicit on-screen confirmation and never auto-reboots. Reading, fonts and the flashing serial port return on boot.
 
 磁盘模式中只运行专用 USB/触屏流程，暂停阅读、WiFi 传书、自动锁屏与睡眠；电源长按强制断电仍由硬件控制，不应在写入时操作。USB MSC 与原 USB Serial/JTAG 共用内部 PHY，磁盘模式没有原刷机串口；退出后再在线刷固件。拔卡会停止本次连接，重新插卡不会恢复旧会话，须退出并再次进入。TF 卡不能被电脑和设备文件系统同时访问。
 
