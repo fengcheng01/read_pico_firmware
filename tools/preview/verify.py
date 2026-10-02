@@ -102,12 +102,24 @@ class PreviewTests(unittest.TestCase):
         decoded = b"".join(scanlines[y * 685 + 1:(y + 1) * 685] for y in range(1216))
         self.assertEqual(decoded, pixels)
 
-    def test_real_font_weight(self):
-        self.page("app_font_pick")
-        original = self.preview.png
-        self.preview.command("tap 596 88")
-        self.assertNotEqual(original, self.preview.png)
-        self.assertFalse(self.preview.state["menu"])
+    def test_font_picker_multiple_rows_and_no_entry_flash(self):
+        self.page("app_os_reading")
+        self.preview.command("tap 200 732")
+        self.assertEqual(self.preview.state["page"], self.indices["app_font_pick"])
+        self.assertEqual(self.preview.state["refresh_mode"], 5)
+        first = self.preview.png
+        self.preview.command("tap 300 370")
+        self.assertNotEqual(first, self.preview.png)
+        self.assertEqual(self.preview.state["refresh_mode"], 5)
+        selected = self.preview.png
+        self.preview.command("tap 450 890")
+        self.assertEqual(self.preview.state["leaf"], 1)
+        self.assertNotEqual(selected, self.preview.png)
+        self.preview.command("tap 100 890")
+        self.assertEqual(self.preview.state["leaf"], 0)
+        self.preview.command("tap 590 100")
+        self.assertEqual(self.preview.state["page"], self.indices["app_os_reading"])
+        self.assertEqual(self.preview.state["refresh_mode"], 5)
 
     def test_static_assets_match_portrait_pixels(self):
         for which, name in enumerate(("loading", "lock")):
@@ -118,6 +130,23 @@ class PreviewTests(unittest.TestCase):
                              for i in range(684 * 1216) for value in [packed[i // 2]])
             self.assertEqual(pixels, expected)
             self.assertEqual(self.preview.state["asset"], which)
+
+    def test_inline_epub_and_single_grayscale_turn(self):
+        self.preview.command("fixture 1")
+        self.preview.command("tap 220 1140")
+        self.settle()
+        self.preview.command("tap 300 650")
+        self.settle()
+        self.assertTrue(self.preview.state["reading"])
+        pixels = self.preview.frame.read_bytes()[len(b"P5\n684 1216\n255\n"):]
+        image_region = [pixels[y * 684 + x] for y in range(200, 390) for x in range(240, 430)]
+        self.assertGreater(sum(value < 255 for value in image_region), 10000)
+        before = self.preview.state["presents"]
+        first = self.preview.png
+        self.preview.command("key 2")
+        self.assertEqual(self.preview.state["presents"], before + 1)
+        self.assertEqual(self.preview.state["refresh_mode"], 5)
+        self.assertNotEqual(first, self.preview.png)
 
     def test_unsupported_page_remains_menu(self):
         index = next(i for i, p in enumerate(self.preview.pages) if not p["supported"])

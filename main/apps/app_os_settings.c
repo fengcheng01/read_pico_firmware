@@ -27,10 +27,10 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
     ui_product_header(fb, "设置", "按需连接，其余时间安心阅读");
     for (unsigned i = 0; i < sizeof(items) / sizeof(items[0]); ++i) {
         EpdRect r = row_rect(i);
-        ui_text(fb, r.x, r.y + 10, 36, items[i].title, EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, r.x, r.y + 10, 44, items[i].title, EPD_DRAW_ALIGN_LEFT, false);
         bool disabled = items[i].id == OS_APP_TRANSFER && os_device()->transfer != OS_CAP_PRESENT;
-        ui_text(fb, r.x, r.y + 64, 24, disabled ? "此设备暂不支持连接与传书" : items[i].detail, EPD_DRAW_ALIGN_LEFT, false);
-        ui_text_vc(fb, r.x + r.width - 8, r.y + 36, 36, "›", EPD_DRAW_ALIGN_RIGHT, false);
+        ui_text(fb, r.x, r.y + 64, 30, disabled ? "此设备暂不支持连接与传书" : items[i].detail, EPD_DRAW_ALIGN_LEFT, false);
+        ui_text_vc(fb, r.x + r.width - 8, r.y + 36, 44, "›", EPD_DRAW_ALIGN_RIGHT, false);
         ui_hairline(fb, r.y + r.height, r.x, r.width, UI_GRAY_LIGHT);
     }
     ui_product_root_bar(fb, OS_APP_SETTINGS);
@@ -54,6 +54,6 @@ static app_redraw_t gesture(app_ctx_t* ctx, const ui_gesture_event_t* ev) {
     return APP_REDRAW_NONE;
 }
 const app_desc_t app_os_settings = {
-    .title = "设置", .detail = "阅读 · 连接 · 存储 · 诊断", .enter_full = true,
+    .title = "设置", .detail = "阅读 · 连接 · 存储 · 诊断", .enter_full = false,
     .render = render, .on_gesture = gesture,
 };

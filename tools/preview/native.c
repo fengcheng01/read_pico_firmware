@@ -94,7 +94,7 @@ static void choose_page(int index) {
     current = next; ctx.leaf = 0; asset = -1; unsupported = -1; menu_open = false;
     menu_leaf = ui_menu_leaf_for_app(current);
     if (current->on_enter) current->on_enter(&ctx);
-    present(APP_REDRAW_FULL);
+    present(next->enter_full ? APP_REDRAW_FULL : APP_REDRAW_PAGE);
 }
 
 static void requests(void) {

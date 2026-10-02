@@ -116,7 +116,7 @@ static app_redraw_t on_tick(app_ctx_t* ctx) {
 static EpdRect area_hint(app_ctx_t* ctx) { (void)ctx; return s_area; }
 
 const app_desc_t app_os_time = {
-    .title = "时间与时区", .detail = "校时 · 时区", .enter_full = true,
+    .title = "时间与时区", .detail = "校时 · 时区", .enter_full = false,
     .render = render, .on_gesture = gesture, .on_key = key,
     .on_enter = on_enter, .on_tick = on_tick, .area_hint = area_hint,
 };

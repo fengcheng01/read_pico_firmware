@@ -16,6 +16,9 @@ static size_t measured_codepoints;
 static size_t measure_calls;
 static int first_draw_px, last_draw_px;
 static size_t image_pixels;
+void epd_fill_rect(EpdRect rect, uint8_t color, uint8_t* fb) {
+    (void)rect; (void)fb; assert(color <= 15);
+}
 void epd_draw_pixel(int x, int y, uint8_t color, uint8_t* fb) {
     (void)color; (void)fb;
     assert(x >= 0 && y >= 0);
@@ -42,6 +45,8 @@ void ttf_draw_text_px(uint8_t* fb, int x, int y, int px, const char* text,
     strcat(drawn, text);
 }
 int main(void) {
+    // 小尺寸几何夹具关闭段首缩进，避免两字符缩进占满整行。/ Disable paragraph indent in tiny geometry fixtures so two ems do not consume the whole row.
+    book_layout_set_indent(false);
     EpdRect r = {0, 0, 20, 30};
     const char text[] = "甲乙丙丁戊己庚辛壬癸";
     assert(book_layout_build(text, strlen(text), r, 10));
@@ -101,7 +106,8 @@ int main(void) {
     assert(drawn[0] == 0);
     measured_codepoints = measure_calls = 0;
     book_layout_draw_page(&fb, 0, r, 10);
-    assert(measured_codepoints <= sizeof(long_line) * 2);
+    // 对齐多测一次整行，末尾溢出字符仍只计一次。/ Alignment measures the final line once more; the overflow character is still measured only once.
+    assert(measured_codepoints <= sizeof(long_line) * 2 + 1);
     assert(strlen(drawn) == sizeof(long_line));
     assert(memcmp(drawn, long_line, sizeof(long_line)) == 0);
     assert(book_layout_page_start_offset(99) == sizeof(long_line));

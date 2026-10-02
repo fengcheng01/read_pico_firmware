@@ -8,7 +8,7 @@
  * 冻结：统一手势入口并接管三键为上页/工具条/下页；工具条保留强刷，长按中键或把手打开产品导航，诊断经设置访问。屏幕翻页在抬起提交，不画按下态。
  * 晃动实验默认关，只翻下一页；离页关闭AOI2并休眠。render只绘图。
  * 预渲染回调返回前收齐，避免菜单/锁屏绕过页内TTF锁。
- * 普通翻页正文与页脚分区刷新；页脚只驱动变化像素，整屏强刷仍清全屏。
+ * 用户实机反馈后改为正文与页脚一次灰阶直刷，避免页脚 DU 丢抗锯齿；清残影仅由显示出口计数。
  * 中键按下切工具条，持续按住500ms返回产品导航（用户批准四根入口重构）。
  * 用户授权基础管理：长按书架先看完整详情，清进度与删文件分别确认；失败保留待重试记录，不自动回收其他书进度。
  * 用户修订：单本管理为书架弹窗；管理页用于批量操作。分页和排序保留勾选，筛选/应用搜索及重扫清除勾选。
@@ -18,13 +18,13 @@
  * 用户批准 OS：首页明确开书请求在扫描验证路径后直接打开；明确书架请求不弹续读，普通菜单入口仍询问。
  * 用户要求产品重构：普通书架采用三行文件名书封与四根导航；批量管理仍七行，保留所有确认/保存语义。
  * 用户批准：书架 EPUB 封面按页逐张提取（TXT/无封面回退文件名排版），提取在 tick 内有界进行。
- * 用户修订：图片点击后才加载，预览返回不改变正文分页；只缓存当前章节最近查看的一幅图，已读重复位置不冒充全书首次位置。
+ * 用户实机反馈后图片在章节加载时有界解码并参与正文分页；坏图或超预算仍可点占位重试，render 不解码。
  * 用户批准补全产品功能：锁屏/睡眠统一保存钩子先落正文进度；阅读时长只在有效本地日期累计，空闲 5 分钟截断，未校时不归日。
  * 用户批准补全产品功能：工具条新增排版菜单（字体/行距/边距/首行缩进/段落间距/行辅助线/点击分区/晃动/夜间/自动翻页/清残影）；行距边距缩进段距变更即时重排并保持文本锚点；行辅助线为每行文字下方的实线/虚线，对齐含两端对齐，页脚可开时钟/电量；菜单调整后保持打开，返回阅读或中键退出。
  * Frozen: Use shared gestures and own previous/tools/next keys; retain toolbar full refresh and middle-key hold/handle product navigation, with diagnostics under Settings. Screen turns commit on release without pressed decoration.
  * Shake is experimental, off by default, forward only; exit disables AOI2 and sleeps it. Render only paints.
  * Join preparation before returning callbacks so menus/lock cannot race the page-local TTF lock.
- * Ordinary turns refresh body and footer separately; the footer drives changed pixels only, while full refresh still clears the whole screen.
+ * Hardware feedback changed turns to one grayscale body/footer update to retain footer antialiasing; only the display path counts cleanup intervals.
  * Middle-key press toggles tools; holding for 500ms opens product navigation, as approved in the four-root redesign.
  * User-authorized management shows full details before separate clear/delete confirmations; retain failed saves for retry without pruning other books.
  * User revision: single-book actions use a shelf dialog; full management is for batches. Paging/sorting preserve selection; filtering/applied search and rescanning clear it.
@@ -34,7 +34,7 @@
  * User-approved OS: explicit home open requests open after scan validation; explicit shelf requests skip resume, while ordinary menu entry still prompts.
  * User-requested product redesign: ordinary shelves use three typographic-cover rows and four-root navigation; batches keep seven rows and all confirmation/save semantics.
  * User-approved: shelf EPUB covers load one per visible-page tick (TXT/coverless fall back to typographic covers), bounded inside ticks.
- * User revision: load images only after a tap and return without repagination; cache one viewed image in the current chapter and distinguish visited-chapter origins from the first occurrence in the whole book.
+ * Hardware feedback changed images to bounded chapter-time decoding and inline pagination; failed/over-budget images retain retry placeholders; render never decodes.
  * User-approved completion: the lock/sleep prepare hook saves reader progress first; reading time accumulates only on valid local dates, cuts off after 5 idle minutes and skips uncalibrated periods.
  * User-approved completion: the toolbar gains a typography menu (font/leading/margins/first-line indent/paragraph gap/per-line guide rule/tap zones/shake/night/auto turn/screen cleaning); leading, margin, indent and gap changes repaginate at once while keeping the anchor; guide rules run under every text line, solid or dashed; alignment adds left/center/justified and the footer status bar gains clock/battery switches; the menu stays open after changes and exits via Return or the middle key.
  * 用户批准设计稿落地：工具拆为目录/书签、添加书签、字号子面板、更多设置、清残影和书架；更多设置两组各六行，书签删除先确认，降低误触与信息密度。
@@ -156,7 +156,7 @@ static size_t s_image_block = SIZE_MAX;
 static const char* s_image_error;
 static char s_image_origin[224];
 static uint32_t s_file_size;
-static int s_px, s_turns, s_unsaved;
+static int s_px, s_unsaved;
 static int64_t s_poll_ms, s_last_turn_ms, s_size_settle_ms, s_sensor_ms;
 static bool s_shake_enabled, s_sensor_on;
 static bool s_sensor_saved;
@@ -164,8 +164,6 @@ static sc7a20h_sensor_config_t s_sensor_config;
 static book_shake_gate_t s_shake;
 static EpdRect s_area;
 static enum EpdDrawMode s_mode = MODE_GL16;
-static bool s_full;
-static bool s_reader_split;
 static int s_pressed_control = -1;
 static int64_t s_du_ms;
 static unsigned s_du_count;
@@ -211,9 +209,6 @@ static void draw_control(uint8_t* fb, EpdRect rect, const char* label, int id) {
 static void lock_draw(void) { if (s_draw_lock) xSemaphoreTake(s_draw_lock, portMAX_DELAY); }
 static void unlock_draw(void) { if (s_draw_lock) xSemaphoreGive(s_draw_lock); }
 static size_t fb_bytes(void) { return (size_t)epd_width() * epd_height() / 2; }
-// 旋转后差分列向32像素对齐，分界必须落在对齐边上才不会驱动进度条。
-// Rotated diff columns expand to 32 pixels; align the boundary so body updates cannot drive the track.
-static EpdRect reader_area(void) { return (EpdRect){0, 0, UI_LOCK_WIDTH, (UI_BAR_TOP / 32) * 32}; }
 static EpdRect body_rect(void) {
     // 边距档每级 16px，只收窄正文，不动页脚与工具条。/ Margin tiers inset 16 px each, narrowing only the body.
     EpdRect body = ui_product_reader_body(s_font_notice);
@@ -248,10 +243,6 @@ static void footer_status(char* out, size_t cap) {
             strcat(out, battery);
         }
     }
-}
-static EpdRect progress_rect(void) {
-    EpdRect b = ui_bar_rect(0, 1);
-    return (EpdRect){b.x, UI_BAR_TOP, b.width, UI_BAR_H};
 }
 // 目录页顶部三页签占 184..264，列表从 264 起。/ The three TOC tabs own 184..264; rows start at 264.
 static EpdRect toc_tab_rect(int i) { return ui_row_rect(i, 3, 184, 80); }
@@ -628,14 +619,6 @@ static void draw_reader(uint8_t* fb, size_t page) {
     ui_product_reader_chrome(fb, s_save_failed ? "进度未保存，稍后重试" : s_title,
                              (unsigned)page + 1, book_layout_complete() ? (unsigned)book_layout_page_count() : 0,
                              percent(page), s_font_notice, status, app_settings_footer_bar());
-    EpdRect track = progress_rect();
-    size_t chapters = book_chapter_count();
-    if (chapters <= 40 && book_total_bytes()) {
-        for (size_t i = 1; i < chapters; ++i) {
-            int x = track.x + (uint64_t)book_chapter_byte_offset(i) * track.width / book_total_bytes();
-            epd_fill_rect((EpdRect){x, track.y + 12, 2, 12}, UI_GRAY_BLACK, fb);
-        }
-    }
     if (s_toolbar) {
         if (s_toolbar_sizes) ui_product_reader_sizes(fb, s_title, s_px, s_pressed_control);
         else ui_product_reader_tools(fb, s_title, s_px, app_settings_book_night(), s_pressed_control);
@@ -955,21 +938,14 @@ static bool present(app_ctx_t* ctx, app_redraw_t redraw) {
     bool prep = kick_prep();
     int64_t drawn = esp_timer_get_time();
     enum EpdDrawError err;
-    if (redraw == APP_REDRAW_FULL || s_full) err = update_display_full(ctx->hl);
+    if (redraw == APP_REDRAW_FULL) err = update_display_full(ctx->hl);
     else if (redraw == APP_REDRAW_AREA) {
         err = update_display_area_with(ctx->hl, &E0470_WAVEFORM, s_mode, s_area);
-        if (s_reader_split) {
-            // 页码即时更新；百分比不变时轨道像素不变，DU不会擦掉整条轨道。
-            // Page numbers stay current; unchanged percentages leave the track unchanged, so DU never wipes the whole track.
-            err = (enum EpdDrawError)(err | update_display_area_with(ctx->hl, &E0470_FOLLOW_WAVEFORM,
-                                                                     MODE_DU, progress_rect()));
-            ESP_LOGI(TAG, "reader regions body_h=%d footer=diff pct=%u", s_area.height, percent(s_page));
-        }
     }
     else err = update_display_mode(ctx->hl, APP_PAGE_REFRESH_MODE);
     int64_t displayed = esp_timer_get_time();
     if (prep) xSemaphoreTake(s_prep_done, portMAX_DELAY);
-    if (redraw == APP_REDRAW_AREA && s_mode == MODE_DU && !s_full) {
+    if (redraw == APP_REDRAW_AREA && s_mode == MODE_DU) {
         s_du_area = s_du_count ? ui_rect_union(s_du_area, s_area) : s_area;
         ++s_du_count;
         s_du_ms = esp_timer_get_time() / 1000;
@@ -977,8 +953,6 @@ static bool present(app_ctx_t* ctx, app_redraw_t redraw) {
     ESP_LOGI(TAG, "present draw=%lld display=%lld join=%lld ms", (drawn - start) / 1000,
              (displayed - drawn) / 1000, (esp_timer_get_time() - displayed) / 1000);
     guard_draw_result(ctx->hl, err);
-    s_full = false;
-    s_reader_split = false;
     s_mode = MODE_GL16;
     return true;
 }
@@ -991,8 +965,9 @@ static app_redraw_t paint_reading(app_ctx_t* ctx, enum EpdDrawMode mode) {
     else draw_reader(ctx->fb, s_page);
     unlock_draw();
     ESP_LOGI(TAG, "paint cached=%d ms=%lld", cached, (esp_timer_get_time() - started) / 1000);
-    s_area = reader_area();
-    s_reader_split = true;
+    // 正文、图片和页码共同推送，保留完整灰阶及同一帧的清理周期。
+    // Present text, illustrations and page numbers together with full grayscale and one cleanup interval.
+    s_area = (EpdRect){0, 0, UI_LOCK_WIDTH, UI_LOCK_HEIGHT};
     s_mode = mode;
     return APP_REDRAW_AREA;
 }
@@ -1071,6 +1046,7 @@ static bool load_chapter(app_ctx_t* ctx, size_t chapter, size_t offset, bool las
         copy_text(s_message, sizeof(s_message), book_error_message(err));
         return false;
     }
+    book_chapter_load_inline_images(chapter, &loaded);
     lock_draw();
     invalidate_prep();
     apply_typography();
@@ -1173,7 +1149,7 @@ static bool open_book(app_ctx_t* ctx, const char* path) {
     s_view = READING;
     s_mark_delete = -1; s_mark_manage = s_toolbar_sizes = s_layout_group = false;
     s_toolbar = s_clear_confirm = s_batch_confirm = false;
-    s_turns = s_unsaved = 0;
+    s_unsaved = 0;
     s_size_settle_ms = 0;
     s_ended = false;
     pending_mark_latest(s_path);
@@ -1461,8 +1437,6 @@ static app_redraw_t turn_page(app_ctx_t* ctx, int dir) {
     if (!changed) { s_view = s_text ? TOC : SHELF; ctx->leaf = s_text && s_toc_tab == 0 ? (int)(s_chapter / BOOK_TOC_ROWS) : 0; return APP_REDRAW_PAGE; }
     s_toolbar = false;
     s_last_turn_ms = ctx->now_ms;
-    unsigned gc_every = app_settings_gc_every();
-    s_full = gc_every && (unsigned)++s_turns % gc_every == 0;
     if (s_unsaved < 8) ++s_unsaved;
     if (s_unsaved >= 8 && !s_save_failed) save_progress();
     ESP_LOGI(TAG, "turn chapter=%u page=%u/%u pct=%u", (unsigned)s_chapter, (unsigned)s_page + 1, (unsigned)book_layout_page_count(), percent(s_page));
@@ -1851,9 +1825,6 @@ static app_redraw_t action_at(app_ctx_t* ctx, uint16_t x, uint16_t y) {
                 else { save_progress(); free_book(); s_view = SHELF; scan_shelf(ctx); }
                 return APP_REDRAW_PAGE;
             }
-            EpdRect track = progress_rect();
-            if (ui_rect_hit(track, x, y))
-                return jump_to_bytes(ctx, (uint64_t)(x - track.x) * book_total_bytes() / (track.width - 1));
         }
         if (!s_toolbar) {
             lock_draw();
@@ -1957,7 +1928,6 @@ static void on_enter(app_ctx_t* ctx) {
     s_toolbar = s_clear_confirm = s_batch_confirm = false;
     s_pressed_control = -1;
     s_du_count = 0;
-    s_full = false;
     s_size_settle_ms = 0;
     s_poll_ms = 0;
     copy_text(s_storage, sizeof(s_storage), "正在检测存储…");
@@ -2383,7 +2353,7 @@ static app_redraw_t on_tick(app_ctx_t* ctx) {
 static EpdRect area_hint(app_ctx_t* ctx) { (void)ctx; return s_area; }
 
 const app_desc_t app_book = {
-    .title = "书架", .detail = "图书 · 阅读 · 管理", .enter_full = true, .owns_keys = true,
+    .title = "书架", .detail = "图书 · 阅读 · 管理", .enter_full = false, .owns_keys = true,
     .render = render, .present = present, .on_enter = on_enter, .on_exit = book_on_exit,
     .on_media_lost = book_on_media_lost,
     .on_gesture = gesture_event, .on_key = on_key, .on_key_long = on_key_long,

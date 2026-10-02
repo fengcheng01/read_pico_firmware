@@ -67,6 +67,15 @@ static uint8_t png_paeth(int a, int b, int c) {
     return (uint8_t)(pa <= pb && pa <= pc ? a : pb <= pc ? b : c);
 }
 
+// 限制像素总量时等比缩小，避免多图章节直接退回手动查看。
+// Reduce dimensions proportionally to the pixel budget instead of forcing manual viewing in image-heavy chapters.
+static void fit_budget(unsigned* w, unsigned* h, size_t budget) {
+    while ((size_t)*w * *h > budget && (*w > 1 || *h > 1)) {
+        *w = *w > 1 ? (*w * 3) / 4 : 1;
+        *h = *h > 1 ? (*h * 3) / 4 : 1;
+    }
+}
+
 // 常见8位非交错PNG在解压缓冲内逐行还原，避免再分配一份完整RGB图。
 // Unfilter common 8-bit noninterlaced PNG in place, avoiding a second full RGB image allocation.
 static bool png_decode(const uint8_t* data, size_t len, size_t budget,
@@ -100,6 +109,7 @@ static bool png_decode(const uint8_t* data, size_t len, size_t budget,
     if (dh>1000) { dw=dw*1000/dh;dh=1000; }
     if(!dw)dw=1;
     if(!dh)dh=1;
+    fit_budget(&dw, &dh, budget);
     if((size_t)dw*dh>budget)return false;
     size_t row_n=(size_t)w*channels, raw_n=(row_n+1)*h;
     uint8_t* packed=image_alloc(packed_n);
@@ -210,6 +220,9 @@ static bool jpeg_decode(const uint8_t* data, size_t len, size_t budget,
     if (io.height > 1000) { io.width = io.width * 1000 / io.height; io.height = 1000; }
     if (!io.width) io.width = 1;
     if (!io.height) io.height = 1;
+    unsigned bw = io.width, bh = io.height;
+    fit_budget(&bw, &bh, budget);
+    io.width = bw; io.height = bh;
     if ((size_t)io.width * io.height > budget) goto done;
     unsigned scale = 0;
     // 阅读插图允许至多两倍放大，优先在 JPEG 解码阶段降采样。/ Allow at most 2x enlargement to reduce work during JPEG decoding.
@@ -243,6 +256,9 @@ bool book_image_decode(const uint8_t* data, size_t len, size_t budget,
     if (dh > 1000) { dw = (int)((int64_t)dw * 1000 / dh); dh = 1000; }
     if (dw < 1) dw = 1;
     if (dh < 1) dh = 1;
+    unsigned bw = dw, bh = dh;
+    fit_budget(&bw, &bh, budget);
+    dw = (int)bw; dh = (int)bh;
     size_t size = (size_t)dw * dh;
     if (size > budget) return false;
     uint8_t* gray = stbi_load_from_memory(data, (int)len, &w, &h, &channels, 2);

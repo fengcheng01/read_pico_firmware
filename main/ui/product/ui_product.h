@@ -45,8 +45,8 @@ EpdRect ui_product_tool_rect(int index);
 void ui_product_reader_tools(uint8_t* fb, const char* title, int px, bool night, int pressed);
 /// 字号子面板，复用工具触区。/ Size subpanel sharing toolbar hit geometry.
 void ui_product_reader_sizes(uint8_t* fb, const char* title, int px, int pressed);
-/// 正文与缺字告知/进度页脚共用几何；status 为页脚左侧可选状态（时钟/电量），bar 控制进度条。
-/// Shared body/font notice/footer geometry; status is the optional left footer cluster (clock/battery) and bar toggles the track.
+/// 正文与缺字告知/页脚共用几何；status 为左侧可选时钟/电量，bar 控制百分比文字。
+/// Shared body/font notice/footer geometry; status is the optional clock/battery cluster and bar toggles percentage text.
 EpdRect ui_product_reader_body(bool missing_glyphs);
 void ui_product_reader_chrome(uint8_t* fb, const char* title, unsigned page, unsigned pages,
                              unsigned percent, bool missing_glyphs, const char* status, bool bar);

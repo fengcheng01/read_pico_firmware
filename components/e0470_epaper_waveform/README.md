@@ -10,8 +10,8 @@ epdiy waveform tables for the **E0470A01** 4.7" monochrome e-paper panel (684 ×
 
 | 符号 / Symbol | 内容 / Content | 用途 / Use |
 | --- | --- | --- |
-| `E0470_WAVEFORM` | 默认表。GC16 36 相 / GL16 37 相，开机由裁剪器派生；附阈值 DU（目标 0–7 → 黑，8–15 → 白） / Default. GC16 36 phases / GL16 37 phases derived by the trimmer at boot, plus a threshold DU (dest 0–7 → black, 8–15 → white) | 固件的页面刷新 / Page refresh in the firmware |
-| `E0470_FULL_WAVEFORM` | 完整表：GC16 / GL16 各 48 相，DU 20 相，单一 0–50 °C 温度档 / Full tables: GC16 / GL16 48 phases, DU 20 phases, one 0–50 °C temperature range | 对照与 A/B 比较 / Reference and A/B comparison |
+| `E0470_WAVEFORM` | 默认表。GC16 36 相 / GL16 37 相，开机由裁剪器派生；附阈值 DU（目标 0–7 → 黑，8–15 → 白） / Default. GC16 36 phases / GL16 37 phases derived by the trimmer at boot, plus a threshold DU (dest 0–7 → black, 8–15 → white) | GC16 清理与诊断对照 / GC16 cleaning and diagnostic reference |
+| `E0470_FULL_WAVEFORM` | 完整表：GC16 / GL16 各 48 相，DU 20 相，单一 0–50 °C 温度档 / Full tables: GC16 / GL16 48 phases, DU 20 phases, one 0–50 °C temperature range | 日常 GL16 灰阶直刷，以及 A/B 比较 / Daily GL16 grayscale updates and A/B comparison |
 | `E0470_GRAY8_WAVEFORM` | 8 级可分辨灰阶，GC16 / GL16 各 30 相，整屏约 360 ms（默认表约 430 ms） / 8 distinguishable grays, GC16 / GL16 30 phases, about 360 ms per full refresh (default is about 430 ms) | 可选的更快页面模式 / Optional faster page mode |
 | `E0470_FOLLOW_WAVEFORM` | 开机生成的 8 帧短 DU（黑 7 / 白 8），配合 FAST 扫描档使用 / 8-frame short DU (7 black / 8 white) built at boot, meant for the FAST scan profile | 触摸笔迹与实时读数 / Touch ink and live digits |
 

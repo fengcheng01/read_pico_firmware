@@ -39,15 +39,15 @@ static void paint_clock(uint8_t* fb) {
     os_time_format_clock(clock, sizeof(clock));
     os_time_format_date(date, sizeof(date));
     ui_text(fb, UI_MARGIN, 214, 132, clock, EPD_DRAW_ALIGN_LEFT, false);
-    ui_text(fb, UI_MARGIN, 414, 34, date, EPD_DRAW_ALIGN_LEFT, false);
+    ui_text(fb, UI_MARGIN, 414, 40, date, EPD_DRAW_ALIGN_LEFT, false);
     int permille = os_time_battery_permille();
     if (permille > 0) {
         char battery[20];
         snprintf(battery, sizeof(battery), "电量 %d%%", permille / 10);
-        ui_text(fb, ui_content_right(), 420, 28, battery, EPD_DRAW_ALIGN_RIGHT, false);
+        ui_text(fb, ui_content_right(), 420, 34, battery, EPD_DRAW_ALIGN_RIGHT, false);
     }
     if (os_time_info()->state != OS_TIME_VALID)
-        ui_text(fb, UI_MARGIN, 462, 24, "传书连接已有 WiFi 后自动校准", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, UI_MARGIN, 462, 30, "传书连接已有 WiFi 后自动校准", EPD_DRAW_ALIGN_LEFT, false);
     s_drawn_minute = os_time_info()->state == OS_TIME_VALID ? os_time_info()->minute : -1;
 }
 
@@ -82,30 +82,30 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
         char value[48];
         if (date_valid) format_minutes((unsigned long)book_stats_minutes(date), value, sizeof(value));
         else snprintf(value, sizeof(value), "时间未校时");
-        ui_text(fb, UI_MARGIN, 614, 30, "今日阅读", EPD_DRAW_ALIGN_LEFT, false);
-        ui_text(fb, ui_content_right(), 616, 32, value, EPD_DRAW_ALIGN_RIGHT, false);
+        ui_text(fb, UI_MARGIN, 614, 36, "今日阅读", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, ui_content_right(), 616, 38, value, EPD_DRAW_ALIGN_RIGHT, false);
         ui_hairline(fb, 662, UI_MARGIN, ui_content_width(), UI_GRAY_LIGHT);
         format_minutes((unsigned long)book_stats_total_minutes(date_valid ? os_time_date_shift(date, -6) : 0, date_valid ? date : 0),
                        value, sizeof(value));
-        ui_text(fb, UI_MARGIN, 678, 30, "近 7 日", EPD_DRAW_ALIGN_LEFT, false);
-        ui_text(fb, ui_content_right(), 680, 32, value, EPD_DRAW_ALIGN_RIGHT, false);
+        ui_text(fb, UI_MARGIN, 678, 36, "近 7 日", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, ui_content_right(), 680, 38, value, EPD_DRAW_ALIGN_RIGHT, false);
         ui_hairline(fb, 726, UI_MARGIN, ui_content_width(), UI_GRAY_LIGHT);
         if (data->current.path[0]) {
             char pct[16];
             snprintf(pct, sizeof(pct), "%u%%", data->current.percent);
-            ui_product_title(fb, (EpdRect){UI_MARGIN, 744, ui_content_width() - 120, 44},
-                             data->current.title, 32, 1);
-            ui_text_vc(fb, ui_content_right(), 772, 30, data->current.has_progress ? pct : "未读", EPD_DRAW_ALIGN_RIGHT, false);
+            ui_product_title(fb, (EpdRect){UI_MARGIN, 744, ui_content_width() - 120, 52},
+                             data->current.title, 40, 1);
+            ui_text_vc(fb, ui_content_right(), 772, 36, data->current.has_progress ? pct : "未读", EPD_DRAW_ALIGN_RIGHT, false);
         } else {
-            ui_text(fb, UI_MARGIN, 744, 30, data->book_count ? "书架已有图书，打开一本开始" : "还没有图书，先到设置导入", EPD_DRAW_ALIGN_LEFT, false);
+            ui_text(fb, UI_MARGIN, 744, 36, data->book_count ? "书架已有图书，打开一本开始" : "还没有图书，先到设置导入", EPD_DRAW_ALIGN_LEFT, false);
         }
         ui_hairline(fb, 806, UI_MARGIN, ui_content_width(), UI_GRAY_LIGHT);
         char count[32];
         snprintf(count, sizeof(count), "%lu 本", (unsigned long)data->book_count);
-        ui_text(fb, UI_MARGIN, 822, 30, "书架", EPD_DRAW_ALIGN_LEFT, false);
-        ui_text(fb, ui_content_right(), 824, 32, count, EPD_DRAW_ALIGN_RIGHT, false);
+        ui_text(fb, UI_MARGIN, 822, 36, "书架", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, ui_content_right(), 824, 38, count, EPD_DRAW_ALIGN_RIGHT, false);
     } else {
-        ui_text(fb, UI_MARGIN, 614, 30, "正在查找最近阅读…", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, UI_MARGIN, 614, 36, "正在查找最近阅读…", EPD_DRAW_ALIGN_LEFT, false);
     }
     ui_hairline(fb, 892, UI_MARGIN, ui_content_width(), UI_GRAY_BLACK);
     ui_draw_button(fb, (EpdRect){UI_MARGIN, 930, ui_content_width(), 88},
@@ -162,7 +162,7 @@ static app_redraw_t on_tick(app_ctx_t* ctx) {
 }
 static EpdRect area_hint(app_ctx_t* ctx) { (void)ctx; return s_area; }
 const app_desc_t app_os_today = {
-    .title = "今日", .detail = "时钟 · 阅读 · 待办", .enter_full = true,
+    .title = "今日", .detail = "时钟 · 阅读 · 待办", .enter_full = false,
     .render = render, .on_gesture = gesture, .on_tick = on_tick,
     .on_enter = on_enter, .on_exit = today_on_exit, .on_media_lost = on_media_lost,
     .area_hint = area_hint,

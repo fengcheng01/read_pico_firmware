@@ -28,15 +28,16 @@
 #include "settings.h"
 #include "ttf_font.h"
 #include "ui_kit.h"
+#include "asset_pack.h"
 #include "sleep.h"
 #include "vcom_setup.h"
 
 static const char* TAG = "read_pico";
 
-extern const uint8_t lock_4bpp_bin_start[] asm("_binary_lock_4bpp_bin_start");
-extern const uint8_t lock_4bpp_bin_end[] asm("_binary_lock_4bpp_bin_end");
-extern const uint8_t loading_4bpp_bin_start[] asm("_binary_loading_4bpp_bin_start");
-extern const uint8_t loading_4bpp_bin_end[] asm("_binary_loading_4bpp_bin_end");
+extern const uint8_t lock_4bpp_pack_start[] asm("_binary_lock_4bpp_pack_start");
+extern const uint8_t lock_4bpp_pack_end[] asm("_binary_lock_4bpp_pack_end");
+extern const uint8_t loading_4bpp_pack_start[] asm("_binary_loading_4bpp_pack_start");
+extern const uint8_t loading_4bpp_pack_end[] asm("_binary_loading_4bpp_pack_end");
 
 // 已标定则开机读一次喂给 epdiy。未标定先用板级默认出开机图，随后拦住进标定页。
 // Load VCOM once when set. Otherwise keep the board default for the splash,
@@ -58,8 +59,8 @@ static bool resolve_vcom_at_boot(void) {
 // Splash and lock images are pre-baked 4bpp full-frames. A size mismatch
 // means the assets do not match the panel.
 static bool images_match_panel(void) {
-    size_t lock_size = (size_t)(lock_4bpp_bin_end - lock_4bpp_bin_start);
-    size_t loading_size = (size_t)(loading_4bpp_bin_end - loading_4bpp_bin_start);
+    size_t lock_size = asset_pack_size(lock_4bpp_pack_start, (size_t)(lock_4bpp_pack_end - lock_4bpp_pack_start));
+    size_t loading_size = asset_pack_size(loading_4bpp_pack_start, (size_t)(loading_4bpp_pack_end - loading_4bpp_pack_start));
     size_t expected = (size_t)epd_width() * epd_height() / 2;
     if (lock_size == expected && loading_size == expected) return true;
     ESP_LOGE(
@@ -91,7 +92,8 @@ void app_main(void) {
     read_pico_i2c_census_take();
     epd_clear();
     epd_hl_set_all_white(&hl);
-    ui_draw_full_image(framebuffer, loading_4bpp_bin_start);
+    if (!asset_pack_unpack(loading_4bpp_pack_start, (size_t)(loading_4bpp_pack_end - loading_4bpp_pack_start),
+                           framebuffer, (size_t)epd_width() * epd_height() / 2)) ui_clear_page(framebuffer);
     update_display_from_white(&hl);
 
     if (usb_requested) ttf_font_open_builtin();

@@ -173,7 +173,7 @@ static app_redraw_t key(app_ctx_t* ctx, int key) {
 }
 
 const app_desc_t app_os_storage = {
-    .title = "存储与设备", .detail = "TF · 内置容量", .enter_full = true,
+    .title = "存储与设备", .detail = "TF · 内置容量", .enter_full = false,
     .render = render, .on_gesture = gesture, .on_key = key,
     .on_enter = on_enter, .on_tick = on_tick,
 };

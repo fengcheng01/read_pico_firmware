@@ -57,6 +57,6 @@ static app_redraw_t key(app_ctx_t* ctx, int key) {
     return APP_REDRAW_NONE;
 }
 const app_desc_t app_os_tools = {
-    .title = "进阶与诊断", .detail = "开发与维护入口", .enter_full = true,
+    .title = "进阶与诊断", .detail = "开发与维护入口", .enter_full = false,
     .render = render, .on_gesture = gesture, .on_key = key,
 };

@@ -141,6 +141,6 @@ static app_redraw_t key(app_ctx_t* ctx, int key) {
 }
 
 const app_desc_t app_os_sleep = {
-    .title = "睡眠与锁屏", .detail = "模式 · 唤醒 · 样式 · 密码", .enter_full = true,
+    .title = "睡眠与锁屏", .detail = "模式 · 唤醒 · 样式 · 密码", .enter_full = false,
     .render = render, .on_gesture = gesture, .on_key = key,
 };

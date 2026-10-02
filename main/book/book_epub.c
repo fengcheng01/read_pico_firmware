@@ -615,6 +615,10 @@ esp_err_t book_epub_load(book_epub_t *book, size_t i, html_text_t *out) {
 }
 esp_err_t book_epub_load_image(book_epub_t *book, size_t i, const char *reference,
                               uint8_t **pixels, uint16_t *width, uint16_t *height) {
+    return book_epub_load_image_budget(book, i, reference, 2u * 1024u * 1024u, pixels, width, height);
+}
+esp_err_t book_epub_load_image_budget(book_epub_t *book, size_t i, const char *reference, size_t budget,
+                                     uint8_t **pixels, uint16_t *width, uint16_t *height) {
     if (!pixels || !width || !height) return ESP_ERR_INVALID_ARG;
     *pixels = NULL; *width = *height = 0;
     if (!book || i >= book->count || !reference || !*reference) return ESP_ERR_INVALID_ARG;
@@ -624,7 +628,7 @@ esp_err_t book_epub_load_image(book_epub_t *book, size_t i, const char *referenc
     char *data; size_t size;
     esp_err_t err = load_entry(book, zip_find(book->zip, path), &data, &size);
     if (err != ESP_OK) return err;
-    bool decoded = book_image_decode((const uint8_t*)data, size, 2u * 1024u * 1024u, pixels, width, height);
+    bool decoded = book_image_decode((const uint8_t*)data, size, budget, pixels, width, height);
     free(data);
     return decoded ? ESP_OK : ESP_ERR_NOT_SUPPORTED;
 }

@@ -14,10 +14,14 @@
 #include "e0470_epaper_waveform.h"
 
 #define FB_BYTES 128
-const EpdWaveform E0470_WAVEFORM = {0}, E0470_FOLLOW_WAVEFORM = {1};
+const EpdWaveform E0470_WAVEFORM = {0}, E0470_FOLLOW_WAVEFORM = {1}, E0470_FULL_WAVEFORM = {2};
 static uint8_t target[FB_BYTES], presented[FB_BYTES];
 static int clocks, powerons, clears, draws, full_draws, safe_clock, prefill;
 static bool white_baseline, correct_target_at_draw;
+static unsigned cleanup_every = 3;
+static enum EpdDrawMode last_mode;
+static const EpdWaveform* last_waveform;
+uint8_t app_settings_gc_every(void) { return (uint8_t)cleanup_every; }
 
 void read_pico_epd_set_pclk(int mhz) { ++clocks; safe_clock = mhz; }
 void read_pico_epd_use_scan(read_pico_epd_scan_t scan) { assert(scan == READ_PICO_EPD_SCAN_FULL); }
@@ -32,7 +36,8 @@ int64_t esp_timer_get_time(void) { return 1000000; }
 void epd_hl_set_all_white(EpdiyHighlevelState* hl) { memset(hl->front_fb, 255, FB_BYTES); }
 void epd_hl_waveform(EpdiyHighlevelState* hl, const EpdWaveform* waveform) { hl->waveform = waveform; }
 static enum EpdDrawError draw(EpdiyHighlevelState* hl, enum EpdDrawMode mode, int temperature, bool full) {
-    assert(mode == MODE_GC16 && temperature == 25 && clears > 0);
+    assert(temperature == 25);
+    last_mode = mode; last_waveform = hl->waveform;
     ++draws;
     full_draws += full;
     white_baseline = true;
@@ -55,6 +60,12 @@ enum EpdDrawError epd_hl_update_screen_from_white(EpdiyHighlevelState* hl, enum 
     return epd_hl_update_screen_full(hl, mode, temperature);
 }
 
+enum EpdDrawError epd_hl_update_area(EpdiyHighlevelState* hl, enum EpdDrawMode mode, int temperature, EpdRect area) {
+    (void)area; return draw(hl, mode, temperature, false);
+}
+enum EpdDrawError epd_hl_update_area_full(EpdiyHighlevelState* hl, enum EpdDrawMode mode, int temperature, EpdRect area) {
+    (void)area; return draw(hl, mode, temperature, true);
+}
 int main(void) {
     uint8_t front[FB_BYTES], back[FB_BYTES];
     for (size_t i = 0; i < FB_BYTES; ++i) target[i] = (uint8_t)(i * 37U + 3U);
@@ -64,6 +75,16 @@ int main(void) {
     guard_draw_result(&hl, EPD_DRAW_SUCCESS);
     guard_draw_result(&hl, EPD_DRAW_OTHER_ERROR);
     assert(!clocks && !clears && !draws && !memcmp(front, target, FB_BYTES));
+    for (int i = 0; i < 7; ++i) {
+        guard_draw_result(&hl, update_display_mode(&hl, MODE_GL16));
+        assert(last_mode == (i % 3 == 2 ? MODE_GC16 : MODE_GL16));
+        assert(last_waveform == &E0470_FULL_WAVEFORM && hl.waveform == &E0470_WAVEFORM);
+    }
+    assert(draws == 7 && full_draws == 7 && !clears);
+    cleanup_every = 0;
+    for (int i = 0; i < 20; ++i) {
+        update_display_mode(&hl, MODE_GL16); assert(last_mode == MODE_GL16);
+    }
     for (int bulk = 0; bulk < 2; ++bulk) {
         memcpy(front, target, FB_BYTES);
         memset(back, 0x55, FB_BYTES);

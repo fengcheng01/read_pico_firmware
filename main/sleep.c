@@ -27,11 +27,18 @@
 #include "sc7a20h_lab.h"
 #include "settings.h"
 #include "ui_kit.h"
+#include "asset_pack.h"
 #include "ui/product/ui_product.h"
 
 static const char* TAG = "read_pico";
 
-extern const uint8_t lock_4bpp_bin_start[] asm("_binary_lock_4bpp_bin_start");
+extern const uint8_t lock_4bpp_pack_start[] asm("_binary_lock_4bpp_pack_start");
+extern const uint8_t lock_4bpp_pack_end[] asm("_binary_lock_4bpp_pack_end");
+
+static void draw_static_lock(uint8_t* fb) {
+    if (!asset_pack_unpack(lock_4bpp_pack_start, (size_t)(lock_4bpp_pack_end - lock_4bpp_pack_start),
+                           fb, (size_t)UI_LOCK_WIDTH * UI_LOCK_HEIGHT / 2)) ui_clear_page(fb);
+}
 
 static void lock_arm_ioe_wakeup(void) {
     gpio_config_t io = {
@@ -229,7 +236,6 @@ void app_enter_host_sleep(app_sleep_mode_t mode) {
 // 时钟锁屏：大字时间 + 日期；时间未校准时由调用方回退静态图。
 // Clock lock face: large time plus date; an uncalibrated clock falls back to the static image.
 static void draw_lock_clock(uint8_t* fb) {
-    const os_time_info_t* info = os_time_info();
     char clock[16], date[48];
     os_time_format_clock(clock, sizeof(clock));
     os_time_format_date(date, sizeof(date));
@@ -277,7 +283,7 @@ static void draw_lock_almanac(uint8_t* fb) {
     const os_time_info_t* info = os_time_info();
     os_lunar_date_t lunar;
     if (!os_lunar_from_solar(info->year, info->month, info->day, &lunar)) {
-        ui_draw_full_image(fb, lock_4bpp_bin_start);
+        draw_static_lock(fb);
         return;
     }
     static const char* weekdays[] = {"日", "一", "二", "三", "四", "五", "六"};
@@ -307,7 +313,7 @@ static void draw_lock_face(uint8_t* framebuffer) {
         if (style == 2 && valid) { draw_lock_calendar(framebuffer); return; }
         if (style == 3 && valid) { draw_lock_almanac(framebuffer); return; }
     }
-    ui_draw_full_image(framebuffer, lock_4bpp_bin_start);
+    draw_static_lock(framebuffer);
 }
 
 /* ---- 锁屏密码 / Lock PIN ---- */

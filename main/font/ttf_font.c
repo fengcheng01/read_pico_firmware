@@ -26,6 +26,7 @@
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "asset_pack.h"
 
 static void* ttf_malloc(size_t size, void* userdata) {
     (void)userdata;
@@ -81,9 +82,12 @@ static void ttf_free(void* ptr, void* userdata) {
 
 static const char* TAG = "ttf_font";
 
+#ifndef TTF_SD_ROOT
+#define TTF_SD_ROOT "/sdcard"
+#endif
 static const char* const k_font_dirs[] = {
-    "/sdcard/assets/fonts",
-    "/sdcard/fonts",
+    TTF_SD_ROOT "/assets/fonts",
+    TTF_SD_ROOT "/fonts",
 };
 
 typedef struct glyph_entry {
@@ -129,8 +133,9 @@ static uint32_t font_mem_len;
 static uint32_t font_file_pos = UINT32_MAX;
 static char font_path[TTF_FONT_PATH_MAX];
 
-extern const uint8_t builtin_ttf_start[] asm("_binary_builtin_ttf_start");
-extern const uint8_t builtin_ttf_end[] asm("_binary_builtin_ttf_end");
+extern const uint8_t builtin_pack_start[] asm("_binary_builtin_pack_start");
+extern const uint8_t builtin_pack_end[] asm("_binary_builtin_pack_end");
+static uint8_t* builtin_memory;
 static int packed_root = -1;
 static int packed_weight = -1;
 static uint32_t file_glyf_off;
@@ -477,7 +482,7 @@ static bool try_map_table(
     uint32_t off, uint32_t len, uint8_t** ram, uint32_t* ram_off,
     uint32_t* ram_len, const char* name
 ) {
-    if (*ram != NULL || len < 4096 || len > TTF_MAP_MAX) return false;
+    if (font_mem != NULL || *ram != NULL || len < 4096 || len > TTF_MAP_MAX) return false;
     size_t largest = heap_caps_get_largest_free_block(
         MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT
     );
@@ -1841,6 +1846,8 @@ static void abandon_font_source(void) {
     }
     font_mem = NULL;
     font_mem_len = 0;
+    heap_caps_free(builtin_memory);
+    builtin_memory = NULL;
 }
 
 void ttf_font_unload(void) {
@@ -1936,8 +1943,18 @@ esp_err_t ttf_font_open_builtin(void) {
     ttf_font_unload();
     if (!ensure_work()) return ESP_ERR_NO_MEM;
 
-    font_mem = builtin_ttf_start;
-    font_mem_len = (uint32_t)(builtin_ttf_end - builtin_ttf_start);
+    // 有界解压常用中文字库；与卡字体共用生命周期，不额外常驻第二份字体。
+    // Inflate the common-Chinese font within bounds; share the SD-font lifetime without a second resident font.
+    size_t packed = (size_t)(builtin_pack_end - builtin_pack_start);
+    size_t length = asset_pack_size(builtin_pack_start, packed);
+    if (length < 12 || length > 3u * 1024u * 1024u) return ESP_ERR_INVALID_SIZE;
+    builtin_memory = heap_caps_malloc(length, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!builtin_memory) return ESP_ERR_NO_MEM;
+    if (!asset_pack_unpack(builtin_pack_start, packed, builtin_memory, length)) {
+        abandon_font_source(); return ESP_ERR_INVALID_RESPONSE;
+    }
+    font_mem = builtin_memory;
+    font_mem_len = length;
     font_fd = -1;
     strlcpy(font_path, TTF_FONT_BUILTIN, sizeof(font_path));
     ESP_LOGI(TAG, "using builtin (%u KB)", (unsigned)(font_mem_len / 1024));
@@ -2129,4 +2146,3 @@ void ttf_draw_text_px_bw(
         cursor_x += glyph->advance_x;
     }
 }
-

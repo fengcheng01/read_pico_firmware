@@ -26,8 +26,8 @@
 #define APP_SETTLE_REFRESH_MODE MODE_DU
 #else
 #define APP_PAGE_REFRESH_MODE MODE_GL16
-// APP_REDRAW_FULL（KEY2 清残影、首帧、换字体、enter_full 进页）仍是整屏 GC16。
-// APP_REDRAW_FULL (KEY2, first frame, font change, enter_full) stays GC16.
+// APP_REDRAW_FULL（KEY2 清残影、首帧、诊断 enter_full）仍是整屏 GC16。
+// APP_REDRAW_FULL (KEY2, first frame, diagnostic enter_full) stays GC16.
 #define APP_PAGE_FORCE_FULL 1
 // 触摸抬手定稿：笔迹连续 DU 之后白底已脏，顺手用 GC16 清一次。
 // Touch settle: continuous DU dirties the white; GC16 once on lift.

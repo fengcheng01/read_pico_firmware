@@ -43,6 +43,14 @@ def metadata():
 
 def build(sanitize=False):
     OUT.mkdir(parents=True, exist_ok=True)
+    # 将 SD 挂载边界指向隔离字体夹具，列表/选择仍走真实代码。
+    # Repoint the SD mount boundary to isolated font fixtures; retain real listing and selection code.
+    fonts = OUT / "sd/fonts"
+    fonts.mkdir(parents=True, exist_ok=True)
+    for index in range(8):
+        target = fonts / f"中文字体测试{index + 1}.ttf"
+        target.unlink(missing_ok=True)
+        target.symlink_to(ROOT / "main/assets/builtin.ttf")
     includes = OUT / "include"
     for name in ("epdiy.h", "epd_highlevel.h", "cst836u.h", "sc7a20h_lab.h",
                  "esp_err.h", "esp_timer.h", "esp_heap_caps.h", "esp_log.h", "nvs.h", "nvs_flash.h", "miniz.h",
@@ -98,7 +106,7 @@ def build(sanitize=False):
 
     cover_png = _png_gray(200, 260, lambda x, y: 255 if x < 8 or x >= 192 or y < 8 or y >= 252 else
                           max(0, min(255, 250 - (x * 3 + y) // 3)))
-    body = ''.join('<p>第%d段。潮水在旧码头往复，纸页间的光随之明暗。</p>' % i for i in range(220))
+    body = '<p>图文正文，图片应直接显示。</p><img src="cover.png"/>' + ''.join('<p>第%d段。潮水在旧码头往复，纸页间的光随之明暗。</p>' % i for i in range(220))
     with _zipfile.ZipFile(full / '封面之书.epub', 'w') as epub:
         info = _zipfile.ZipInfo('mimetype'); info.compress_type = _zipfile.ZIP_STORED
         epub.writestr(info, 'application/epub+zip')
@@ -136,7 +144,7 @@ def build(sanitize=False):
     # 样文转换成纯文本，避免把 Markdown 标记当作读者正文。/ Convert the sample to plaintext instead of showing Markdown marks as prose.
     sample = (ROOT / "main/assets/reading.md").read_text()
     (OUT / "sample.txt").write_text(re.sub(r"^#+[ \t]*", "", sample, flags=re.M).replace("**", ""))
-    for name, path in (("builtin_ttf", "main/assets/builtin.ttf"), ("reading_md", "main/assets/reading.md"),
+    for name, path in (("builtin_pack", "main/assets/builtin.pack"), ("reading_md", "main/assets/reading.md"),
                        ("preview_sample_txt", str(OUT / "sample.txt"))):
         assets += [f".globl _binary_{name}_start", f"_binary_{name}_start:",
                    f'.incbin "{path}"', f".globl _binary_{name}_end", f"_binary_{name}_end:", ".byte 0"]
@@ -144,6 +152,7 @@ def build(sanitize=False):
         assets += ['.section .note.GNU-stack,"",@progbits']
     (OUT / "assets.S").write_text("\n".join(assets) + "\n")
     command = [os.environ.get("CC", "cc"), "-std=gnu11", "-O1" if sanitize else "-O2", "-g",
+               '-DTTF_SD_ROOT="build-host/desktop-preview/sd"',
                "-Wall", "-Wextra", "-Wno-sign-compare", "-Wno-unused-variable", "-Wno-unused-function", "-Wno-unused-parameter",
                "-Itools/preview", f"-I{includes}", "-Imain/app", "-Imain/ui", "-Imain/ui/product",
                "-Imain/os", "-Imanaged_components/espressif__cjson/cJSON", "-Imain/book", "-Imain/font", "-Imain", "-Icomponents/read_pico_transfer/include"]
@@ -156,7 +165,7 @@ def build(sanitize=False):
         command += ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
     command += ["tools/preview/native.c", "tools/preview/esp_host.c",
                 "tools/preview/today_port.c", "tools/preview/transfer_port.c", "tools/preview/device_port.c", "tools/preview/miniz_host.c",
-                "main/settings.c", "main/book/book_progress.c", "main/book/book_stats.c", "main/book/book_stats_store.c",
+                "main/asset_pack.c", "main/settings.c", "main/book/book_progress.c", "main/book/book_stats.c", "main/book/book_stats_store.c",
                 "main/book/book_entry.c", "main/book/book_layout.c", "main/book/book_source.c", "main/book/book_home.c", "main/book/book_cover.c", "main/book/book_marks.c",
                 "main/book/book_txt.c", "main/book/gbk.c", "main/book/book_epub.c", "main/book/zip_reader.c",
                 "main/book/html_text.c", "main/book/book_image.c", "main/book/vendor/tjpgd.c",

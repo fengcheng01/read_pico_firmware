@@ -50,17 +50,17 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
     ui_text(fb, UI_MARGIN, 534, 30, "正文字体", EPD_DRAW_ALIGN_LEFT, false);
     const char* path = ttf_font_path();
     char name[96];
-    if (ttf_font_is_builtin() || !path[0]) snprintf(name, sizeof(name), "内置字库 · 中文子集（可能缺字）");
+    if (ttf_font_is_builtin() || !path[0]) snprintf(name, sizeof(name), "内置中文 · 6763 个常用汉字");
     else {
         const char* base = strrchr(path, '/');
         snprintf(name, sizeof(name), "%s", base ? base + 1 : path);
     }
     ui_product_title(fb, (EpdRect){UI_MARGIN, 586, ui_content_width(), 44}, name, 32, 1);
-    ui_text(fb, UI_MARGIN, 640, 24, "完整中文显示需要 TF 卡上的 TTF 字库", EPD_DRAW_ALIGN_LEFT, false);
+    ui_text(fb, UI_MARGIN, 640, 28, "生僻字或更多字体可从 TF 卡添加", EPD_DRAW_ALIGN_LEFT, false);
     ui_draw_button(fb, font_list_rect(), "打开字体列表", true);
     ui_hairline(fb, 812, UI_MARGIN, ui_content_width(), UI_GRAY_BLACK);
     ui_text(fb, UI_MARGIN, 836, 30, "阅读状态栏（页脚）", EPD_DRAW_ALIGN_LEFT, false);
-    static const char* labels[] = {"时钟", "电量", "进度条"};
+    static const char* labels[] = {"时钟", "电量", "阅读百分比"};
     static bool (*getters[])(void) = {app_settings_footer_clock, app_settings_footer_battery, app_settings_footer_bar};
     for (int i = 0; i < 3; ++i) {
         EpdRect r = footer_row_rect(i);
@@ -109,6 +109,6 @@ static app_redraw_t key(app_ctx_t* ctx, int key) {
 }
 
 const app_desc_t app_os_reading = {
-    .title = "阅读与字体", .detail = "字号 · 字体 · 实验", .enter_full = true,
+    .title = "阅读与字体", .detail = "字号 · 字体 · 实验", .enter_full = false,
     .render = render, .on_gesture = gesture, .on_key = key,
 };

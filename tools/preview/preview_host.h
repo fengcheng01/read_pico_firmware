@@ -101,6 +101,7 @@ typedef struct nvs_iterator* nvs_iterator_t;
 #define NVS_TYPE_U32 4
 #define NVS_TYPE_BLOB 5
 #define TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF 1
+#define TINFL_FLAG_PARSE_ZLIB_HEADER 2
 esp_err_t nvs_flash_init(void);
 esp_err_t nvs_flash_erase(void);
 esp_err_t nvs_open(const char* namespace_, int mode, nvs_handle_t* out);

@@ -6,9 +6,9 @@
  * English: Adapt the reading demo's codepoint wrapping into PSRAM chapter pagination.
  *
  * 冻结：原文由调用方持有；字体测量和绘制必须由调用方串行化。
- * 为尽早进入阅读，支持分批分页；未加载图片绘制可点击占位及已读重复提示，不在绘图时读取资源或解码。
+ * 为尽早进入阅读，支持分批分页；正文插图在分页前加载；失败图片绘制可点击占位，不在绘图时读取资源或解码。
  * Frozen: Caller owns source text and serializes all font measurement and drawing.
- * Incremental pagination enables early reading; unloaded images show clickable placeholders and visited-chapter repeat hints; never read or decode resources while drawing.
+ * Incremental pagination enables early reading; inline images load before pagination; failed images show retry placeholders; never read or decode resources while drawing.
  */
 #include "book_layout.h"
 #include <limits.h>

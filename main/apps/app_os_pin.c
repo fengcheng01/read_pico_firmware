@@ -141,6 +141,6 @@ static app_redraw_t key(app_ctx_t* ctx, int key_) {
 }
 
 const app_desc_t app_os_pin = {
-    .title = "锁屏密码", .detail = "设置 · 修改 · 清除", .enter_full = true,
+    .title = "锁屏密码", .detail = "设置 · 修改 · 清除", .enter_full = false,
     .render = render, .on_gesture = gesture, .on_key = key, .on_enter = on_enter,
 };

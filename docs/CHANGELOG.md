@@ -3,6 +3,15 @@
 按日期和作者简述对用户可见的功能变化；详细实现历史见 Git。使用方法见 [README](../README.zh-CN.md)。
 User-visible changes by date and author; Git retains implementation history. See [README](../README.md) for usage.
 
+## 2026-10-02 · Codex · 字体、图文与灰阶阅读 / Fonts, inline images and grayscale reading
+
+- 内置字库补齐 GB2312 的 6763 个汉字，压缩字库与静态图片保持原分区；字体列表每页六条，保留当前标记和正文示例，四根页面放大字号与调整排版。
+  Built-in fonts cover all 6763 GB2312 Chinese characters; packed fonts/static images retain the partition layout. The picker shows six rows with selection and text preview, and root typography/layout is enlarged.
+- EPUB 插图自动有界加载并与正文同页分页；失败与超限仍提供占位重试。去掉页脚进度刻度与隐藏跳转区，保留页码、可选百分比和目录跳转。
+  EPUB images load within bounds for inline pagination, retaining retry placeholders on failures/limits. Removes the footer ruler and hidden jump area, keeping pages, optional percentage and TOC jumping.
+- 阅读正文与页脚一次完整 GL16 灰阶更新，设置与字体切换不再强制黑闪；清残影周期由显示出口统一计数，默认 14 次，可关闭或手动清理。物理残影和速度待实机确认。
+  Reader body/footer use one complete GL16 grayscale update; Settings/font changes no longer force a black flash. Display owns one cleanup counter, default 14, with Off/manual cleaning; physical ghosting and speed await device confirmation.
+
 ## 2026-10-02 · Codex · USB 连接电脑 / USB card disk
 
 - 设置中的存储页新增 USB 连接电脑入口，确认后重启让电脑独占 TF 卡；电脑可读写图书/字体，安全弹出后退出重启恢复阅读与刷机串口。暂停阅读、传书和自动睡眠，不导出内置存储、不自动格式化；拔卡停止当前会话。

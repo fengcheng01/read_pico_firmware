@@ -26,6 +26,7 @@ set(main_requires
 idf_component_register(
     SRCS
         "app_main.c"
+        "asset_pack.c"
         "display.c"
         "sleep.c"
         "settings.c"
@@ -96,9 +97,9 @@ idf_component_register(
     REQUIRES ${main_requires}
     INCLUDE_DIRS "." "app" "apps" "font" "ui" "ui/product" "os" "factory" "book" "usb"
     EMBED_FILES
-        "assets/lock_4bpp.bin"
-        "assets/loading_4bpp.bin"
-        "assets/builtin.ttf"
+        "assets/lock_4bpp.pack"
+        "assets/loading_4bpp.pack"
+        "assets/builtin.pack"
         "assets/reading.md"
 )
 

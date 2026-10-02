@@ -47,18 +47,18 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
     ui_clear_page(fb);
     ui_product_header(fb, "正在读", "继续上次，或开始一本新的书");
     if (s_loading) {
-        ui_text(fb, UI_MARGIN, 240, 40, "正在查找最近阅读…", EPD_DRAW_ALIGN_LEFT, false);
-        ui_text(fb, UI_MARGIN, 312, 28, "可以先打开书架或导入图书", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, UI_MARGIN, 240, 46, "正在查找最近阅读…", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, UI_MARGIN, 312, 34, "可以先打开书架或导入图书", EPD_DRAW_ALIGN_LEFT, false);
     } else if (data->current.path[0]) {
         EpdRect cover = {UI_MARGIN, 216, 224, 310};
         ui_product_cover(fb, cover, data->current.title, 40);
         int x = cover.x + cover.width + 38;
-        ui_text(fb, x, 234, 26, "上次阅读", EPD_DRAW_ALIGN_LEFT, false);
-        ui_product_title(fb, (EpdRect){x, 292, ui_content_right() - x, 156}, data->current.title, 40, 3);
+        ui_text(fb, x, 234, 32, "上次阅读", EPD_DRAW_ALIGN_LEFT, false);
+        ui_product_title(fb, (EpdRect){x, 292, ui_content_right() - x, 180}, data->current.title, 48, 3);
         char progress[64];
         if (data->current.has_progress) snprintf(progress, sizeof(progress), "已读 %lu%%", (unsigned long)data->current.percent);
         else snprintf(progress, sizeof(progress), "从头开始");
-        ui_text(fb, x, 468, 30, progress, EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, x, 468, 36, progress, EPD_DRAW_ALIGN_LEFT, false);
         epd_fill_rect((EpdRect){x, 518, ui_content_right() - x, 4}, UI_GRAY_LIGHT, fb);
         epd_fill_rect((EpdRect){x, 518, (ui_content_right() - x) * data->current.percent / 100, 4}, UI_GRAY_BLACK, fb);
         EpdRect button = continue_rect();
@@ -67,27 +67,27 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
                    "继续阅读", EPD_DRAW_ALIGN_CENTER, true);
     } else {
         ui_text(fb, UI_MARGIN, 224, 48, "从一本书开始", EPD_DRAW_ALIGN_LEFT, false);
-        ui_text(fb, UI_MARGIN, 316, 32, data->book_count ? "书架已有图书，选一本开始阅读" : "还没有图书，先导入 TXT / EPUB", EPD_DRAW_ALIGN_LEFT, false);
-        ui_text(fb, UI_MARGIN, 380, 28, "你的阅读进度会保存在设备上", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, UI_MARGIN, 316, 38, data->book_count ? "书架已有图书，选一本开始阅读" : "还没有图书，先导入 TXT / EPUB", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, UI_MARGIN, 380, 34, "你的阅读进度会保存在设备上", EPD_DRAW_ALIGN_LEFT, false);
         ui_draw_button(fb, continue_rect(), data->book_count || !transfer_enabled() ? "打开书架" : "导入图书", true);
     }
     const char* notice = s_notice ? s_notice : !s_loading && data->degraded ? "部分存储不可用，请到设置检查" :
                          "点击继续阅读，恢复已保存的位置";
-    ui_product_title(fb, (EpdRect){UI_MARGIN, 682, ui_content_width(), 38}, notice, 26, 1);
+    ui_product_title(fb, (EpdRect){UI_MARGIN, 676, ui_content_width(), 44}, notice, 32, 1);
     ui_hairline(fb, 736, UI_MARGIN, ui_content_width(), UI_GRAY_BLACK);
     char heading[80];
     snprintf(heading, sizeof(heading), "最近阅读%s", s_loading ? "" : " · 已保存记录");
-    ui_text(fb, UI_MARGIN, 750, 26, heading, EPD_DRAW_ALIGN_LEFT, false);
+    ui_text(fb, UI_MARGIN, 750, 32, heading, EPD_DRAW_ALIGN_LEFT, false);
     if (!s_loading) {
         for (unsigned i = 0; i < data->recent_count; ++i) {
             EpdRect r = recent_rect(i);
             // 标题与元数据分列，长文件名不覆盖进度。/ Separate title and metadata so long names cannot cover progress.
-            ui_product_title(fb, (EpdRect){r.x, r.y + 26, r.width - 106, 48}, data->recent[i].title, 34, 1);
+            ui_product_title(fb, (EpdRect){r.x, r.y + 22, r.width - 106, 54}, data->recent[i].title, 42, 1);
             char pct[12]; snprintf(pct, sizeof(pct), "%lu%%", (unsigned long)data->recent[i].percent);
-            ui_text_vc(fb, r.x + r.width, r.y + 48, 28, pct, EPD_DRAW_ALIGN_RIGHT, false);
+            ui_text_vc(fb, r.x + r.width, r.y + 48, 34, pct, EPD_DRAW_ALIGN_RIGHT, false);
             ui_hairline(fb, r.y + 88, r.x, r.width, UI_GRAY_LIGHT);
         }
-        if (!data->recent_count) ui_text(fb, UI_MARGIN, 836, 30, "读过的图书会出现在这里", EPD_DRAW_ALIGN_LEFT, false);
+        if (!data->recent_count) ui_text(fb, UI_MARGIN, 836, 36, "读过的图书会出现在这里", EPD_DRAW_ALIGN_LEFT, false);
     }
     ui_product_root_bar(fb, OS_APP_HOME);
 }
@@ -150,7 +150,7 @@ static app_redraw_t on_tick(app_ctx_t* ctx) {
     return APP_REDRAW_PAGE;
 }
 const app_desc_t app_os_home = {
-    .title = "正在读", .detail = "继续阅读 · 书架 · 导入", .enter_full = true,
+    .title = "正在读", .detail = "继续阅读 · 书架 · 导入", .enter_full = false,
     .on_enter = on_enter, .on_exit = home_on_exit, .on_media_lost = on_media_lost,
     .render = render, .on_gesture = on_gesture, .on_key = on_key, .on_tick = on_tick,
 };

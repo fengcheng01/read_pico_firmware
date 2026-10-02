@@ -55,9 +55,9 @@ os_app_id_t ui_product_home_bar_hit(uint16_t x, uint16_t y, bool transfer_enable
 }
 
 void ui_product_header(uint8_t* fb, const char* title, const char* detail) {
-    ui_text(fb, UI_MARGIN, 24, 24, "小纸 Pico  /  READ PICO", EPD_DRAW_ALIGN_LEFT, false);
-    ui_text(fb, UI_MARGIN, 70, 56, title, EPD_DRAW_ALIGN_LEFT, false);
-    ui_product_title(fb, (EpdRect){UI_MARGIN, 140, ui_content_width(), 34}, detail, 26, 1);
+    ui_text(fb, UI_MARGIN, 24, 30, "小纸 Pico  /  READ PICO", EPD_DRAW_ALIGN_LEFT, false);
+    ui_text(fb, UI_MARGIN, 68, 64, title, EPD_DRAW_ALIGN_LEFT, false);
+    ui_product_title(fb, (EpdRect){UI_MARGIN, 142, ui_content_width(), 44}, detail, 32, 1);
 }
 EpdRect ui_product_back_rect(void) { return (EpdRect){470, 60, 174, 80}; }
 void ui_product_back(uint8_t* fb, const char* label) { ui_draw_button(fb, ui_product_back_rect(), label, false); }
@@ -68,7 +68,7 @@ void ui_product_root_bar(uint8_t* fb, os_app_id_t active) {
     ui_hairline(fb, UI_BAR_TOP, UI_MARGIN, ui_content_width(), UI_GRAY_BLACK);
     for (int i = 0; i < 4; ++i) {
         EpdRect r = ui_bar_rect(i, 4);
-        ui_text_vc(fb, r.x + r.width / 2, r.y + 44, 28, root_labels[i], EPD_DRAW_ALIGN_CENTER, false);
+        ui_text_vc(fb, r.x + r.width / 2, r.y + 44, 36, root_labels[i], EPD_DRAW_ALIGN_CENTER, false);
         if (active == roots[i]) epd_fill_rect((EpdRect){r.x + 12, r.y + 78, r.width - 24, 4}, UI_GRAY_BLACK, fb);
     }
     ui_draw_menu_handle(fb, false);
@@ -106,10 +106,10 @@ void ui_product_shelf_card(uint8_t* fb, EpdRect r, const char* title, const char
             for (int x = 0; x < BOOK_COVER_W; ++x)
                 epd_draw_pixel(slot.x + x, slot.y + y, cover[(size_t)y * BOOK_COVER_W + x], fb);
         epd_draw_rect(slot, UI_GRAY_BLACK, fb);
-    } else ui_product_cover(fb, slot, title, 28);
+    } else ui_product_cover(fb, slot, title, 34);
     int x = r.x + 174, width = r.width - 174;
-    ui_product_title(fb, (EpdRect){x, r.y + 16, width, 132}, title, 36, 3);
-    ui_product_title(fb, (EpdRect){x, r.y + 154, width, 34}, meta, 26, 1);
+    ui_product_title(fb, (EpdRect){x, r.y + 16, width, 144}, title, 44, 2);
+    ui_product_title(fb, (EpdRect){x, r.y + 158, width, 42}, meta, 32, 1);
     if (has_progress) {
         epd_fill_rect((EpdRect){x, r.y + 194, width, 3}, UI_GRAY_LIGHT, fb);
         epd_fill_rect((EpdRect){x, r.y + 194, width * (int)(percent > 100 ? 100 : percent) / 100, 3}, UI_GRAY_BLACK, fb);
@@ -152,10 +152,6 @@ void ui_product_reader_chrome(uint8_t* fb, const char* title, unsigned page, uns
         ui_hairline(fb, 76, UI_MARGIN, ui_content_width(), UI_GRAY_LIGHT);
     }
     EpdRect track = ui_bar_rect(0, 1);
-    if (bar) {
-        epd_fill_rect((EpdRect){track.x, track.y + 16, track.width, 4}, UI_GRAY_LIGHT, fb);
-        epd_fill_rect((EpdRect){track.x, track.y + 16, track.width * (int)(percent > 100 ? 100 : percent) / 100, 4}, UI_GRAY_BLACK, fb);
-    }
     // 页脚左侧可先放状态（时钟/电量），标题让位；右侧保持页码与百分比。
     // The footer left may open with the status cluster (clock/battery); the right keeps pages and percent.
     int left_x = track.x, left_w = track.width - 260;
@@ -166,7 +162,9 @@ void ui_product_reader_chrome(uint8_t* fb, const char* title, unsigned page, uns
     }
     if (left_w > 40) ui_product_title(fb, (EpdRect){left_x, track.y + 36, left_w, 32}, title, 24, 1);
     char label[48];
-    if (pages) snprintf(label, sizeof(label), "%u/%u · %u%%", page, pages, percent);
+    if (!bar && pages) snprintf(label, sizeof(label), "%u/%u", page, pages);
+    else if (!bar) snprintf(label, sizeof(label), "%u/…", page);
+    else if (pages) snprintf(label, sizeof(label), "%u/%u · %u%%", page, pages, percent);
     else snprintf(label, sizeof(label), "%u/… · %u%%", page, percent);
     ui_text(fb, track.x + track.width, track.y + 36, 24, label, EPD_DRAW_ALIGN_RIGHT, false);
     ui_draw_menu_handle(fb, false);

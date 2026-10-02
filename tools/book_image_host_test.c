@@ -5,6 +5,7 @@
  * 冻结：仅用于宿主测试。/ Frozen: Host tests only.
  */
 #include "book_image.h"
+#include "book_source.h"
 #include "book_epub.h"
 #include <assert.h>
 #include <stdio.h>
@@ -24,7 +25,9 @@ static void check_image(const char* path, bool png) {
     if (png) { assert(pixels[0]==255 && pixels[1]==127 && pixels[2]==0); }
     else for(size_t i=0;i<(size_t)w*h;++i) assert(pixels[i]>=118 && pixels[i]<=122);
     free(pixels);
-    assert(!book_image_decode(data,len,1,&pixels,&w,&h) && !pixels && !w && !h);
+    assert(book_image_decode(data,len,1,&pixels,&w,&h) && pixels && w==1 && h==1);
+    free(pixels);
+    assert(!book_image_decode(data,len,0,&pixels,&w,&h) && !pixels && !w && !h);
     assert(!book_image_decode(data,2u*1024u*1024u+1,1000000,&pixels,&w,&h));
     // 截断和单字节损坏不越界；宽容解码成功时也必须释放。
     // Truncation and single-byte corruption stay bounded; free even tolerated partial decodes.
@@ -111,5 +114,21 @@ int main(int argc,char** argv) {
     assert(book_epub_load(book,1,&text)==ESP_OK);
     for(size_t i=0;i<text.count;++i) assert(text.blocks[i].image_repeated && text.blocks[i].image_first_chapter==0);
     html_text_free(&text);book_epub_close(book);
+    assert(book_open(argv[3]) == ESP_OK);
+    assert(book_chapter_load_blocks(0, &text) == ESP_OK);
+    book_chapter_load_inline_images(0, &text);
+    size_t inline_count = 0, inline_bytes = 0;
+    for (size_t i = 0; i < text.count; ++i) if (text.blocks[i].image) {
+        ++inline_count;
+        inline_bytes += (size_t)text.blocks[i].image_width * text.blocks[i].image_height;
+    }
+    assert(inline_count == 2 && inline_bytes <= 768u * 1024u);
+    assert(strstr(text.utf8, "before") && strstr(text.utf8, "after"));
+    book_chapter_load_inline_images(0, &text);
+    html_text_free(&text);
+    image_fail_after = 0;
+    assert(book_chapter_load_blocks(0, &text) == ESP_ERR_NO_MEM);
+    image_fail_after = -1;
+    book_close();
     puts("image decode: JPEG/PNG, alpha, budget, corruption/OOM, on-demand loading and visited-chapter repeats passed");
 }

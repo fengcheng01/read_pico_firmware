@@ -9,3 +9,4 @@
 typedef struct { int x, y, width, height; } EpdRect;
 enum EpdFontFlags { EPD_DRAW_ALIGN_LEFT = 0, EPD_DRAW_ALIGN_CENTER = 1 };
 void epd_draw_pixel(int x, int y, uint8_t color, uint8_t* framebuffer);
+void epd_fill_rect(EpdRect rect, uint8_t color, uint8_t* framebuffer);

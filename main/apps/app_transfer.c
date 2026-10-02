@@ -841,7 +841,7 @@ static bool present(app_ctx_t* ctx, app_redraw_t redraw) {
 
 const app_desc_t app_transfer = {
     .on_media_lost = transfer_on_media_lost,
-    .title = "传书 Transfer", .detail = "热点或已有 WiFi，浏览器上传", .enter_full = true,
+    .title = "传书 Transfer", .detail = "热点或已有 WiFi，浏览器上传", .enter_full = false,
     .on_enter = on_enter, .on_exit = transfer_on_exit, .render = render, .present = present,
     .on_tick = on_tick, .on_gesture = on_gesture,
 };

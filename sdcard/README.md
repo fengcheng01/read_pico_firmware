@@ -4,9 +4,9 @@
 
 Copy the entire `fonts/` directory, including `OFL.txt`, to the TF card root. Alternatively, select `fonts/ChillDuanSansVF.ttf` in the device webpage's font upload section, stop transfer after saving, and select the font on the device's Fonts page. The webpage accepts TTF only; keep the license with this deployment package.
 
-此字体不嵌入固件，不占用内置图书分区；运行时按需从 TF 卡读取。没有 TF 卡时，仍使用仅覆盖界面与演示文字的内置子集。
+此字体不嵌入固件，不占用内置图书分区；运行时按需从 TF 卡读取。没有 TF 卡时，使用包含 GB2312 的 6763 个常用汉字与界面文字的内置 Regular 子集；生僻字及额外繁体字仍需更完整的字体。
 
-This font is not embedded in firmware and does not consume the internal book partition. It is read from the TF card on demand. Without a card, the built-in subset covers the UI and demo text only.
+This font is not embedded in firmware and does not consume the internal book partition. It is read from the TF card on demand. Without a card, the built-in Regular subset covers the 6763 GB2312 Chinese characters and UI text; rare characters and additional traditional characters still require broader coverage.
 
 ## 字体来源与许可 / Font source and license
 
@@ -22,6 +22,6 @@ This font is not embedded in firmware and does not consume the internal book par
 
 The font is licensed under OFL-1.1, not the repository's Apache-2.0 license. It may be bundled, embedded and redistributed with software while retaining copyright and license notices; it must not be sold on its own. Modified versions must follow the reserved font name conditions and other terms. The bundled license text governs.
 
-内置 `main/assets/builtin.ttf` 是此字体的界面子集，生成器将其字体名设为 `Read Pico UI`，保留原版权与许可字段，以区别于未修改的上游字体。
+内置 `main/assets/builtin.ttf` 是此字体的常用中文 Regular 子集，固件嵌入其压缩文件 `builtin.pack`，生成器将其字体名设为 `Read Pico UI`，保留原版权与许可字段，以区别于未修改的上游字体。
 
-The embedded `main/assets/builtin.ttf` is a UI subset. Its generator uses the font name `Read Pico UI` and preserves original copyright and license fields, distinguishing it from the unmodified upstream font.
+The embedded `main/assets/builtin.ttf` is a common-Chinese Regular subset, embedded as compressed `builtin.pack`. Its generator uses the font name `Read Pico UI` and preserves original copyright and license fields, distinguishing it from the unmodified upstream font.

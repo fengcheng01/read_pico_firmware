@@ -31,6 +31,9 @@ esp_err_t book_chapter_load_blocks(size_t i, html_text_t *out);
 /// 按需解码指定章节的单幅本地图片；失败清空输出，成功像素由调用方 free，TXT 不支持。
 /// Decode one local chapter image on demand; clear outputs on failure, caller frees successful pixels; unsupported for TXT.
 esp_err_t book_chapter_load_image(size_t i, const char *reference, uint8_t **pixels, uint16_t *width, uint16_t *height);
+/// 分页前加载正文插图；总像素≤768KiB、至多64图；坏图保留可重试占位，不阻塞正文。
+/// Load inline images before pagination; <=768KiB total pixels and <=64 images; retain retry placeholders on failures.
+void book_chapter_load_inline_images(size_t chapter, html_text_t* text);
 /// TXT 为源文件字节；EPUB 为 spine 原始 HTML 未压缩累计字节，不是 ZIP 文件大小。
 /// TXT uses source-file bytes; EPUB uses cumulative uncompressed spine HTML bytes, not ZIP file size.
 uint32_t book_total_bytes(void);

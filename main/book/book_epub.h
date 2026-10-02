@@ -29,6 +29,9 @@ esp_err_t book_epub_load(book_epub_t *book, size_t index, html_text_t *out);
 /// Decode one local image on explicit request; clear outputs on failure, caller frees successful pixels; text and pagination stay unchanged.
 esp_err_t book_epub_load_image(book_epub_t *book, size_t index, const char *reference,
                               uint8_t **pixels, uint16_t *width, uint16_t *height);
+/// 按调用方像素预算缩放解码，供正文图文排版使用。/ Scale decoding to the caller's pixel budget for inline layout.
+esp_err_t book_epub_load_image_budget(book_epub_t *book, size_t index, const char *reference, size_t budget,
+                                     uint8_t **pixels, uint16_t *width, uint16_t *height);
 /// spine 原始 HTML 未压缩字节总量，不等于 EPUB 文件大小。/ Total uncompressed source HTML bytes in the spine, not EPUB file size.
 uint32_t book_epub_total_bytes(const book_epub_t *book);
 /// 该章之前所有 spine 原始 HTML 字节累计值。/ Sum of source HTML bytes preceding this chapter in the spine.

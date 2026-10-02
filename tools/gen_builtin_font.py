@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Scan UI strings and subset ChillDuanSans VF into main/assets/builtin.ttf."""
+"""生成界面与 GB2312 常用字库及压缩资源。/ Generate the UI/GB2312 font and compressed assets."""
 
 from __future__ import annotations
 
 import argparse
 import re
 import sys
+import struct
+import zlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -30,13 +32,25 @@ SCAN_DIRS = [
     ROOT / "components/read_pico_pmu",
 ]
 TEXT_SUFFIXES = {".md", ".txt"}
-# 阅读正文补齐后 VF 子集会超过旧的 400KB；标题还要 wght=700，不能实例化成 Regular。
-MAX_BYTES = 700 * 1024
+# 使用 Regular 实例和压缩资源，在原应用分区内补齐常用字。/ Use a packed Regular instance to fit common characters in the existing app partition.
+MAX_BYTES = 1600 * 1024
 STRING_RE = re.compile(r'"(?:\\.|[^"\\])*"')
 
 
 def ascii_printable() -> str:
     return "".join(chr(i) for i in range(0x20, 0x7F))
+
+
+def common_chinese() -> str:
+    # 覆盖 GB2312 全部字符，避免内置字库只认识界面文案。/ Cover all GB2312 characters, beyond UI literals.
+    chars = []
+    for lead in range(0xa1, 0xf8):
+        for trail in range(0xa1, 0xff):
+            try:
+                chars.append(bytes((lead, trail)).decode("gb2312"))
+            except UnicodeDecodeError:
+                pass
+    return "".join(chars)
 
 
 def load_preset(path: Path) -> str:
@@ -147,7 +161,34 @@ def subset_regular(src: Path, text: str, dest: Path) -> int:
         inst = instantiateVariableFont(vf, {"wght": 400}, inplace=False)
         vf.close()
         vf = inst
+    # 原字体缺少全角拉丁字母及 ǐ；补拉丁别名与真实组合字形，不映射到缺字方框。
+    # Fill absent fullwidth Latin aliases and compose a real i-caron glyph instead of a missing-glyph box.
+    cmap = vf.getBestCmap()
+    aliases = {cp: cmap[cp - 0xfee0] for cp in range(0xff01, 0xff5f)
+               if cp not in cmap and cp - 0xfee0 in cmap}
+    if 0x01d0 not in cmap:
+        from fontTools.pens.ttGlyphPen import TTGlyphPen
+        base, mark = cmap[0x0131], cmap[0x02c7]
+        glyf = vf["glyf"]
+        glyf[base].recalcBounds(glyf)
+        glyf[mark].recalcBounds(glyf)
+        b, m = glyf[base], glyf[mark]
+        pen = TTGlyphPen(vf.getGlyphSet())
+        pen.addComponent(base, (1, 0, 0, 1, 0, 0))
+        pen.addComponent(mark, (1, 0, 0, 1, (b.xMin + b.xMax - m.xMin - m.xMax) // 2,
+                                b.yMax + 30 - m.yMin))
+        order = vf.getGlyphOrder()
+        order.append("pico.icaron")
+        vf.setGlyphOrder(order)
+        glyf["pico.icaron"] = pen.glyph()
+        vf["hmtx"]["pico.icaron"] = vf["hmtx"][base]
+        aliases[0x01d0] = "pico.icaron"
+    for table in vf["cmap"].tables:
+        if table.isUnicode():
+            table.cmap.update(aliases)
     options = Options()
+    # stb_truetype 不执行 TTF hinting；删除指令节省固件空间。/ stb_truetype ignores TTF hinting; omit instructions to save flash.
+    options.hinting = False
     options.layout_features = ["*"]
     options.notdef_outline = True
     options.recommended_glyphs = True
@@ -182,20 +223,21 @@ def main() -> int:
         print(f"missing source font: {args.src}", file=sys.stderr)
         return 1
 
-    text = unique_text(ascii_printable(), load_preset(CHARSET), scan_sources())
+    text = unique_text(ascii_printable(), common_chinese(), load_preset(CHARSET), scan_sources())
     cjk = sum(1 for ch in text if "\u4e00" <= ch <= "\u9fff")
     print(f"charset {len(text)} chars ({cjk} CJK)")
 
-    size = subset_variable(args.src, text, args.out)
-    mode = "VF"
-    if size > MAX_BYTES:
-        print(f"VF subset {size} bytes > {MAX_BYTES}, instantiate wght=400")
-        size = subset_regular(args.src, text, args.out)
-        mode = "Regular"
-    print(f"wrote {args.out} ({size} bytes, {mode})")
-    if size > MAX_BYTES:
-        print("subset still too large", file=sys.stderr)
+    size = subset_regular(args.src, text, args.out)
+    data = args.out.read_bytes()
+    packed = b"RPFT" + struct.pack("<I", size) + zlib.compress(data, 9)
+    if len(packed) > MAX_BYTES:
+        print("compressed subset too large", file=sys.stderr)
         return 1
+    args.out.with_suffix(".pack").write_bytes(packed)
+    for name in ("lock_4bpp", "loading_4bpp"):
+        raw = (ROOT / f"main/assets/{name}.bin").read_bytes()
+        (ROOT / f"main/assets/{name}.pack").write_bytes(b"RPFT" + struct.pack("<I", len(raw)) + zlib.compress(raw, 9))
+    print(f"wrote {args.out} ({size} bytes, Regular); packed {len(packed)} bytes")
     return 0
 
 

@@ -10,7 +10,7 @@
 
 tinfl_status tinfl_decompress(tinfl_decompressor* state, const mz_uint8* input, size_t* in_size,
                               mz_uint8* output, mz_uint8* out_buf_mark, size_t* out_size, unsigned flags) {
-    (void)state; (void)flags; (void)out_buf_mark;
+    (void)state; (void)out_buf_mark;
     // 设备侧 zip_reader 只用“整段进、尽量出”的 one-shot 语义。
     // The device zip_reader uses whole-input, best-effort-output one-shot semantics only.
     z_stream stream = {0};
@@ -18,7 +18,7 @@ tinfl_status tinfl_decompress(tinfl_decompressor* state, const mz_uint8* input, 
     stream.avail_in = (uInt)*in_size;
     stream.next_out = output;
     stream.avail_out = (uInt)*out_size;
-    if (inflateInit(&stream) != Z_OK) return TINFL_STATUS_FAILED;
+    if (inflateInit2(&stream, flags & TINFL_FLAG_PARSE_ZLIB_HEADER ? MAX_WBITS : -MAX_WBITS) != Z_OK) return TINFL_STATUS_FAILED;
     int result = inflate(&stream, Z_FINISH);
     *in_size -= stream.avail_in;
     *out_size -= stream.avail_out;

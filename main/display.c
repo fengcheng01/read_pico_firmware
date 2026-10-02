@@ -99,6 +99,7 @@ static enum EpdDrawError hl_update(
 enum EpdDrawError update_display_mode(
     EpdiyHighlevelState* hl, enum EpdDrawMode mode
 ) {
+    if ((mode & 0xF) == MODE_GL16) return update_display_with(hl, &E0470_FULL_WAVEFORM, mode);
     use_scan_for(&E0470_WAVEFORM, mode);
     epd_poweron();
     enum EpdDrawError result = hl_update(hl, &E0470_WAVEFORM, mode, false, NULL);
@@ -153,6 +154,9 @@ enum EpdDrawError update_display_full(EpdiyHighlevelState* hl) {
 enum EpdDrawError update_display_with(
     EpdiyHighlevelState* hl, const EpdWaveform* waveform, enum EpdDrawMode mode
 ) {
+    // 日常直刷保留完整厂家灰阶序列；GC16 和实验波形仍按明确请求选择。
+    // Retain the complete vendor grayscale sequence for daily direct updates; honor explicit GC16/experimental choices.
+    if (waveform == &E0470_WAVEFORM && (mode & 0xF) == MODE_GL16) waveform = &E0470_FULL_WAVEFORM;
     use_scan_for(waveform, mode);
     epd_poweron();
     epd_hl_waveform(hl, waveform);
@@ -166,6 +170,7 @@ enum EpdDrawError update_display_area_with(
     EpdiyHighlevelState* hl, const EpdWaveform* waveform, enum EpdDrawMode mode,
     EpdRect area
 ) {
+    if (waveform == &E0470_WAVEFORM && (mode & 0xF) == MODE_GL16) waveform = &E0470_FULL_WAVEFORM;
     use_scan_for(waveform, mode);
     epd_poweron();
     epd_hl_waveform(hl, waveform);

@@ -59,6 +59,24 @@ esp_err_t book_chapter_load_image(size_t i, const char *reference, uint8_t **pix
     if (!s_epub) return ESP_ERR_NOT_SUPPORTED;
     return book_epub_load_image(s_epub, i, reference, pixels, width, height);
 }
+void book_chapter_load_inline_images(size_t chapter, html_text_t* text) {
+    if (!s_epub || !text || !text->blocks) return;
+    size_t images = 0;
+    for (size_t b = 0; b < text->count; ++b) if (text->blocks[b].image_src) ++images;
+    if (!images) return;
+    // 均分章节预算，图片多时降分辨率；原文偏移及资源引用保持不变。
+    // Share the chapter budget, lowering resolution for image-heavy chapters; retain text offsets and resource references.
+    size_t count = images > 64 ? 64 : images;
+    size_t budget = (768u * 1024u) / count;
+    for (size_t b = 0, tried = 0; b < text->count && tried < count; ++b) {
+        blk_t* block = &text->blocks[b];
+        if (!block->image_src) continue;
+        ++tried;
+        if (block->image) continue;
+        (void)book_epub_load_image_budget(s_epub, chapter, block->image_src, budget,
+                                         &block->image, &block->image_width, &block->image_height);
+    }
+}
 uint32_t book_total_bytes(void) { return s_epub ? book_epub_total_bytes(s_epub) : s_book.total; }
 uint32_t book_chapter_byte_offset(size_t i) {
     return s_epub ? book_epub_chapter_byte_offset(s_epub, i) : i < s_book.count ? s_book.entries[i].offset : 0;
