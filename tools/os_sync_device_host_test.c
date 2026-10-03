@@ -35,8 +35,13 @@ static void* run_task(void* arg) {((void(*)(void*))arg)(NULL);return NULL;}
 int xTaskCreate(void(*fn)(void*),const char* name,unsigned size,void* arg,int priority,void* handle) {(void)name;(void)size;(void)arg;(void)priority;(void)handle;return !pthread_create(&worker,NULL,run_task,(void*)fn);}
 void vTaskDelete(void* arg) {(void)arg;pthread_exit(NULL);}
 int64_t esp_timer_get_time(void) {struct timespec t;clock_gettime(CLOCK_MONOTONIC,&t);return (int64_t)t.tv_sec*1000000+t.tv_nsec/1000;}
+void os_time_force_poll(void) {}
+void os_time_poll(int64_t now) {(void)now;}
+void os_time_network(bool online) {(void)online;}
+int esp_http_client_get_errno(esp_http_client_handle_t c) {(void)c;return 0;}
+esp_err_t esp_http_client_get_and_clear_last_tls_error(esp_http_client_handle_t c,int* tls,int* flags) {(void)c;*tls=*flags=0;return ESP_OK;}
 void esp_crt_bundle_attach(void) {}
-esp_http_client_handle_t esp_http_client_init(const esp_http_client_config_t* cfg) {assert(!pthread_equal(ui,pthread_self()));assert(cfg->timeout_ms==5000 && atomic_load(&link_ready));++http_calls;received=0;return (void*)1;}
+esp_http_client_handle_t esp_http_client_init(const esp_http_client_config_t* cfg) {assert(!pthread_equal(ui,pthread_self()));assert(cfg->timeout_ms==15000 && atomic_load(&link_ready));++http_calls;received=0;return (void*)1;}
 esp_err_t esp_http_client_set_header(esp_http_client_handle_t c,const char* a,const char* b) {(void)c;(void)a;(void)b;return ESP_OK;}
 esp_err_t esp_http_client_open(esp_http_client_handle_t c,int size) {(void)c;(void)size;return ESP_OK;}
 int esp_http_client_write(esp_http_client_handle_t c,const char* text,int size) {(void)c;(void)text;return size>3?3:size;}

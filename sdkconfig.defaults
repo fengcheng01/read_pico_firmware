@@ -57,3 +57,7 @@ CONFIG_TINYUSB_MSC_ENABLED=y
 CONFIG_TINYUSB_MSC_BUFSIZE=4096
 CONFIG_TINYUSB_DESC_PRODUCT_STRING="Read Pico SD"
 CONFIG_TINYUSB_DESC_MANUFACTURER_STRING="mindreset"
+
+# 同步 TLS 握手使用 PSRAM，避免显示 DMA 常驻后内部连续堆不足。
+# TLS handshake allocations use PSRAM to avoid internal-heap pressure from display DMA.
+CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y

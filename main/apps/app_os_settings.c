@@ -11,6 +11,9 @@
 #include "os_device.h"
 #include "ui_product.h"
 #include "ui_gesture.h"
+#include <stdio.h>
+
+#include "firmware_version.h"
 
 static const struct { const char* title; const char* detail; os_app_id_t id; } items[] = {
     {"阅读与字体", "默认字号 · 正文字体 · 晃动实验", OS_APP_READING},
@@ -33,6 +36,12 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
         ui_text_vc(fb, r.x + r.width - 8, r.y + 36, 44, "›", EPD_DRAW_ALIGN_RIGHT, false);
         ui_hairline(fb, r.y + r.height, r.x, r.width, UI_GRAY_LIGHT);
     }
+    // 版本行：产品版本 + 编译日期，方便检查固件。/ Version line for firmware checks.
+    char version[96];
+    snprintf(version, sizeof(version), "固件 %s", firmware_version());
+    ui_text(fb, UI_MARGIN, 1046, 28, version, EPD_DRAW_ALIGN_LEFT, false);
+    snprintf(version, sizeof(version), "构建 %s UTC", firmware_build_time());
+    ui_text(fb, UI_MARGIN, 1080, 22, version, EPD_DRAW_ALIGN_LEFT, false);
     ui_product_root_bar(fb, OS_APP_SETTINGS);
 }
 static int hit(uint16_t x, uint16_t y) {
@@ -54,6 +63,6 @@ static app_redraw_t gesture(app_ctx_t* ctx, const ui_gesture_event_t* ev) {
     return APP_REDRAW_NONE;
 }
 const app_desc_t app_os_settings = {
-    .title = "设置", .detail = "阅读 · 连接 · 存储 · 诊断", .enter_full = false,
+    .title = "设置", .detail = "阅读 · 连接 · 存储 · 诊断", .enter_full = true,
     .render = render, .on_gesture = gesture,
 };

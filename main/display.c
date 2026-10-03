@@ -12,6 +12,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <string.h>
 
 #include "app_config.h"
 #include "e0470_epaper_waveform.h"
@@ -63,6 +64,16 @@ static void use_scan_for(const EpdWaveform* waveform, enum EpdDrawMode mode) {
 // Soft (DU/GL16) updates since the last GC16.
 static int s_soft_refreshes;
 
+// 单遍白基准刷新：back_fb 归白后一次 GL16 扫描，(15,15) 的白推 tick 顺带清底。
+// 真机验证过的 from_white 机制换 GL16 档；不压黑、不伪造参考帧、不双遍扫描。
+// Single-pass white-baseline update: reset back_fb to white, then one GL16 scan
+// whose (15,15) white-push tick also cleans the floor. The device-proven
+// from_white mechanism on the GL16 mode; no black flash, no fabricated
+// reference, no double scan.
+static enum EpdDrawError white_baseline_draw(EpdiyHighlevelState* hl, enum EpdDrawMode mode) {
+    return epd_hl_update_screen_from_white(hl, mode, 25);
+}
+
 // 灰阶页必须全像素；累计局部更新达到周期时清理整屏，防止其他区域残影保留。
 // Grayscale pages drive every pixel; accumulated partial updates clean the whole panel at the configured interval.
 // 跟随 DU 专用于跟手，不参与页级清理计数。/ FOLLOW DU is for live tracking and excluded from page cleanup counting.
@@ -78,18 +89,26 @@ static enum EpdDrawError hl_update(
             s_soft_refreshes = 0;
         } else if (every > 0 && (unsigned)++s_soft_refreshes >= every) {
             s_soft_refreshes = 0;
-            mode = (enum EpdDrawMode)((mode & ~0xF) | MODE_GC16);
+            mode = (enum EpdDrawMode)((mode & ~0xF) | MODE_GL16);
             epd_hl_waveform(hl, &E0470_FULL_WAVEFORM);
             use_scan_for(&E0470_FULL_WAVEFORM, mode);
             promoted = true;
             area = NULL;
             full = true;
-            ESP_LOGI(TAG, "promote to GC16 after %u soft refreshes", every);
+            ESP_LOGI(TAG, "white cleanup after %u soft refreshes", every);
         }
     }
     enum EpdDrawError result;
-    if (area != NULL) result = full ? epd_hl_update_area_full(hl, mode, 25, *area)
+    if (area != NULL && area->x == 0 && area->y == 0 &&
+        area->width == epd_width() && area->height == epd_height() &&
+        (mode & 0xF) == MODE_GL16) {
+        // 整屏面积的 GL16 与整页同路：白基准一遍出，直接差分留残影。
+        // Full-screen-area GL16 takes the page path: one white-baseline pass instead of a direct diff.
+        result = white_baseline_draw(hl, mode);
+    }
+    else if (area != NULL) result = full ? epd_hl_update_area_full(hl, mode, 25, *area)
                                    : epd_hl_update_area(hl, mode, 25, *area);
+    else if ((mode & 0xF) == MODE_GL16) result = white_baseline_draw(hl, mode);
     else result = full ? epd_hl_update_screen_full(hl, mode, 25) : epd_hl_update_screen(hl, mode, 25);
     if (promoted) epd_hl_waveform(hl, waveform);
     return result;
@@ -124,9 +143,27 @@ enum EpdDrawError update_display_from_white(EpdiyHighlevelState* hl) {
     return update_display_from_white_with(hl, &E0470_FULL_WAVEFORM, MODE_GC16);
 }
 
+enum EpdDrawError display_boot_white(EpdiyHighlevelState* hl) {
+    // 冷启动面板内容未知：物理清屏是唯一不依赖波形表差分的铺白方式（真机验证过），
+    // 软件前后缓冲同时归白，首帧内容与白基准做差分。
+    // At cold boot the panel state is unknown: the physical clear is the only
+    // whitener that needs no waveform diff (device-proven). Both software
+    // buffers go white so the first content frame diffs against white.
+    size_t bytes = (size_t)epd_width() * epd_height() / 2;
+    memset(hl->front_fb, 255, bytes);
+    memset(hl->back_fb, 255, bytes);
+    use_scan_for(&E0470_FULL_WAVEFORM, MODE_GC16);
+    epd_poweron();
+    epd_clear();
+    epd_hl_waveform(hl, &E0470_WAVEFORM);
+    s_soft_refreshes = 0;
+    rails_keepalive();
+    return EPD_DRAW_SUCCESS;
+}
+
 enum EpdDrawError update_display_white(EpdiyHighlevelState* hl) {
     epd_hl_set_all_white(hl);
-    return update_display_full(hl);
+    return update_display_mode(hl, MODE_GL16);
 }
 
 static bool s_white_exit;
@@ -188,9 +225,8 @@ void guard_draw_result(EpdiyHighlevelState* hl, enum EpdDrawError result) {
     read_pico_epd_set_pclk(DISPLAY_PCLK_SAFE_MHZ);
     use_scan_for(&E0470_WAVEFORM, MODE_GC16);
     epd_poweron();
-    epd_clear();
-    // 清物理屏后仅重置旧帧基准，保留目标页；否则局部刷新会留下整页白屏。
-    // Reset only the old-frame baseline after clearing; preserving the target prevents blank pages after partial updates.
+    // 欠载恢复回到验证过的白基准出口，保留目标页。/ Underrun recovery takes the
+    // proven white-baseline path while retaining the target page.
     epd_hl_waveform(hl, &E0470_FULL_WAVEFORM);
     epd_hl_update_screen_from_white(hl, MODE_GC16, 25);
     epd_hl_waveform(hl, &E0470_WAVEFORM);

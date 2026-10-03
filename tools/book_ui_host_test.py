@@ -145,7 +145,7 @@ static void invalidate_prep(void){}
 static shelf_entry_t s_managed;
 static bool s_delete_confirm,s_file_removed,s_clear_confirm;
 static char s_manage_message[128];
-typedef enum {SHELF,READING,TOC,LAYOUT,MANAGE,BULK,SEARCH} book_view_t;
+typedef enum {SHELF,READING,TOC,LAYOUT,TAP_ZONES,MANAGE,BULK,SEARCH} book_view_t;
 static book_view_t s_view,s_search_parent;
 #define UI_KEY_1 1
 #define UI_KEY_2 2

@@ -634,3 +634,6 @@ esp_err_t book_epub_load_image_budget(book_epub_t *book, size_t i, const char *r
 }
 uint32_t book_epub_total_bytes(const book_epub_t *book) { return book ? book->total : 0; }
 uint32_t book_epub_chapter_byte_offset(const book_epub_t *book, size_t i) { return book && i < book->count ? book->chapters[i].offset : 0; }
+
+void book_epub_suspend(book_epub_t* book) { if (book) zip_suspend(book->zip); }
+bool book_epub_resume(book_epub_t* book, const char* path) { return book && zip_resume(book->zip, path); }

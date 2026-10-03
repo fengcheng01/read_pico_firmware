@@ -99,7 +99,7 @@
 #define BOOK_TOOL_COUNT 6
 #define BOOK_TOOL_ROWS 2
 
-typedef enum { SHELF, READING, TOC, LAYOUT, MANAGE, BULK, SEARCH } book_view_t;
+typedef enum { SHELF, READING, TOC, LAYOUT, TAP_ZONES, MANAGE, BULK, SEARCH } book_view_t;
 typedef struct {
     char name[256];
     char path[BOOK_STORE_PATH_MAX];
@@ -199,6 +199,7 @@ static int s_next_count;
 
 static void render(app_ctx_t* ctx, uint8_t* fb);
 static void draw_layout_menu(uint8_t* fb);
+static void draw_tap_zones(uint8_t* fb);
 static app_redraw_t jump_to_bytes(app_ctx_t* ctx, uint32_t target);
 static void scan_shelf(app_ctx_t* ctx);
 static void free_book(void);
@@ -877,6 +878,7 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
     if (s_image_open) { draw_image(fb); unlock_draw(); return; }
     if (s_view == SEARCH) { draw_search(fb); unlock_draw(); return; }
     if (s_view == LAYOUT) { draw_layout_menu(fb); unlock_draw(); return; }
+    if (s_view == TAP_ZONES) { draw_tap_zones(fb); unlock_draw(); return; }
     if (s_view == TOC && s_text) { draw_toc(ctx, fb); unlock_draw(); return; }
     if (s_view == READING && s_text) {
         draw_reader(fb, s_page);
@@ -948,7 +950,7 @@ static bool present(app_ctx_t* ctx, app_redraw_t redraw) {
     bool prep = kick_prep();
     int64_t drawn = esp_timer_get_time();
     enum EpdDrawError err;
-    if (redraw == APP_REDRAW_FULL) err = update_display_full(ctx->hl);
+    if (redraw == APP_REDRAW_FULL) err = update_display_mode(ctx->hl, MODE_GL16);
     else if (redraw == APP_REDRAW_AREA) {
         err = update_display_area_with(ctx->hl, &E0470_WAVEFORM, s_mode, s_area);
     }
@@ -1048,7 +1050,7 @@ static void free_book(void) {
     s_ended = false;
 }
 static bool load_chapter(app_ctx_t* ctx, size_t chapter, size_t offset, bool last_page) {
-    loading_detail(ctx, "正在加载和排版…", "长章节需要更多时间，请稍候");
+    // 不为加载单独刷第二个中间页。/ Avoid a second intermediate loading refresh.
     html_text_t loaded = {0};
     esp_err_t err = book_chapter_load_blocks(chapter, &loaded);
     if (err != ESP_OK) {
@@ -1131,7 +1133,8 @@ static bool open_book(app_ctx_t* ctx, const char* path) {
         copy_text(s_message, sizeof(s_message), "内存不足，无法打开图书");
         return false;
     }
-    loading_detail(ctx, "正在解析图书…", "大书需要更多时间，请稍候");
+    if (!book_cached(path) && st.st_size > 1024 * 1024)
+        loading_detail(ctx, "正在解析图书…", "大书需要更多时间，请稍候");
     // 持绘制锁释放下一页缓存，降低解析峰值。/ Release the next-page buffer under the drawing lock to reduce parsing peaks.
     lock_draw(); free(s_next_fb); s_next_fb = NULL; unlock_draw();
     int64_t open_started = esp_timer_get_time();
@@ -1492,7 +1495,7 @@ static app_redraw_t resize_text(app_ctx_t* ctx, int dir) {
     app_settings_set_book_px(s_px);
     save_progress();
     s_size_settle_ms = ctx->now_ms + BOOK_SIZE_SETTLE_MS;
-    return paint_reading(ctx, MODE_DU);
+    return paint_reading(ctx, MODE_GL16);
 }
 static void goto_font(app_ctx_t* ctx) {
     const app_desc_t* app = app_by_id(OS_APP_FONTS);
@@ -1515,7 +1518,7 @@ static const char* layout_value(int row) {
         case 4: return app_settings_book_para() ? "加大" : "标准";
         case 5: return app_settings_book_guide() == 0 ? "关" : app_settings_book_guide() == 1 ? "实线" : "虚线";
         case 6: return app_settings_book_align() == 0 ? "左" : app_settings_book_align() == 1 ? "居中" : "两端";
-        case 7: return app_settings_book_tap() ? "开" : "关";
+        case 7: return app_settings_book_tap() ? "布局设置 ›" : "关 ›";
         case 8: return s_shake_enabled ? "开*" : "关*";
         case 9: return app_settings_book_night() ? "开" : "关";
         case 10: return app_settings_book_auto() == 0 ? "关" : app_settings_book_auto() == 1 ? "20 秒" :
@@ -1527,6 +1530,33 @@ static const char* layout_value(int row) {
 }
 // 档位循环：0/3/5/10/14/20/30。/ The gc tier cycle.
 static const uint8_t k_gc_steps[] = {0, 3, 5, 10, 14, 20, 30};
+static const char* tap_names[] = {"左右翻页", "右手阅读", "左手阅读", "上下翻页"};
+static EpdRect tap_choice_rect(int i) { return (EpdRect){UI_MARGIN, 590 + i * 100, ui_content_width(), 86}; }
+static void draw_tap_zones(uint8_t* fb) {
+    ui_product_header(fb, "点击分区", "选择布局，点击正文即可翻页");
+    unsigned layout = app_settings_book_tap_layout();
+    EpdRect demo = {194, 184, 296, 360};
+    for (int y = 0; y < demo.height; ++y) for (int x = 0; x < demo.width; ++x) {
+        int action = book_tap_action(layout, x, y, demo.width, demo.height);
+        epd_draw_pixel(demo.x + x, demo.y + y, action == 0 ? 255 : action < 0 ? 224 : 192, fb);
+    }
+    epd_draw_rect(demo, UI_GRAY_BLACK, fb);
+    ui_text_vc(fb, UI_LOCK_WIDTH / 2, 364, 28, "工具条", EPD_DRAW_ALIGN_CENTER, false);
+    if (layout == 3) {
+        ui_text_vc(fb, 342, 232, 26, "上页", EPD_DRAW_ALIGN_CENTER, false);
+        ui_text_vc(fb, 342, 494, 26, "下页", EPD_DRAW_ALIGN_CENTER, false);
+    } else {
+        ui_text_vc(fb, 230, 364, 24, layout == 2 ? "下页" : "上页", EPD_DRAW_ALIGN_CENTER, false);
+        ui_text_vc(fb, 454, 364, 24, layout == 2 ? "上页" : "下页", EPD_DRAW_ALIGN_CENTER, false);
+    }
+    for (int i = 0; i < 4; ++i) {
+        EpdRect r = tap_choice_rect(i);
+        ui_draw_button(fb, r, tap_names[i], i == (int)layout);
+    }
+    ui_draw_button(fb, (EpdRect){UI_MARGIN, 1000, ui_content_width(), 80}, app_settings_book_tap() ? "点击翻页：开启" : "点击翻页：关闭", app_settings_book_tap());
+    ui_draw_button(fb, ui_bar_rect(0, 2), "返回设置", false);
+    ui_draw_button(fb, ui_bar_rect(1, 2), "返回阅读", false);
+}
 static void draw_layout_menu(uint8_t* fb) {
     ui_clear_page(fb);
     ui_product_header(fb, "更多设置", "排版与翻页分组，调整保留阅读位置");
@@ -1547,7 +1577,7 @@ static void draw_layout_menu(uint8_t* fb) {
                          s_sync_note[0] ? s_sync_note : "操作时自动连接已保存 WiFi；下载后先确认，本地位置不会自动覆盖。", 28, 3);
     }
     static const char* labels[] = {"正文字体", "行距", "页边距", "首行缩进", "段落间距",
-                                   "行辅助线", "对齐方式", "点击翻页", "晃动翻页*", "夜间模式", "自动翻页", "清残影周期"};
+                                   "行辅助线", "对齐方式", "点击分区", "晃动翻页*", "夜间模式", "自动翻页", "清残影周期"};
     char gc_value[16] = {0};
     for (int i = 0; i < BOOK_LAYOUT_ROWS; ++i) {
         if (!layout_visible(i)) continue;
@@ -1642,7 +1672,7 @@ static app_redraw_t layout_action(app_ctx_t* ctx, uint16_t x, uint16_t y) {
                 app_settings_set_book_align((app_settings_book_align() + 1) % 3);
                 break;
             case 7:
-                app_settings_set_book_tap(!app_settings_book_tap());
+                s_view = TAP_ZONES;
                 break;
             case 8:
                 s_shake_enabled = !s_shake_enabled;
@@ -1844,10 +1874,19 @@ static app_redraw_t action_at(app_ctx_t* ctx, uint16_t x, uint16_t y) {
     if (s_view == LAYOUT) return layout_action(ctx, x, y);
     if (s_view == MANAGE) return manage_action(ctx, x, y);
     if (s_view == TOC && s_text) { app_redraw_t result = toc_action(ctx, x, y); if (result != APP_REDRAW_NONE) return result; }
+    if (s_view == TAP_ZONES) {
+        for (int i = 0; i < 4; ++i) if (ui_rect_hit(tap_choice_rect(i), x, y)) {
+            app_settings_set_book_tap_layout(i); app_settings_set_book_tap(true); return APP_REDRAW_PAGE;
+        }
+        if (ui_rect_hit((EpdRect){UI_MARGIN, 1000, ui_content_width(), 80}, x, y)) app_settings_set_book_tap(!app_settings_book_tap());
+        else if (ui_rect_hit(ui_bar_rect(0, 2), x, y)) s_view = LAYOUT;
+        else if (ui_rect_hit(ui_bar_rect(1, 2), x, y)) s_view = READING;
+        return APP_REDRAW_PAGE;
+    }
     if (s_view == SEARCH) {
         for (int i = 0; i < 45; ++i) if (ui_rect_hit(search_rect(i), x, y)) {
             app_redraw_t result = search_action(ctx, i);
-            if (result == APP_REDRAW_AREA) { render(ctx, ctx->fb); s_area = (EpdRect){UI_MARGIN, 190, ui_content_width(), 850}; s_mode = MODE_DU; }
+            if (result == APP_REDRAW_AREA) { render(ctx, ctx->fb); s_area = (EpdRect){UI_MARGIN, 190, ui_content_width(), 850}; s_mode = MODE_GL16; }
             return result;
         }
         return APP_REDRAW_NONE;
@@ -1888,9 +1927,9 @@ static app_redraw_t action_at(app_ctx_t* ctx, uint16_t x, uint16_t y) {
             unlock_draw();
             if (block != SIZE_MAX) return open_image(ctx, block);
         }
-        if (app_settings_book_tap()) {
-            if (x < UI_LOCK_WIDTH * 3 / 10) return turn_page(ctx, -1);
-            if (x >= UI_LOCK_WIDTH * 7 / 10) return turn_page(ctx, 1);
+        if (!s_toolbar && app_settings_book_tap()) {
+            int action = book_tap_action(app_settings_book_tap_layout(), x, y, UI_LOCK_WIDTH, UI_BAR_TOP);
+            if (action) return turn_page(ctx, action);
         }
         s_toolbar_sizes = false; s_toolbar = !s_toolbar;
         invalidate_prep();
@@ -2072,6 +2111,13 @@ static int control_at(app_ctx_t* ctx, uint16_t x, uint16_t y, EpdRect* rect) {
         }
         return -1;
     }
+    if (s_view == TAP_ZONES) {
+        for (int i = 0; i < 4; ++i) { *rect = tap_choice_rect(i); if (ui_rect_hit(*rect, x, y)) return 850 + i; }
+        *rect = (EpdRect){UI_MARGIN, 1000, ui_content_width(), 80};
+        if (ui_rect_hit(*rect, x, y)) return 854;
+        for (int i = 0; i < 2; ++i) { *rect = ui_bar_rect(i, 2); if (ui_rect_hit(*rect, x, y)) return 855 + i; }
+        return -1;
+    }
     if (s_view == SEARCH) {
         for (int i = 0; i < 45; ++i) { *rect = search_rect(i); if (ui_rect_hit(*rect, x, y)) return 500 + i; }
         return -1;
@@ -2189,7 +2235,7 @@ static int control_at(app_ctx_t* ctx, uint16_t x, uint16_t y, EpdRect* rect) {
 static app_redraw_t paint_control(app_ctx_t* ctx, EpdRect rect) {
     render(ctx, ctx->fb);
     s_area = rect;
-    s_mode = MODE_DU;
+    s_mode = MODE_GL16;
     return APP_REDRAW_AREA;
 }
 static app_redraw_t gesture_event(app_ctx_t* ctx, const ui_gesture_event_t* ev) {
@@ -2278,7 +2324,7 @@ static app_redraw_t on_key(app_ctx_t* ctx, int key) {
         else if (s_view == READING) {
             s_toolbar_sizes = false; s_toolbar = !s_toolbar;
             invalidate_prep();
-        } else if ((s_view == TOC || s_view == LAYOUT) && s_text) {
+        } else if ((s_view == TOC || s_view == LAYOUT || s_view == TAP_ZONES) && s_text) {
             os_sync_job_cancel();
             s_view = READING;
             s_toolbar = false;

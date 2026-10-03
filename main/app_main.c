@@ -14,6 +14,7 @@
 #include "app_loop.h"
 #include "app_registry.h"
 #include "display.h"
+#include "firmware_version.h"
 #include "epd_highlevel.h"
 #include "epdiy.h"
 #include "esp_log.h"
@@ -90,16 +91,17 @@ void app_main(void) {
     EpdiyHighlevelState hl = hw.hl;
     uint8_t* framebuffer = hw.framebuffer;
 
-    epd_poweron();
     read_pico_i2c_census_take();
-    epd_clear();
-    epd_hl_set_all_white(&hl);
-    if (!asset_pack_unpack(loading_4bpp_pack_start, (size_t)(loading_4bpp_pack_end - loading_4bpp_pack_start),
-                           framebuffer, (size_t)epd_width() * epd_height() / 2)) ui_clear_page(framebuffer);
-    update_display_from_white(&hl);
-
     if (usb_requested) ttf_font_open_builtin();
     else ttf_font_init();
+    guard_draw_result(&hl, display_boot_white(&hl));
+    // 开机图无条件展示（含设密码用户）：锁屏挑战前就能核对固件版本。
+    // Always show the splash (PIN users too): the version is checkable before the lock challenge.
+    if (!asset_pack_unpack(loading_4bpp_pack_start, (size_t)(loading_4bpp_pack_end - loading_4bpp_pack_start),
+                           framebuffer, (size_t)epd_width() * epd_height() / 2)) ui_clear_page(framebuffer);
+    ui_clear_rect_fast(framebuffer, (EpdRect){0, 1080, UI_LOCK_WIDTH, 80});
+    ui_text(framebuffer, UI_LOCK_WIDTH / 2, 1100, 28, firmware_version(), EPD_DRAW_ALIGN_CENTER, false);
+    guard_draw_result(&hl, update_display_mode(&hl, MODE_GL16));
 
     if (!hw.touch_ready) {
         ESP_LOGE(TAG, "No touch controller, UI cannot run");

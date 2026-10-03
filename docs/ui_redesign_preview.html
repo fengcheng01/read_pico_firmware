@@ -1,0 +1,2370 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>小纸 Pico (Read Pico) 4.7" 墨水屏固件 · 阅读手帐 UI/UE 设计方案</title>
+  <style>
+    :root {
+      /* 墨水屏 16 级灰阶物理色阶 (16 Gray Levels: 0x0 ~ 0xF) */
+      --ink-0: #050505;  /* 纯黑 / 最深黑 */
+      --ink-1: #181818;
+      --ink-2: #282828;
+      --ink-3: #3b3b3b;
+      --ink-4: #4e4e4e;
+      --ink-5: #616161;
+      --ink-6: #747474;
+      --ink-7: #878787;  /* 中灰 */
+      --ink-8: #9a9a9a;
+      --ink-9: #adadad;
+      --ink-a: #bfbfbf;
+      --ink-b: #cfcfcf;
+      --ink-c: #dfdfdf;
+      --ink-d: #ececec;
+      --ink-e: #f6f6f6;
+      --ink-f: #ffffff;  /* 纸白 */
+
+      /* 墨水屏手帐纸张质感与底色 */
+      --paper-bg: #f8f7f3;
+      --paper-surface: #ffffff;
+      --paper-card: #f2f1ed;
+      --paper-border: #222222;
+      --paper-border-subtle: #d0cecb;
+      --paper-shadow: rgba(0, 0, 0, 0.08);
+
+      --bezel-color: #212124;
+      --bezel-edge: #151517;
+      --bezel-silver: #555558;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-font-smoothing: antialiased;
+      user-select: none;
+    }
+
+    body {
+      background: #e9eaec;
+      color: #1a1a1a;
+      font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 24px 16px 48px;
+    }
+
+    /* 顶部控制栏与说明 */
+    .top-toolbar {
+      width: 100%;
+      max-width: 1120px;
+      background: #ffffff;
+      border-radius: 14px;
+      padding: 18px 24px;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.06);
+      margin-bottom: 24px;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .top-toolbar .title-group h1 {
+      font-size: 19px;
+      font-weight: 700;
+      color: #111;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .top-toolbar .title-group p {
+      font-size: 13px;
+      color: #666;
+      margin-top: 4px;
+    }
+
+    .toolbar-actions {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .btn-group {
+      display: inline-flex;
+      background: #f0f1f4;
+      padding: 3px;
+      border-radius: 9px;
+      border: 1px solid #e1e3e8;
+    }
+
+    .toolbar-btn {
+      background: transparent;
+      border: none;
+      padding: 6px 14px;
+      font-size: 13px;
+      font-weight: 500;
+      color: #444;
+      border-radius: 7px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .toolbar-btn:hover {
+      color: #000;
+    }
+
+    .toolbar-btn.active {
+      background: #ffffff;
+      color: #000;
+      font-weight: 600;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+    }
+
+    .btn-refresh {
+      background: #24292e;
+      color: #fff;
+      border: none;
+      padding: 7px 15px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: background 0.15s;
+    }
+
+    .btn-refresh:hover {
+      background: #000;
+    }
+
+    /* 主机机身仿真容器 (Device Bezel Simulator) */
+    .device-stage {
+      display: flex;
+      gap: 36px;
+      align-items: flex-start;
+      max-width: 1200px;
+      width: 100%;
+      justify-content: center;
+    }
+
+    .device-wrapper {
+      position: relative;
+      background: linear-gradient(145deg, #2c2d30, #18191b);
+      border-radius: 36px;
+      padding: 42px 26px 34px;
+      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35), 0 4px 12px rgba(0, 0, 0, 0.2);
+      border: 2px solid #38393d;
+      width: 446px; /* 逻辑比例 684:1216 缩放到 394px 宽屏 + 52px 边框 */
+    }
+
+    /* 顶部开关键 */
+    .device-power-btn {
+      position: absolute;
+      top: -6px;
+      right: 50px;
+      width: 44px;
+      height: 6px;
+      background: #444549;
+      border-radius: 3px 3px 0 0;
+      box-shadow: 0 -1px 2px rgba(0,0,0,0.5);
+    }
+
+    /* 机身上方听筒/麦孔与品牌标识 */
+    .device-header-deco {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0 8px 14px;
+    }
+
+    .device-brand {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 1.5px;
+      color: #6a6b70;
+      text-transform: uppercase;
+      font-family: -apple-system, sans-serif;
+    }
+
+    .device-indicator {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #38bdf8;
+      box-shadow: 0 0 6px rgba(56, 189, 248, 0.6);
+    }
+
+    /* 4.7 寸墨水屏显示区 (物理分辨率 1216 x 684，竖屏逻辑 684 x 1216) */
+    .epaper-screen {
+      position: relative;
+      width: 394px;
+      height: 700px; /* 按 684:1216 近似渲染比例 */
+      background: var(--paper-bg);
+      border-radius: 4px;
+      overflow: hidden;
+      box-shadow: inset 0 0 8px rgba(0, 0, 0, 0.12), inset 0 0 0 1px rgba(0,0,0,0.4);
+      display: flex;
+      flex-direction: column;
+      font-family: -apple-system, "Noto Serif CJK SC", "Source Han Serif SC", "Songti SC", serif;
+      position: relative;
+    }
+
+    /* 墨水屏纯净纸面（移除全屏微点噪点） */
+    .epaper-screen::before {
+      display: none;
+    }
+
+    /* 刷屏动画仿真层 (GC16 黑白擦除 / DU 差分快刷) */
+    .refresh-overlay {
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      pointer-events: none;
+      z-index: 1000;
+      opacity: 0;
+    }
+
+    .refresh-gc16 {
+      animation: anim-gc16 0.45s ease-in-out forwards;
+    }
+
+    .refresh-du {
+      animation: anim-du 0.12s ease-out forwards;
+    }
+
+    @keyframes anim-gc16 {
+      0% { opacity: 0; background: transparent; }
+      20% { opacity: 1; background: #000000; }
+      55% { opacity: 1; background: #ffffff; }
+      85% { opacity: 0.6; background: #ffffff; }
+      100% { opacity: 0; background: transparent; }
+    }
+
+    @keyframes anim-du {
+      0% { opacity: 0.25; filter: contrast(140%) invert(10%); }
+      50% { opacity: 0.15; filter: contrast(120%); }
+      100% { opacity: 0; }
+    }
+
+    /* 屏下三个电容触摸键 (KEY1 / KEY2 / KEY3) */
+    .device-bottom-keys {
+      display: flex;
+      justify-content: space-around;
+      align-items: center;
+      margin-top: 18px;
+      padding: 0 16px;
+    }
+
+    .touch-key {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      cursor: pointer;
+      padding: 4px 12px;
+      border-radius: 8px;
+      transition: background 0.15s;
+    }
+
+    .touch-key:hover {
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    .key-mark {
+      width: 22px;
+      height: 22px;
+      border: 1.5px solid #6b6c72;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #9a9ba2;
+      font-size: 11px;
+      font-weight: 700;
+      font-family: -apple-system, sans-serif;
+    }
+
+    .key-name {
+      font-size: 10px;
+      color: #72737a;
+      letter-spacing: 0.5px;
+      font-family: -apple-system, sans-serif;
+    }
+
+    /* 屏幕公用：顶部状态栏 (高度压到 28px，释放屏幕) */
+    .screen-status-bar {
+      height: 28px;
+      padding: 0 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--paper-border-subtle);
+      font-family: -apple-system, sans-serif;
+      font-size: 11px;
+      color: var(--ink-4);
+      background: var(--paper-surface);
+      z-index: 10;
+      flex-shrink: 0;
+    }
+
+    .status-left, .status-right {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .status-badge {
+      padding: 1px 5px;
+      border: 1px solid var(--ink-7);
+      border-radius: 3px;
+      font-size: 9px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      color: var(--ink-2);
+    }
+
+    /* 屏幕公用：底部四根产品导航栏 (高度 52px，现代极简图标+细线标签) */
+    .screen-bottom-nav {
+      height: 52px;
+      background: var(--paper-surface);
+      border-top: 1.5px solid var(--ink-0);
+      display: flex;
+      align-items: center;
+      justify-content: space-around;
+      padding: 0 6px;
+      z-index: 10;
+      flex-shrink: 0;
+      font-family: -apple-system, sans-serif;
+    }
+
+    .nav-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 2px;
+      flex: 1;
+      height: 100%;
+      cursor: pointer;
+      color: var(--ink-6);
+      transition: all 0.1s;
+      position: relative;
+    }
+
+    .nav-item svg {
+      width: 20px;
+      height: 20px;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 1.8;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .nav-item span {
+      font-size: 11px;
+      font-weight: 500;
+    }
+
+    .nav-item.active {
+      color: var(--ink-0);
+    }
+
+    .nav-item.active span {
+      font-weight: 700;
+    }
+
+    .nav-item.active::after {
+      content: "";
+      position: absolute;
+      bottom: 2px;
+      width: 20px;
+      height: 2.5px;
+      background: var(--ink-0);
+      border-radius: 2px;
+    }
+
+    /* 各页面主体容器 */
+    .screen-page-view {
+      flex: 1;
+      overflow-y: auto;
+      overflow-x: hidden;
+      display: none;
+      flex-direction: column;
+      position: relative;
+      background: var(--paper-bg);
+    }
+
+    .screen-page-view.active {
+      display: flex;
+    }
+
+    /* ========================================================
+       PAGE 1: 正在读 (Now Reading)
+       ======================================================== */
+    .home-hero-section {
+      padding: 14px 16px;
+      background: var(--paper-surface);
+      border-bottom: 1.5px solid var(--paper-border-subtle);
+    }
+
+    .home-hero-card {
+      display: flex;
+      gap: 14px;
+      background: var(--paper-surface);
+      border: 1.5px solid var(--ink-0);
+      border-radius: 8px;
+      padding: 12px;
+      box-shadow: 2px 3px 0 var(--ink-0);
+    }
+
+    .hero-cover {
+      width: 88px;
+      height: 124px;
+      background: var(--ink-1);
+      border-radius: 4px;
+      border: 1px solid var(--ink-0);
+      color: #fff;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 8px;
+      flex-shrink: 0;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .hero-cover::before {
+      content: "";
+      position: absolute;
+      left: 0; top: 0; bottom: 0;
+      width: 4px;
+      background: rgba(255, 255, 255, 0.2);
+      border-right: 1px solid rgba(0,0,0,0.3);
+    }
+
+    .hero-cover-title {
+      font-size: 13px;
+      font-weight: 700;
+      line-height: 1.3;
+      padding-left: 4px;
+    }
+
+    .hero-cover-author {
+      font-size: 9px;
+      color: #aaa;
+      padding-left: 4px;
+    }
+
+    .hero-info {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+
+    .hero-badge-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .hero-badge {
+      background: var(--ink-0);
+      color: #fff;
+      font-size: 9px;
+      font-weight: 700;
+      padding: 2px 5px;
+      border-radius: 3px;
+      font-family: -apple-system, sans-serif;
+    }
+
+    .hero-meta-time {
+      font-size: 11px;
+      color: var(--ink-5);
+      font-family: -apple-system, sans-serif;
+    }
+
+    .hero-book-title {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--ink-0);
+      line-height: 1.35;
+      margin-top: 2px;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .hero-progress-block {
+      margin-top: 6px;
+    }
+
+    .hero-progress-text {
+      display: flex;
+      justify-content: space-between;
+      font-size: 11px;
+      font-family: -apple-system, sans-serif;
+      color: var(--ink-3);
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+
+    .hero-progress-bar-bg {
+      width: 100%;
+      height: 6px;
+      background: var(--ink-d);
+      border-radius: 3px;
+      border: 1px solid var(--ink-9);
+      overflow: hidden;
+    }
+
+    .hero-progress-bar-fill {
+      width: 46%;
+      height: 100%;
+      background: var(--ink-0);
+    }
+
+    .hero-action-row {
+      display: flex;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .btn-hero-resume {
+      flex: 1;
+      background: var(--ink-0);
+      color: #fff;
+      border: 1px solid var(--ink-0);
+      padding: 6px 12px;
+      border-radius: 5px;
+      font-size: 13px;
+      font-weight: 700;
+      font-family: -apple-system, sans-serif;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+    }
+
+    .btn-hero-sync {
+      background: var(--paper-surface);
+      color: var(--ink-0);
+      border: 1px solid var(--ink-0);
+      padding: 6px 10px;
+      border-radius: 5px;
+      font-size: 12px;
+      font-weight: 600;
+      font-family: -apple-system, sans-serif;
+      cursor: pointer;
+    }
+
+    .home-stats-strip {
+      display: flex;
+      padding: 10px 16px;
+      gap: 8px;
+      background: var(--paper-bg);
+      border-bottom: 1px solid var(--paper-border-subtle);
+    }
+
+    .stat-chip {
+      flex: 1;
+      background: var(--paper-surface);
+      border: 1px solid var(--ink-b);
+      border-radius: 6px;
+      padding: 6px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .stat-chip-label {
+      font-size: 10px;
+      color: var(--ink-5);
+      font-family: -apple-system, sans-serif;
+    }
+
+    .stat-chip-val {
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--ink-0);
+      font-family: -apple-system, sans-serif;
+    }
+
+    .stat-chip-val span {
+      font-size: 10px;
+      font-weight: normal;
+      color: var(--ink-6);
+      margin-left: 2px;
+    }
+
+    .home-recent-section {
+      padding: 14px 16px 20px;
+      flex: 1;
+      background: var(--paper-bg);
+    }
+
+    .section-title-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+
+    .section-title {
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      color: var(--ink-1);
+      font-family: -apple-system, sans-serif;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .section-title::before {
+      content: "";
+      width: 3.5px;
+      height: 12px;
+      background: var(--ink-0);
+      border-radius: 2px;
+    }
+
+    .section-link {
+      font-size: 11px;
+      color: var(--ink-5);
+      font-family: -apple-system, sans-serif;
+      text-decoration: none;
+      cursor: pointer;
+    }
+
+    .recent-book-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .recent-book-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: var(--paper-surface);
+      border: 1px solid var(--paper-border-subtle);
+      border-radius: 6px;
+      padding: 8px 12px;
+      cursor: pointer;
+      transition: background 0.1s;
+    }
+
+    .recent-mini-cover {
+      width: 34px;
+      height: 48px;
+      background: var(--ink-3);
+      color: #fff;
+      border-radius: 3px;
+      font-size: 8px;
+      padding: 4px 2px;
+      text-align: center;
+      flex-shrink: 0;
+      border: 1px solid var(--ink-0);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: bold;
+    }
+
+    .recent-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .recent-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--ink-0);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .recent-meta {
+      font-size: 11px;
+      color: var(--ink-5);
+      font-family: -apple-system, sans-serif;
+      margin-top: 2px;
+    }
+
+    .recent-pct-badge {
+      font-size: 12px;
+      font-weight: 700;
+      font-family: -apple-system, sans-serif;
+      color: var(--ink-0);
+      background: var(--ink-d);
+      border: 1px solid var(--ink-b);
+      padding: 3px 7px;
+      border-radius: 4px;
+    }
+
+    /* ========================================================
+       PAGE 2: 书架 (Library) - 2x3 网格模式
+       ======================================================== */
+    .shelf-filter-bar {
+      padding: 8px 14px;
+      background: var(--paper-surface);
+      border-bottom: 1px solid var(--paper-border-subtle);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-family: -apple-system, sans-serif;
+    }
+
+    .shelf-tags {
+      display: flex;
+      gap: 6px;
+    }
+
+    .filter-tag {
+      font-size: 11px;
+      padding: 3px 8px;
+      border-radius: 12px;
+      border: 1px solid var(--ink-9);
+      background: var(--paper-surface);
+      color: var(--ink-3);
+      cursor: pointer;
+    }
+
+    .filter-tag.active {
+      background: var(--ink-0);
+      color: #fff;
+      border-color: var(--ink-0);
+      font-weight: 600;
+    }
+
+    .shelf-view-toggle {
+      display: flex;
+      border: 1px solid var(--ink-0);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    .view-btn {
+      padding: 3px 6px;
+      background: var(--paper-surface);
+      border: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      color: var(--ink-6);
+    }
+
+    .view-btn.active {
+      background: var(--ink-0);
+      color: #fff;
+    }
+
+    .view-btn svg {
+      width: 14px;
+      height: 14px;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 2;
+    }
+
+    .shelf-grid-container {
+      padding: 12px 14px;
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 12px 14px;
+      flex: 1;
+      background: var(--paper-bg);
+    }
+
+    .shelf-grid-card {
+      background: var(--paper-surface);
+      border: 1.5px solid var(--ink-0);
+      border-radius: 6px;
+      padding: 8px;
+      box-shadow: 2px 2px 0 var(--ink-0);
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      cursor: pointer;
+    }
+
+    .grid-cover-wrap {
+      width: 100%;
+      height: 104px;
+      background: var(--ink-2);
+      color: #fff;
+      border-radius: 4px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 8px;
+      position: relative;
+      border: 1px solid var(--ink-0);
+    }
+
+    .grid-cover-wrap.style-alt {
+      background: var(--ink-d);
+      color: var(--ink-0);
+      border: 1.5px dashed var(--ink-7);
+    }
+
+    .grid-cover-spine {
+      position: absolute;
+      left: 0; top: 0; bottom: 0;
+      width: 5px;
+      background: rgba(0,0,0,0.3);
+    }
+
+    .grid-cover-type {
+      font-size: 8px;
+      font-family: -apple-system, sans-serif;
+      font-weight: 700;
+      align-self: flex-end;
+      background: rgba(255,255,255,0.25);
+      color: #fff;
+      padding: 1px 4px;
+      border-radius: 2px;
+    }
+
+    .grid-cover-wrap.style-alt .grid-cover-type {
+      background: var(--ink-0);
+      color: #fff;
+    }
+
+    .grid-cover-title {
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 1.3;
+      padding-left: 4px;
+    }
+
+    .grid-book-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--ink-0);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      line-height: 1.3;
+    }
+
+    .grid-book-meta {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 10px;
+      color: var(--ink-5);
+      font-family: -apple-system, sans-serif;
+    }
+
+    .grid-progress-tag {
+      font-weight: 700;
+      color: var(--ink-1);
+    }
+
+    /* ========================================================
+       PAGE 3: 阅读正文与悬浮工具条 (Reader + HUD)
+       ======================================================== */
+    .reader-content-wrap {
+      flex: 1;
+      padding: 16px 20px 10px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      background: var(--paper-bg);
+      cursor: pointer;
+      position: relative;
+    }
+
+    .reader-header-line {
+      font-size: 10px;
+      color: var(--ink-6);
+      font-family: -apple-system, sans-serif;
+      display: flex;
+      justify-content: space-between;
+      padding-bottom: 6px;
+      border-bottom: 1px solid var(--paper-border-subtle);
+    }
+
+    .reader-article {
+      flex: 1;
+      padding-top: 12px;
+      font-size: 16px;
+      line-height: 1.75;
+      color: var(--ink-0);
+      text-align: justify;
+    }
+
+    .reader-article p {
+      text-indent: 2em;
+      margin-bottom: 12px;
+    }
+
+    .reader-footer-line {
+      font-size: 10px;
+      color: var(--ink-5);
+      font-family: -apple-system, sans-serif;
+      display: flex;
+      justify-content: space-between;
+      padding-top: 8px;
+      border-top: 1px solid var(--paper-border-subtle);
+    }
+
+    .reader-hud-top {
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      background: var(--paper-surface);
+      border-bottom: 1.5px solid var(--ink-0);
+      padding: 8px 14px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      z-index: 50;
+      box-shadow: 0 4px 10px var(--paper-shadow);
+      font-family: -apple-system, sans-serif;
+      transform: translateY(-100%);
+      transition: transform 0.2s ease-out;
+    }
+
+    .reader-hud-top.active {
+      transform: translateY(0);
+    }
+
+    .hud-title-box h3 {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--ink-0);
+    }
+
+    .hud-title-box p {
+      font-size: 10px;
+      color: var(--ink-6);
+    }
+
+    .hud-top-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    .hud-icon-btn {
+      width: 30px;
+      height: 30px;
+      border-radius: 4px;
+      border: 1px solid var(--ink-0);
+      background: var(--paper-surface);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      color: var(--ink-0);
+    }
+
+    .hud-icon-btn svg {
+      width: 16px;
+      height: 16px;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 2;
+    }
+
+    .reader-hud-bottom {
+      position: absolute;
+      bottom: 0; left: 0; right: 0;
+      background: var(--paper-surface);
+      border-top: 2px solid var(--ink-0);
+      padding: 12px 16px 14px;
+      z-index: 50;
+      box-shadow: 0 -4px 12px var(--paper-shadow);
+      transform: translateY(100%);
+      transition: transform 0.2s ease-out;
+      font-family: -apple-system, sans-serif;
+    }
+
+    .reader-hud-bottom.active {
+      transform: translateY(0);
+    }
+
+    .hud-progress-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .hud-slider {
+      flex: 1;
+      height: 4px;
+      background: var(--ink-b);
+      border-radius: 2px;
+      position: relative;
+    }
+
+    .hud-slider-fill {
+      width: 42%;
+      height: 100%;
+      background: var(--ink-0);
+      border-radius: 2px;
+    }
+
+    .hud-slider-thumb {
+      position: absolute;
+      left: 42%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      width: 14px;
+      height: 14px;
+      background: var(--ink-0);
+      border: 2px solid #fff;
+      border-radius: 50%;
+      box-shadow: 0 0 2px rgba(0,0,0,0.5);
+    }
+
+    .hud-progress-label {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--ink-1);
+      width: 36px;
+      text-align: right;
+    }
+
+    .hud-grid-tools {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+    }
+
+    .hud-tool-card {
+      background: var(--paper-surface);
+      border: 1px solid var(--ink-0);
+      border-radius: 6px;
+      padding: 6px 4px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      cursor: pointer;
+    }
+
+    .hud-tool-card svg {
+      width: 18px;
+      height: 18px;
+      stroke: var(--ink-0);
+      fill: none;
+      stroke-width: 1.8;
+    }
+
+    .hud-tool-card span {
+      font-size: 10px;
+      font-weight: 600;
+      color: var(--ink-0);
+    }
+
+    /* ========================================================
+       PAGE 4: 阅读手帐 (Reading Journal & Statistics)
+       ======================================================== */
+    /* 手帐纯净纸质背景（移除所有网格黑点，保持高对比度纸感） */
+    .journal-container {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      background-color: var(--paper-bg);
+      padding: 14px 14px 24px;
+      gap: 14px;
+      overflow-y: auto;
+    }
+
+    /* 手帐顶部印章头 (Vintage Date Stamp & Notebook Header) */
+    .journal-header {
+      background: var(--paper-surface);
+      border: 1.5px solid var(--ink-0);
+      border-radius: 8px;
+      padding: 10px 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      box-shadow: 2px 2px 0 var(--ink-0);
+      position: relative;
+    }
+
+    .journal-title-group {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .journal-title-group h2 {
+      font-size: 15px;
+      font-weight: 800;
+      color: var(--ink-0);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      letter-spacing: 0.5px;
+    }
+
+    .journal-subtitle {
+      font-size: 10px;
+      color: var(--ink-5);
+      font-family: -apple-system, sans-serif;
+    }
+
+    /* 手帐日历盖章效果 (Ink Stamp Seal) */
+    .journal-stamp {
+      border: 1.5px dashed var(--ink-0);
+      border-radius: 6px;
+      padding: 3px 8px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      background: var(--paper-surface);
+      transform: rotate(-2deg);
+    }
+
+    .stamp-text {
+      font-size: 9px;
+      font-weight: 800;
+      color: var(--ink-0);
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      font-family: -apple-system, sans-serif;
+    }
+
+    .stamp-val {
+      font-size: 13px;
+      font-weight: 800;
+      color: var(--ink-0);
+      font-family: -apple-system, sans-serif;
+    }
+
+    /* 手帐子模块切换胶囊 (Sub-mode tabs: 统计流水 / 打卡历 / 书摘) */
+    .journal-subnav {
+      display: flex;
+      background: var(--paper-surface);
+      border: 1.5px solid var(--ink-0);
+      border-radius: 6px;
+      overflow: hidden;
+      font-family: -apple-system, sans-serif;
+      box-shadow: 2px 2px 0 var(--ink-0);
+      flex-shrink: 0;
+      margin-bottom: 2px;
+    }
+
+    .subnav-btn {
+      flex: 1;
+      padding: 8px 6px;
+      text-align: center;
+      font-size: 12px;
+      line-height: 1.3;
+      font-weight: 600;
+      background: var(--paper-surface);
+      color: var(--ink-4);
+      border: none;
+      cursor: pointer;
+      border-right: 1.5px solid var(--ink-0);
+      transition: all 0.1s;
+    }
+
+    .subnav-btn:last-child {
+      border-right: none;
+    }
+
+    .subnav-btn.active {
+      background: var(--ink-0);
+      color: #fff;
+      font-weight: 700;
+    }
+
+    /* 模块1：今日手记概览卡 (Reading Stats Card) */
+    .journal-card {
+      background: var(--paper-surface);
+      border: 1.5px solid var(--ink-0);
+      border-radius: 8px;
+      padding: 14px;
+      box-shadow: 2px 2px 0 var(--ink-0);
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      position: relative;
+    }
+
+    .card-head-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid var(--paper-border-subtle);
+      padding-bottom: 8px;
+      margin-bottom: 2px;
+    }
+
+    .card-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--ink-0);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      line-height: 1.3;
+    }
+
+    .card-meta-tag {
+      font-size: 10px;
+      font-weight: 600;
+      color: var(--ink-5);
+      font-family: -apple-system, sans-serif;
+    }
+
+    /* 统计大指标网格 (4 格仪表盘) */
+    .stats-matrix-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 8px;
+    }
+
+    .stat-matrix-cell {
+      background: var(--paper-card);
+      border: 1px solid var(--ink-c);
+      border-radius: 6px;
+      padding: 8px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .stat-cell-num {
+      font-size: 20px;
+      font-weight: 800;
+      color: var(--ink-0);
+      font-family: -apple-system, sans-serif;
+      line-height: 1.1;
+    }
+
+    .stat-cell-num span {
+      font-size: 11px;
+      font-weight: normal;
+      color: var(--ink-5);
+      margin-left: 2px;
+    }
+
+    .stat-cell-label {
+      font-size: 10px;
+      color: var(--ink-5);
+      font-family: -apple-system, sans-serif;
+    }
+
+    /* 7 日极简手帐柱状图 */
+    .journal-chart-wrap {
+      margin-top: 4px;
+      padding-top: 8px;
+      border-top: 1px dashed var(--ink-c);
+    }
+
+    .journal-chart-title {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--ink-4);
+      margin-bottom: 6px;
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .bar-chart-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      height: 48px;
+      padding: 0 4px;
+    }
+
+    .chart-col {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      flex: 1;
+    }
+
+    .chart-bar-pillar {
+      width: 14px;
+      background: var(--ink-a);
+      border-radius: 2px 2px 0 0;
+      border: 1px solid var(--ink-0);
+    }
+
+    .chart-bar-pillar.today-bar {
+      background: var(--ink-0);
+    }
+
+    .chart-day-label {
+      font-size: 9px;
+      color: var(--ink-6);
+      font-family: -apple-system, sans-serif;
+    }
+
+    /* 模块2：阅读足迹流水账时间线 (Today's Reading Sessions Timeline) */
+    .journal-timeline {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 2px;
+    }
+
+    .timeline-item {
+      display: flex;
+      gap: 10px;
+      align-items: flex-start;
+      position: relative;
+      padding-left: 14px;
+    }
+
+    .timeline-item::before {
+      content: "";
+      position: absolute;
+      left: 3px;
+      top: 5px;
+      bottom: -10px;
+      width: 1.5px;
+      background: var(--ink-c);
+    }
+
+    .timeline-item:last-child::before {
+      display: none;
+    }
+
+    .timeline-dot {
+      position: absolute;
+      left: 0;
+      top: 4px;
+      width: 7px;
+      height: 7px;
+      background: var(--ink-0);
+      border-radius: 50%;
+    }
+
+    .timeline-content {
+      flex: 1;
+      background: var(--paper-card);
+      border: 1px solid var(--ink-c);
+      border-radius: 6px;
+      padding: 6px 10px;
+    }
+
+    .timeline-head {
+      display: flex;
+      justify-content: space-between;
+      font-size: 11px;
+      font-family: -apple-system, sans-serif;
+    }
+
+    .timeline-time {
+      font-weight: 700;
+      color: var(--ink-1);
+    }
+
+    .timeline-duration {
+      color: var(--ink-5);
+    }
+
+    .timeline-book {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--ink-0);
+      margin-top: 2px;
+    }
+
+    .timeline-detail {
+      font-size: 10px;
+      color: var(--ink-5);
+      margin-top: 1px;
+    }
+
+    /* 模块3：月度习惯打卡盖章矩阵 (Monthly Stamp Grid) */
+    .stamp-month-grid {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 4px;
+      margin-top: 4px;
+    }
+
+    .stamp-weekday {
+      font-size: 9px;
+      font-weight: 700;
+      color: var(--ink-5);
+      text-align: center;
+      padding-bottom: 2px;
+    }
+
+    .stamp-day-cell {
+      height: 28px;
+      border: 1px dashed var(--ink-b);
+      border-radius: 4px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      font-family: -apple-system, sans-serif;
+      color: var(--ink-5);
+      background: var(--paper-surface);
+      position: relative;
+    }
+
+    .stamp-day-cell.stamped {
+      border: 1px solid var(--ink-0);
+      background: var(--ink-0);
+      color: #ffffff;
+      font-weight: 700;
+    }
+
+    .stamp-day-cell.today-cell {
+      border: 1.5px solid var(--ink-0);
+      box-shadow: 0 0 0 1px var(--ink-0);
+      font-weight: 800;
+      color: var(--ink-0);
+    }
+
+    .stamp-day-cell.today-cell.stamped {
+      color: #ffffff;
+    }
+
+    /* 模块4：便签风金句摘抄 (Sticky Excerpt Card) */
+    .quote-sticky-note {
+      background: #faf9f5;
+      border: 1px solid var(--ink-9);
+      border-radius: 4px;
+      padding: 10px 12px 10px 14px;
+      font-size: 12px;
+      line-height: 1.6;
+      color: var(--ink-1);
+      border-left: 3.5px solid var(--ink-0);
+      position: relative;
+      box-shadow: 1px 2px 0 var(--ink-c);
+    }
+
+    .quote-source {
+      font-size: 10px;
+      color: var(--ink-5);
+      text-align: right;
+      margin-top: 4px;
+      font-family: -apple-system, sans-serif;
+    }
+
+    /* ========================================================
+       PAGE 5: 设置 (Settings)
+       ======================================================== */
+    .settings-list-wrap {
+      padding: 12px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      flex: 1;
+      font-family: -apple-system, sans-serif;
+    }
+
+    .setting-group-box {
+      background: var(--paper-surface);
+      border: 1.5px solid var(--ink-0);
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 2px 2px 0 var(--ink-0);
+    }
+
+    .setting-group-title {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--ink-5);
+      background: var(--ink-e);
+      padding: 6px 12px;
+      border-bottom: 1px solid var(--ink-d);
+      letter-spacing: 0.5px;
+    }
+
+    .setting-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 11px 12px;
+      border-bottom: 1px solid var(--ink-e);
+      cursor: pointer;
+    }
+
+    .setting-row:last-child {
+      border-bottom: none;
+    }
+
+    .setting-label {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--ink-1);
+    }
+
+    .setting-desc {
+      font-size: 10px;
+      color: var(--ink-6);
+      margin-top: 2px;
+    }
+
+    .setting-right-val {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 12px;
+      color: var(--ink-5);
+    }
+
+    .setting-pill {
+      background: var(--ink-0);
+      color: #fff;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+
+    /* 右侧对比与技术分析侧栏 */
+    .analysis-panel {
+      width: 440px;
+      background: #ffffff;
+      border-radius: 18px;
+      padding: 24px;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.06);
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+
+    .analysis-panel h2 {
+      font-size: 17px;
+      font-weight: 700;
+      color: #111;
+      border-bottom: 2px solid #222;
+      padding-bottom: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .analysis-section {
+      background: #f8f9fa;
+      border: 1px solid #e9ecef;
+      border-radius: 10px;
+      padding: 14px;
+    }
+
+    .analysis-section h3 {
+      font-size: 13px;
+      font-weight: 700;
+      color: #24292e;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .analysis-section ul {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .analysis-section li {
+      font-size: 12px;
+      line-height: 1.5;
+      color: #4b5563;
+      padding-left: 14px;
+      position: relative;
+    }
+
+    .analysis-section li::before {
+      content: "•";
+      position: absolute;
+      left: 0;
+      color: #111;
+      font-weight: bold;
+    }
+
+    .badge-diff {
+      display: inline-block;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 1px 5px;
+      border-radius: 3px;
+      margin-right: 4px;
+    }
+
+    .diff-old { background: #fee2e2; color: #991b1b; }
+    .diff-new { background: #dcfce7; color: #166534; }
+
+    .code-chip {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 11px;
+      background: #f1f3f5;
+      padding: 2px 4px;
+      border-radius: 3px;
+      color: #d63384;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- 顶部交互控制栏 -->
+  <header class="top-toolbar">
+    <div class="title-group">
+      <h1>小纸 Pico ·「手帐」与阅读统计 UI/UE 新版设计稿</h1>
+      <p>面向 684×1216 物理规格，深度契合墨水屏纸质美学与固件 NVS 数据模型</p>
+    </div>
+    <div class="toolbar-actions">
+      <div class="btn-group">
+        <button class="toolbar-btn" onclick="switchPage('home')">正在读</button>
+        <button class="toolbar-btn" onclick="switchPage('shelf')">书架</button>
+        <button class="toolbar-btn" onclick="switchPage('reader')">正文阅读</button>
+        <button class="toolbar-btn active" onclick="switchPage('journal')">📖 阅读手帐</button>
+        <button class="toolbar-btn" onclick="switchPage('settings')">设置</button>
+      </div>
+      <button class="btn-refresh" onclick="triggerRefresh('gc16')">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/></svg>
+        模拟 GC16 全刷
+      </button>
+      <button class="btn-refresh" style="background:#555;" onclick="triggerRefresh('du')">
+        模拟 DU 快刷
+      </button>
+    </div>
+  </header>
+
+  <main class="device-stage">
+    <!-- 实体机身仿真器 -->
+    <div class="device-wrapper">
+      <div class="device-power-btn" title="电源键 (短按锁屏)"></div>
+      
+      <div class="device-header-deco">
+        <span class="device-brand">Read Pico · 4.7"</span>
+        <div class="device-indicator" title="PMU 状态指示灯"></div>
+      </div>
+
+      <!-- 墨水屏可视区域 (684 x 1216 逻辑比例) -->
+      <div class="epaper-screen" id="ePaperScreen">
+        <!-- 刷屏特效层 -->
+        <div class="refresh-overlay" id="refreshOverlay"></div>
+
+        <!-- 顶部全局轻量状态栏 (仅 28px 高度) -->
+        <div class="screen-status-bar">
+          <div class="status-left">
+            <span style="font-weight: 700; color: var(--ink-1);">小纸 Pico</span>
+            <span class="status-badge" id="sourceBadge">TF 卡</span>
+          </div>
+          <div class="status-right">
+            <span>10:24</span>
+            <span>·</span>
+            <span>88%</span>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12.55a11 11 0 0 1 14.08 0M1.42 9a16 16 0 0 1 21.16 0M8.53 16.11a6 6 0 0 1 6.95 0M12 20h.01"/></svg>
+          </div>
+        </div>
+
+        <!-- ================= PAGE 1: 正在读 (Home) ================= -->
+        <div class="screen-page-view" id="view-home">
+          <div class="home-hero-section">
+            <div class="home-hero-card">
+              <div class="hero-cover">
+                <span class="hero-cover-type" style="align-self: flex-start; font-size: 8px; border: 1px solid rgba(255,255,255,0.4); padding: 1px 3px;">EPUB</span>
+                <div class="hero-cover-title">月亮与六便士</div>
+                <div class="hero-cover-author">[英] 毛姆</div>
+              </div>
+              <div class="hero-info">
+                <div>
+                  <div class="hero-badge-row">
+                    <span class="hero-badge">正在读</span>
+                    <span class="hero-meta-time">今天读了 28 分钟</span>
+                  </div>
+                  <h2 class="hero-book-title">第十一章 · 巴黎的街头与画室</h2>
+                </div>
+                
+                <div class="hero-progress-block">
+                  <div class="hero-progress-text">
+                    <span>第 142 / 310 页</span>
+                    <span>已读 46%</span>
+                  </div>
+                  <div class="hero-progress-bar-bg">
+                    <div class="hero-progress-bar-fill" style="width: 46%;"></div>
+                  </div>
+                </div>
+
+                <div class="hero-action-row">
+                  <button class="btn-hero-resume" onclick="switchPage('reader')">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+                    继续阅读
+                  </button>
+                  <button class="btn-hero-sync" title="kosync 进度同步">同步</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="home-stats-strip">
+            <div class="stat-chip">
+              <span class="stat-chip-label">今日阅读</span>
+              <span class="stat-chip-val">48 <span>分钟</span></span>
+            </div>
+            <div class="stat-chip">
+              <span class="stat-chip-label">连续打卡</span>
+              <span class="stat-chip-val">18 <span>天</span></span>
+            </div>
+            <div class="stat-chip">
+              <span class="stat-chip-label">在本书架</span>
+              <span class="stat-chip-val">18 <span>本</span></span>
+            </div>
+          </div>
+
+          <div class="home-recent-section">
+            <div class="section-title-row">
+              <div class="section-title">最近阅读</div>
+              <span class="section-link" onclick="switchPage('shelf')">全部图书 →</span>
+            </div>
+
+            <div class="recent-book-list">
+              <div class="recent-book-row" onclick="switchPage('reader')">
+                <div class="recent-mini-cover">三体</div>
+                <div class="recent-info">
+                  <div class="recent-title">三体全集（精排修正版）</div>
+                  <div class="recent-meta">刘慈欣 · TXT · 昨天阅读</div>
+                </div>
+                <div class="recent-pct-badge">82%</div>
+              </div>
+
+              <div class="recent-book-row" onclick="switchPage('reader')">
+                <div class="recent-mini-cover" style="background:#555;">人间</div>
+                <div class="recent-info">
+                  <div class="recent-title">人间失格</div>
+                  <div class="recent-meta">太宰治 · EPUB · 3天前</div>
+                </div>
+                <div class="recent-pct-badge">100%</div>
+              </div>
+
+              <div class="recent-book-row" onclick="switchPage('reader')">
+                <div class="recent-mini-cover" style="background:#777;">史记</div>
+                <div class="recent-info">
+                  <div class="recent-title">史记百篇精读选集</div>
+                  <div class="recent-meta">司马迁 · EPUB · 上周</div>
+                </div>
+                <div class="recent-pct-badge">15%</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ================= PAGE 2: 书架 (Library) ================= -->
+        <div class="screen-page-view" id="view-shelf">
+          <div class="shelf-filter-bar">
+            <div class="shelf-tags">
+              <button class="filter-tag active">全部 (18)</button>
+              <button class="filter-tag">EPUB (12)</button>
+              <button class="filter-tag">TXT (6)</button>
+            </div>
+            <div class="shelf-view-toggle">
+              <button class="view-btn active" title="网格封面模式" id="btnGrid">
+                <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+              </button>
+              <button class="view-btn" title="紧凑列表模式" id="btnList">
+                <svg viewBox="0 0 24 24"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+              </button>
+            </div>
+          </div>
+
+          <div class="shelf-grid-container">
+            <div class="shelf-grid-card" onclick="switchPage('reader')">
+              <div class="grid-cover-wrap">
+                <div class="grid-cover-spine"></div>
+                <span class="grid-cover-type">EPUB</span>
+                <div class="grid-cover-title">月亮与六便士</div>
+              </div>
+              <div class="grid-book-title">月亮与六便士</div>
+              <div class="grid-book-meta">
+                <span>1.4 MB</span>
+                <span class="grid-progress-tag">46%</span>
+              </div>
+            </div>
+
+            <div class="shelf-grid-card" onclick="switchPage('reader')">
+              <div class="grid-cover-wrap style-alt">
+                <div class="grid-cover-spine"></div>
+                <span class="grid-cover-type">TXT</span>
+                <div class="grid-cover-title">三体全集</div>
+              </div>
+              <div class="grid-book-title">三体全集</div>
+              <div class="grid-book-meta">
+                <span>3.2 MB</span>
+                <span class="grid-progress-tag">82%</span>
+              </div>
+            </div>
+
+            <div class="shelf-grid-card" onclick="switchPage('reader')">
+              <div class="grid-cover-wrap" style="background: #333;">
+                <div class="grid-cover-spine"></div>
+                <span class="grid-cover-type">EPUB</span>
+                <div class="grid-cover-title">人间失格</div>
+              </div>
+              <div class="grid-book-title">人间失格</div>
+              <div class="grid-book-meta">
+                <span>680 KB</span>
+                <span class="grid-progress-tag">已读完</span>
+              </div>
+            </div>
+
+            <div class="shelf-grid-card" onclick="switchPage('reader')">
+              <div class="grid-cover-wrap style-alt">
+                <div class="grid-cover-spine"></div>
+                <span class="grid-cover-type">EPUB</span>
+                <div class="grid-cover-title">史记精选</div>
+              </div>
+              <div class="grid-book-title">史记百篇精读</div>
+              <div class="grid-book-meta">
+                <span>4.8 MB</span>
+                <span class="grid-progress-tag">15%</span>
+              </div>
+            </div>
+
+            <div class="shelf-grid-card" onclick="switchPage('reader')">
+              <div class="grid-cover-wrap" style="background: #4a4a4a;">
+                <div class="grid-cover-spine"></div>
+                <span class="grid-cover-type">EPUB</span>
+                <div class="grid-cover-title">百年孤独</div>
+              </div>
+              <div class="grid-book-title">百年孤独</div>
+              <div class="grid-book-meta">
+                <span>2.1 MB</span>
+                <span class="grid-progress-tag">未读</span>
+              </div>
+            </div>
+
+            <div class="shelf-grid-card" onclick="switchPage('reader')">
+              <div class="grid-cover-wrap style-alt">
+                <div class="grid-cover-spine"></div>
+                <span class="grid-cover-type">TXT</span>
+                <div class="grid-cover-title">瓦尔登湖</div>
+              </div>
+              <div class="grid-book-title">瓦尔登湖（全译本）</div>
+              <div class="grid-book-meta">
+                <span>890 KB</span>
+                <span class="grid-progress-tag">5%</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ================= PAGE 3: 正文阅读 (Reader & HUD) ================= -->
+        <div class="screen-page-view" id="view-reader" style="background:#fdfdfc;">
+          <div class="reader-hud-top" id="readerHudTop">
+            <div class="hud-title-box">
+              <h3>月亮与六便士</h3>
+              <p>第十一章 · 巴黎的街头与画室</p>
+            </div>
+            <div class="hud-top-actions">
+              <button class="hud-icon-btn" title="加入书签">
+                <svg viewBox="0 0 24 24"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+              </button>
+              <button class="hud-icon-btn" onclick="switchPage('shelf')" title="返回书架">
+                <svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+              </button>
+            </div>
+          </div>
+
+          <div class="reader-content-wrap" onclick="toggleHud()">
+            <div class="reader-header-line">
+              <span>第十一章 · 巴黎的街头与画室</span>
+              <span>月亮与六便士</span>
+            </div>
+
+            <article class="reader-article">
+              <p>在巴黎那段日子里，思特里克兰德过着一种真正纯粹的生活。他完全不在乎别人对他的看法，甚至不在乎自己的肉体是否舒适。</p>
+              <p>他的画室在一个阴暗潮湿的窄巷顶楼，屋里只有一张帆布床、一把折叠椅和一个简易画架。墙上胡乱涂抹着令人不安的鲜艳色彩。</p>
+              <p>“我必须画画，”他曾对我这样咆哮道，眼里闪烁着狂热而冷酷的光芒，“我身不由己。一个人掉进水里，他游泳游得好不好并不重要，他非挣扎着游出来不可，否则就会淹死。”</p>
+              <p>艺术就像一种附着在他身上的魔鬼，无情地剥夺了他作为凡人的一切温情与体面，只留下创造的狂暴本能。</p>
+            </article>
+
+            <div class="reader-footer-line">
+              <span>10:24 · 88%</span>
+              <span>第 142 / 310 页 (46%)</span>
+            </div>
+          </div>
+
+          <div class="reader-hud-bottom" id="readerHudBottom">
+            <div class="hud-progress-row">
+              <span style="font-size:11px; color:var(--ink-5);">141</span>
+              <div class="hud-slider">
+                <div class="hud-slider-fill"></div>
+                <div class="hud-slider-thumb"></div>
+              </div>
+              <span class="hud-progress-label">46%</span>
+            </div>
+
+            <div class="hud-grid-tools">
+              <div class="hud-tool-card">
+                <svg viewBox="0 0 24 24"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+                <span>目录/书签</span>
+              </div>
+              <div class="hud-tool-card">
+                <svg viewBox="0 0 24 24"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>
+                <span>排版字号</span>
+              </div>
+              <div class="hud-tool-card" onclick="triggerRefresh('gc16')">
+                <svg viewBox="0 0 24 24"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/></svg>
+                <span>消除残影</span>
+              </div>
+              <div class="hud-tool-card" onclick="switchPage('settings')">
+                <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                <span>阅读设置</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ================= PAGE 4: 阅读手帐 (Journal & Reading Statistics) ================= -->
+        <div class="screen-page-view active" id="view-journal">
+          <div class="journal-container">
+            
+            <!-- 手帐头部复古日期印章 -->
+            <div class="journal-header">
+              <div class="journal-title-group">
+                <h2>
+                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+                  阅读手帐
+                </h2>
+                <span class="journal-subtitle">2026.10.03 · 丙午年八月廿三 · 宜深读</span>
+              </div>
+              <div class="journal-stamp">
+                <span class="stamp-text">READING STREAK</span>
+                <span class="stamp-val">18 DAYS</span>
+              </div>
+            </div>
+
+            <!-- 手帐子标签切换 -->
+            <div class="journal-subnav">
+              <button class="subnav-btn active" id="subtab-today" onclick="switchJournalTab('today')">今日手记</button>
+              <button class="subnav-btn" id="subtab-month" onclick="switchJournalTab('month')">打卡月历</button>
+              <button class="subnav-btn" id="subtab-quotes" onclick="switchJournalTab('quotes')">金句便签</button>
+            </div>
+
+            <!-- 子模块 A: 今日手记流水与核心统计 (默认激活) -->
+            <div id="journal-sec-today" style="display: flex; flex-direction: column; gap: 12px;">
+              <!-- 统计大数网格 -->
+              <div class="journal-card">
+                <div class="card-head-row">
+                  <span class="card-title">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                    阅读数据仪表盘
+                  </span>
+                  <span class="card-meta-tag">PMU RTC 实时记录</span>
+                </div>
+
+                <div class="stats-matrix-grid">
+                  <div class="stat-matrix-cell">
+                    <div class="stat-cell-num">48 <span>分钟</span></div>
+                    <div class="stat-cell-label">今日阅读 (目标 60m · 80%)</div>
+                  </div>
+                  <div class="stat-matrix-cell">
+                    <div class="stat-cell-num">4.8 <span>小时</span></div>
+                    <div class="stat-cell-label">本周累计阅读时长</div>
+                  </div>
+                  <div class="stat-matrix-cell">
+                    <div class="stat-cell-num">14 <span>本</span></div>
+                    <div class="stat-cell-label">今年已读完 (目标 25 本)</div>
+                  </div>
+                  <div class="stat-matrix-cell">
+                    <div class="stat-cell-num">410 <span>字/分</span></div>
+                    <div class="stat-cell-label">平均阅读翻页速度</div>
+                  </div>
+                </div>
+
+                <!-- 7 日极简直方图 -->
+                <div class="journal-chart-wrap">
+                  <div class="journal-chart-title">
+                    <span>近 7 天阅读时长走势</span>
+                    <span>日均 41 分钟</span>
+                  </div>
+                  <div class="bar-chart-row">
+                    <div class="chart-col"><div class="chart-bar-pillar" style="height: 18px;" title="22m"></div><span class="chart-day-label">日</span></div>
+                    <div class="chart-col"><div class="chart-bar-pillar" style="height: 28px;" title="36m"></div><span class="chart-day-label">一</span></div>
+                    <div class="chart-col"><div class="chart-bar-pillar" style="height: 38px;" title="50m"></div><span class="chart-day-label">二</span></div>
+                    <div class="chart-col"><div class="chart-bar-pillar" style="height: 22px;" title="28m"></div><span class="chart-day-label">三</span></div>
+                    <div class="chart-col"><div class="chart-bar-pillar" style="height: 32px;" title="42m"></div><span class="chart-day-label">四</span></div>
+                    <div class="chart-col"><div class="chart-bar-pillar" style="height: 42px;" title="55m"></div><span class="chart-day-label">五</span></div>
+                    <div class="chart-col"><div class="chart-bar-pillar today-bar" style="height: 36px;" title="48m"></div><span class="chart-day-label" style="font-weight:700;">今日</span></div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 今日阅读足迹时间线 (Sessions Timeline) -->
+              <div class="journal-card">
+                <div class="card-head-row">
+                  <span class="card-title">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                    今日阅读足迹 (2 次专注)
+                  </span>
+                  <span class="card-meta-tag">翻页 186 次</span>
+                </div>
+
+                <div class="journal-timeline">
+                  <div class="timeline-item">
+                    <div class="timeline-dot"></div>
+                    <div class="timeline-content">
+                      <div class="timeline-head">
+                        <span class="timeline-time">08:15 ~ 08:42 · 晨读</span>
+                        <span class="timeline-duration">27 分钟</span>
+                      </div>
+                      <div class="timeline-book">《月亮与六便士》· 第十一章</div>
+                      <div class="timeline-detail">翻阅 46 页 · 添加 1 条书签笔记</div>
+                    </div>
+                  </div>
+
+                  <div class="timeline-item">
+                    <div class="timeline-dot"></div>
+                    <div class="timeline-content">
+                      <div class="timeline-head">
+                        <span class="timeline-time">13:30 ~ 13:51 · 午读</span>
+                        <span class="timeline-duration">21 分钟</span>
+                      </div>
+                      <div class="timeline-book">《三体全集（精排修正版）》</div>
+                      <div class="timeline-detail">翻阅 32 页 · 智子二维展开工程</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 子模块 B: 月度习惯打卡印章日历 (可通过子标签切换) -->
+            <div id="journal-sec-month" style="display: none; flex-direction: column; gap: 12px;">
+              <div class="journal-card">
+                <div class="card-head-row">
+                  <span class="card-title">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                    2026 年 10 月打卡日历
+                  </span>
+                  <span class="card-meta-tag">已打卡 24/31 天</span>
+                </div>
+
+                <div class="stamp-month-grid">
+                  <div class="stamp-weekday">日</div>
+                  <div class="stamp-weekday">一</div>
+                  <div class="stamp-weekday">二</div>
+                  <div class="stamp-weekday">三</div>
+                  <div class="stamp-weekday">四</div>
+                  <div class="stamp-weekday">五</div>
+                  <div class="stamp-weekday">六</div>
+
+                  <!-- 示例日期网格 -->
+                  <div class="stamp-day-cell"></div>
+                  <div class="stamp-day-cell"></div>
+                  <div class="stamp-day-cell"></div>
+                  <div class="stamp-day-cell stamped">1</div>
+                  <div class="stamp-day-cell stamped">2</div>
+                  <div class="stamp-day-cell today-cell stamped">3</div>
+                  <div class="stamp-day-cell">4</div>
+
+                  <div class="stamp-day-cell">5</div>
+                  <div class="stamp-day-cell">6</div>
+                  <div class="stamp-day-cell">7</div>
+                  <div class="stamp-day-cell">8</div>
+                  <div class="stamp-day-cell">9</div>
+                  <div class="stamp-day-cell">10</div>
+                  <div class="stamp-day-cell">11</div>
+                </div>
+
+                <div style="font-size: 11px; color: var(--ink-5); line-height: 1.5; border-top: 1px dashed var(--ink-c); padding-top: 8px;">
+                  📌 黑色方块为已达标阅读日（≥20 分钟），实心印章自动盖印。<br>
+                  🌟 当前达成连续阅读 18 天，历史最高连续记录为 32 天。
+                </div>
+              </div>
+            </div>
+
+            <!-- 子模块 C: 书摘便签集 -->
+            <div id="journal-sec-quotes" style="display: none; flex-direction: column; gap: 10px;">
+              <div class="quote-sticky-note">
+                “满地都是六便士，他却抬头看见了月亮。”
+                <div class="quote-source">—— 毛姆《月亮与六便士》· 10.03 08:35 摘录</div>
+              </div>
+
+              <div class="quote-sticky-note">
+                “给岁月以文明，而不是给文明以岁月。”
+                <div class="quote-source">—— 刘慈欣《三体 II·黑暗森林》· 昨天摘录</div>
+              </div>
+
+              <div class="quote-sticky-note">
+                “若能避开猛烈的狂喜，自然不会有悲痛来袭。”
+                <div class="quote-source">—— 太宰治《人间失格》· 上周摘录</div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- ================= PAGE 5: 设置 (Settings) ================= -->
+        <div class="screen-page-view" id="view-settings">
+          <div class="settings-list-wrap">
+            <div class="setting-group-box">
+              <div class="setting-group-title">墨水屏刷新与显示</div>
+              <div class="setting-row" onclick="triggerRefresh('gc16')">
+                <div>
+                  <div class="setting-label">残影消除周期</div>
+                  <div class="setting-desc">每 5 次软刷执行一次完整 GC16 清屏</div>
+                </div>
+                <div class="setting-right-val"><span class="setting-pill">5 次</span> ›</div>
+              </div>
+              <div class="setting-row">
+                <div>
+                  <div class="setting-label">翻页刷新档位</div>
+                  <div class="setting-desc">默认使用 48 相 GL16 灰阶无闪烁翻页</div>
+                </div>
+                <div class="setting-right-val">GL16 均衡 ›</div>
+              </div>
+            </div>
+
+            <div class="setting-group-box">
+              <div class="setting-group-title">网络与进度同步</div>
+              <div class="setting-row">
+                <div>
+                  <div class="setting-label">无线传书服务</div>
+                  <div class="setting-desc">局域网网页传书 / 热点直连</div>
+                </div>
+                <div class="setting-right-val">192.168.4.1 ›</div>
+              </div>
+              <div class="setting-row">
+                <div>
+                  <div class="setting-label">KOReader 同步 (kosync)</div>
+                  <div class="setting-desc">已连接到自建同步服务</div>
+                </div>
+                <div class="setting-right-val"><span style="color:#166534; font-weight:700;">已就绪</span> ›</div>
+              </div>
+            </div>
+
+            <div class="setting-group-box">
+              <div class="setting-group-title">睡眠与硬件</div>
+              <div class="setting-row">
+                <div>
+                  <div class="setting-label">锁屏表盘样式</div>
+                  <div class="setting-desc">待机显示传统黄历与大字时钟</div>
+                </div>
+                <div class="setting-right-val">农历黄历 ›</div>
+              </div>
+              <div class="setting-row">
+                <div>
+                  <div class="setting-label">进阶与硬件诊断</div>
+                  <div class="setting-desc">I2C 普查 / PMU 寄存器 / 加速度计 / 刷屏耗时</div>
+                </div>
+                <div class="setting-right-val">15 项诊断 ›</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 屏幕底部四根统一导航 (在阅读正文时自动隐藏，其余页常驻) -->
+        <div class="screen-bottom-nav" id="screenBottomNav">
+          <div class="nav-item" id="nav-home" onclick="switchPage('home')">
+            <svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+            <span>正在读</span>
+          </div>
+          <div class="nav-item" id="nav-shelf" onclick="switchPage('shelf')">
+            <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="18" rx="1"/><rect x="10" y="3" width="7" height="18" rx="1"/><path d="M17 3l4 18"/></svg>
+            <span>书架</span>
+          </div>
+          <!-- 升级后的「手帐」Tab (图标替换为精美笔记本手帐本) -->
+          <div class="nav-item active" id="nav-journal" onclick="switchPage('journal')">
+            <svg viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+            <span>手帐</span>
+          </div>
+          <div class="nav-item" id="nav-settings" onclick="switchPage('settings')">
+            <svg viewBox="0 0 24 24"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
+            <span>设置</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 屏下三个电容触摸按键 -->
+      <div class="device-bottom-keys">
+        <div class="touch-key" onclick="simulateKey(1)">
+          <div class="key-mark">◀</div>
+          <div class="key-name">KEY1 上页</div>
+        </div>
+        <div class="touch-key" onclick="simulateKey(2)">
+          <div class="key-mark">◉</div>
+          <div class="key-name">KEY2 强刷</div>
+        </div>
+        <div class="touch-key" onclick="simulateKey(3)">
+          <div class="key-mark">▶</div>
+          <div class="key-name">KEY3 下页</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 侧边深度对比与硬件建议面板 -->
+    <aside class="analysis-panel">
+      <h2>
+        <span>「手帐」重构方案与硬件映射</span>
+        <span style="font-size:11px; font-weight:normal; color:#666;">ESP32-S3 + PMU RTC</span>
+      </h2>
+
+      <div class="analysis-section">
+        <h3>1. 为什么将「今日」改版为「手帐」？</h3>
+        <ul>
+          <li>
+            <span class="badge-diff diff-old">原今日页</span>
+            仅为普通电子时钟 + 两个孤立的分钟数字，缺乏阅读仪式感与复盘价值，使用频次极低。
+          </li>
+          <li>
+            <span class="badge-diff diff-new">新版手帐</span>
+            将墨水屏的“天然纸张感”发挥到极致，融合 **阅读统计仪表盘、专注足迹时间线、月度打卡盖章历与金句书摘**，让小纸 Pico 成为有温度的阅读伴侣。
+          </li>
+        </ul>
+      </div>
+
+      <div class="analysis-section">
+        <h3>2. 固件底层数据模型强支撑 (No Fake Data)</h3>
+        <ul>
+          <li>
+            <strong>30 天滚动时长：</strong>复用现有 <span class="code-chip">os_time_pico</span> 与 NVS 命名空间 <span class="code-chip">rp_stats</span>（键名 <span class="code-chip">st_YYYYMMDD</span>），无缝驱动 7 日图表与月历盖章。
+          </li>
+          <li>
+            <strong>阅读记录与书签：</strong>直接打通 <span class="code-chip">rp_marks</span> 命名空间，自动提取每本书保存的书签和摘录时间戳，生成纸胶带风格的随手金句卡。
+          </li>
+          <li>
+            <strong>硬件级走时：</strong>时间完全由板载独立 CW32L010 PMU RTC 保持，断电休眠不丢时间，无需长驻 WiFi 唤醒。
+          </li>
+        </ul>
+      </div>
+
+      <div class="analysis-section">
+        <h3>3. 纯净高对比度纸面（无多余杂点与灰色遮挡）</h3>
+        <ul>
+          <li>
+            <strong>彻底移除灰色胶带：</strong>移除了原草案中的拟物纸胶带，杜绝在黑白高反差界面上产生视觉突兀的灰色阴影块与上下遮挡。
+          </li>
+          <li>
+            <strong>纯净纸白底色：</strong>彻底清除所有点阵黑点（Dot Grid），还原电子墨水屏最舒适、清晰的无噪点阅读底色。
+          </li>
+          <li>
+            <strong>充裕间距与安全边距：</strong>选项卡与内容卡保持 16px 以上物理间距，各级标题与文本绝无任何被切边或遮挡。
+          </li>
+        </ul>
+      </div>
+
+      <div class="analysis-section">
+        <h3>4. 子视图交互设计 (Sub-mode)</h3>
+        <ul>
+          <li>
+            <strong>今日手记：</strong>展示今日用时、本周走势、阅读速度与晨读/午读时间线。
+          </li>
+          <li>
+            <strong>打卡月历：</strong>以月度为单位的整月印章方阵，清晰直观反馈打卡坚持天数。
+          </li>
+          <li>
+            <strong>金句便签：</strong>精选摘录卡片，点击可快速唤醒原书对应章节。
+          </li>
+        </ul>
+      </div>
+    </aside>
+  </main>
+
+  <script>
+    // 页面切换逻辑
+    function switchPage(pageId) {
+      document.querySelectorAll('.screen-page-view').forEach(el => el.classList.remove('active'));
+      document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+      document.querySelectorAll('.toolbar-btn').forEach(el => el.classList.remove('active'));
+
+      const targetView = document.getElementById('view-' + pageId);
+      if (targetView) targetView.classList.add('active');
+
+      const targetNav = document.getElementById('nav-' + pageId);
+      if (targetNav) targetNav.classList.add('active');
+
+      const navBar = document.getElementById('screenBottomNav');
+      if (pageId === 'reader') {
+        navBar.style.display = 'none'; // 正文模式沉浸式无底栏
+      } else {
+        navBar.style.display = 'flex';
+      }
+
+      // 同步顶部按钮状态
+      const btnIndex = ['home', 'shelf', 'reader', 'journal', 'settings'].indexOf(pageId);
+      if (btnIndex >= 0) {
+        document.querySelectorAll('.toolbar-btn')[btnIndex].classList.add('active');
+      }
+
+      // 切换页面触发快速差分刷新仿真
+      triggerRefresh('du');
+    }
+
+    // 手帐子视图切换 (今日手记 / 打卡月历 / 金句便签)
+    function switchJournalTab(subTab) {
+      document.querySelectorAll('.subnav-btn').forEach(btn => btn.classList.remove('active'));
+      document.getElementById('subtab-' + subTab).classList.add('active');
+
+      document.getElementById('journal-sec-today').style.display = (subTab === 'today') ? 'flex' : 'none';
+      document.getElementById('journal-sec-month').style.display = (subTab === 'month') ? 'flex' : 'none';
+      document.getElementById('journal-sec-quotes').style.display = (subTab === 'quotes') ? 'flex' : 'none';
+
+      triggerRefresh('du');
+    }
+
+    // 触发刷屏仿真 (GC16 全屏黑白擦除 / DU 差分快刷)
+    function triggerRefresh(mode) {
+      const overlay = document.getElementById('refreshOverlay');
+      overlay.className = 'refresh-overlay';
+      void overlay.offsetWidth; // 触发 reflow 重置动画
+      if (mode === 'gc16') {
+        overlay.classList.add('refresh-gc16');
+      } else {
+        overlay.classList.add('refresh-du');
+      }
+    }
+
+    // 阅读 HUD 呼出/隐藏
+    let hudVisible = false;
+    function toggleHud() {
+      hudVisible = !hudVisible;
+      const topHud = document.getElementById('readerHudTop');
+      const bottomHud = document.getElementById('readerHudBottom');
+      if (hudVisible) {
+        topHud.classList.add('active');
+        bottomHud.classList.add('active');
+      } else {
+        topHud.classList.remove('active');
+        bottomHud.classList.remove('active');
+      }
+    }
+
+    // 实体三键模拟
+    function simulateKey(keyNum) {
+      if (keyNum === 2) {
+        triggerRefresh('gc16'); // KEY2 为全局强刷
+      } else if (keyNum === 1) {
+        alert("KEY1: 上一页 / 返回");
+      } else if (keyNum === 3) {
+        alert("KEY3: 下一页 / 菜单");
+      }
+    }
+
+    // 书架视图切换 (网格 / 列表)
+    document.getElementById('btnGrid').addEventListener('click', function() {
+      this.classList.add('active');
+      document.getElementById('btnList').classList.remove('active');
+      triggerRefresh('du');
+    });
+
+    document.getElementById('btnList').addEventListener('click', function() {
+      this.classList.add('active');
+      document.getElementById('btnGrid').classList.remove('active');
+      triggerRefresh('du');
+    });
+  </script>
+</body>
+</html>

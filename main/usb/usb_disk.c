@@ -123,7 +123,7 @@ static void draw(EpdiyHighlevelState* hl, uint8_t* fb, const char* status, bool 
     } else ui_draw_button(fb, exit_rect(), "结束连接 · 返回阅读", false);
     ui_product_title(fb, (EpdRect){UI_MARGIN, 1030, ui_content_width(), 120},
         "USB 模式暂不提供刷机串口。退出重启后恢复串口，可再次刷固件。", 24, 3);
-    guard_draw_result(hl, update_display_full(hl));
+    guard_draw_result(hl, update_display_mode(hl, MODE_GL16));
 }
 void usb_disk_run(EpdiyHighlevelState* hl, uint8_t* fb, cst836u_handle_t tp) {
     draw(hl, fb, "正在准备 TF 卡…", false);

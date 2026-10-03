@@ -135,6 +135,19 @@ static void e0470_gl16_white_tick(uint8_t (*data)[16][4], int frames) {
     lut_or(data, tick, 15, 15, 2);
 }
 
+// 单相 tick 擦不动残留墨迹（真机验证：底灰逐页累积）。把厂家 (15,0) 黑→白的
+// 整段白推序列克隆给 (15,15)：白基准刷新时每个背景像素都带完整擦白相。
+// / A single-phase tick cannot erase leftover ink (proven on hardware: the
+// gray floor accumulates page over page). Clone the vendor's full (15,0)
+// black-to-white push sequence into (15,15) so every white-baseline refresh
+// carries the complete whitening phases for each background pixel.
+static void e0470_gl16_white_row_clone(uint8_t (*data)[16][4], int frames) {
+    for (int f = 0; f < frames; ++f) {
+        int action = lut_get(data, f, 15, 0);
+        if (action) lut_or(data, f, 15, 15, action);
+    }
+}
+
 /* ---- 完整表 / Full tables ---- */
 // DU 20 相，GC16 48 相；GL16 用 RAM 副本以便白底补 1 帧。
 // / DU 20, GC16 48; GL16 uses a RAM copy so the white-bg tick can be added.
@@ -248,6 +261,9 @@ void e0470_waveform_init(void) {
     assert(gl == E0470_GL16_FRAMES);
 
     memcpy(e0470_full_gl16_live, e0470_full_gl16_data, sizeof(e0470_full_gl16_live));
-    e0470_gl16_white_tick(e0470_full_gl16_live, E0470_FULL_GL16_FRAMES);
+    // 整页白基准走完整表：背景像素必须带足白推相，否则残影逐页累积。
+    // / Page white-baseline updates use the full table: background pixels need
+    // the complete white-push phases or ghosting accumulates page over page.
+    e0470_gl16_white_row_clone(e0470_full_gl16_live, E0470_FULL_GL16_FRAMES);
     e0470_gl16_white_tick(e0470_gl16_data, E0470_GL16_FRAMES);
 }

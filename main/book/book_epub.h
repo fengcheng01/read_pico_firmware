@@ -36,3 +36,7 @@ esp_err_t book_epub_load_image_budget(book_epub_t *book, size_t index, const cha
 uint32_t book_epub_total_bytes(const book_epub_t *book);
 /// 该章之前所有 spine 原始 HTML 字节累计值。/ Sum of source HTML bytes preceding this chapter in the spine.
 uint32_t book_epub_chapter_byte_offset(const book_epub_t *book, size_t index);
+
+/// 暂停/恢复目录缓存，文件验证失败返回 false。/ Suspend/resume metadata; failed file validation returns false.
+void book_epub_suspend(book_epub_t* book);
+bool book_epub_resume(book_epub_t* book, const char* path);

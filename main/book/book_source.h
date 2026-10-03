@@ -42,3 +42,6 @@ uint32_t book_total_bytes(void);
 uint32_t book_chapter_byte_offset(size_t i);
 /// 当前类型；关闭时默认 TXT。/ Current kind, defaulting to TXT when closed.
 book_kind_t book_kind(void);
+
+/// 是否有可尝试复用的元数据；实际打开仍校验文件。/ Whether metadata may be reused; opening still validates the file.
+bool book_cached(const char* path);

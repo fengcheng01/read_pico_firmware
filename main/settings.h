@@ -110,3 +110,7 @@ bool app_settings_set_lock_pin(const char* pin);
 /// Ghost-cleanup period: promote one full-pixel GC16 after this many soft updates, 0=off; tiers 0/3/5/10/14/20/30, initially 14 (the old compile-time tier).
 uint8_t app_settings_gc_every(void);
 void app_settings_set_gc_every(uint8_t every);
+
+/// 点击布局：左右、右手、左手、上下，取值 0..3。/ Tap layouts: sides, right hand, left hand, vertical; 0..3.
+uint8_t app_settings_book_tap_layout(void);
+void app_settings_set_book_tap_layout(uint8_t layout);

@@ -51,7 +51,7 @@ bool display_take_white_exit(void) {return false;}
 void rails_idle_check(int64_t n) {(void)n;}
 bool read_pico_pmu_ready(void) {return lock_due;}
 bool read_pico_pmu_take_key_short(void) {return true;}
-void enter_lock_and_sleep(EpdiyHighlevelState*h,int64_t*t,void*a) {(void)h;(void)t;(void)a;lock_due=false;time_offset+=1000000;}
+void enter_lock_and_sleep(EpdiyHighlevelState*h,int64_t*t,void*a,void*tp) {(void)h;(void)t;(void)a;(void)tp;lock_due=false;time_offset+=1000000;}
 const char* app_settings_font_path(void) {return "builtin";}
 uint8_t app_settings_idle_lock_min(void) {return 0;}
 bool ttf_font_path_is_builtin(const char*p) {(void)p;return !font_due&&!saved_sd_font;}
@@ -138,8 +138,10 @@ int main(void) {
     assert(enters==2&&events[UI_GESTURE_CANCEL]==1&&!menus);
     reset();menu_on_tick=true;add(0,0,0,0);add(0,0,0,0);run();assert(menus==1&&ticks==1);
     reset();first.owns_keys=true;for(int k=0;k<3;k++){add(k*160+80,1500,1,0);add(0,0,0,0);}run();
-    assert(keys[0]==1&&keys[1]==1&&keys[2]==1&&!menus&&fulls==1);
-    reset();add(240,1500,1,0);add(0,0,0,0);add(400,1500,1,0);run();assert(!keys[1]&&!keys[2]&&menus==1&&fulls==2);
+    // 呈现不再走 update_display_full；整页与菜单均经 update_display_mode(GL16)。
+    // Presents no longer use update_display_full; pages and menus go through update_display_mode(GL16).
+    assert(keys[0]==1&&keys[1]==1&&keys[2]==1&&!menus&&!fulls&&mode==1);
+    reset();add(240,1500,1,0);add(0,0,0,0);add(400,1500,1,0);run();assert(!keys[1]&&!keys[2]&&menus==1&&!fulls&&mode==3);
     reset();add(650,1150,1,0);add(0,0,0,0);add(100,220,1,0);add(0,0,0,0);run();
     assert(highlights==1&&restores==1&&enters==2&&exits==1);
     reset();add(650,1150,1,0);add(0,0,0,0);add(100,220,1,0);add(550,220,1,0);add(100,220,1,0);add(0,0,0,0);run();
@@ -150,12 +152,12 @@ int main(void) {
     reset();first.on_gesture=gesture;font_due=true;time_offset=4000000;add(100,400,1,0);add(0,0,0,0);run();
     assert(events[UI_GESTURE_CANCEL]==1&&!events[UI_GESTURE_TAP]&&tick_consumed[0]);
     reset();first.owns_keys=true;add(650,1150,1,0);add(0,0,0,0);add(240,1500,1,0);add(0,0,0,0);add(400,1500,1,0);run();
-    assert(!keys[1]&&!keys[2]&&fulls==2&&menus==2);
+    assert(!keys[1]&&!keys[2]&&!fulls&&mode==4&&menus==2);
     reset();add(650,1150,1,0);add(0,0,0,0);
     for(int i=0;i<3;i++){add(100,220,1,0);add(550,220,1,0);add(0,0,0,0);}run();
-    assert(du_areas==6&&gl_areas==1);
+    assert(!du_areas&&gl_areas==7);
     reset();time_step=1000000;add(650,1150,1,0);add(0,0,0,0);add(100,220,1,0);add(550,220,1,0);add(0,0,0,0);add(0,0,0,0);run();
-    assert(du_areas==2&&gl_areas==1);
+    assert(!du_areas&&gl_areas==3);
     reset();first.on_gesture=gesture;time_step=1000000;lock_due=true;
     add(100,400,1,0);add(100,400,1,0);add(100,400,1,0);add(0,0,0,0);run();
     assert(!lock_due&&events[UI_GESTURE_CANCEL]==1&&!events[UI_GESTURE_TAP]&&tick_consumed[2]);
@@ -172,7 +174,7 @@ int main(void) {
     add(0,0,0,0);add(240,1500,1,0);add(240,1500,1,0);add(240,1500,1,0);add(0,0,0,0);run();assert(!lock_due&&!long_keys);
     home_case();home_on_tick=true;add(0,0,0,0);add(0,0,0,0);run();
     assert(exits==0&&home_enters==0&&menus==1&&last_menu_leaf==1&&menu_background==&second);
-    assert(home_renders==0&&ticks==1&&fulls==1&&mode==1);
+    assert(home_renders==0&&ticks==1&&!fulls&&mode==2);
     home_case();home_on_tick=true;add(0,0,0,0);add(400,1500,1,0);add(0,0,0,0);run();
     assert(exits==0&&home_enters==0&&menus==1&&home_renders==0);
     home_case();home_on_touch=true;request_on_touch=true;menu_on_touch=true;add(100,400,1,0);run();
@@ -208,7 +210,7 @@ int main(void) {
     // Removal closes consumers before fallback, drops the current key and notifies only once.
     reset();media_test=sd_font=true;mounted_steps[0]=true;time_step=600000;first.on_media_lost=lost;
     add(0,0,0,0);add(80,1500,1,0);add(0,0,0,0);run();
-    assert(media_lost==1&&loss_step==1&&builtin_opens==1&&!keys[0]&&fulls==2);
+    assert(media_lost==1&&loss_step==1&&builtin_opens==1&&!keys[0]&&!fulls&&mode==2);
     // 后台页即使被菜单遮盖也释放资源，仍保留菜单视图。
     // A menu-covered page still releases resources and retains the menu view.
     reset();media_test=sd_font=true;mounted_steps[0]=true;time_step=600000;first.on_media_lost=lost;

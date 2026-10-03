@@ -42,6 +42,9 @@ static void ui_product_title(void* fb,EpdRect r,const char* t,int px,int n) {(vo
 static void ui_text(void* fb,...) {(void)fb;}
 static void ui_draw_button(void* fb,EpdRect r,const char* t,bool enabled) {(void)fb;(void)r;(void)t;(void)enabled;}
 static int update_display_full(void* hl) {(void)hl;return 0;}
+// 与设备 display.h 的模式值一致，仅供宿主桩编译。/ Mirrors the device display.h mode values for the host stub only.
+#define MODE_GL16 5
+static int update_display_mode(void* hl,int mode) {(void)hl;(void)mode;return 0;}
 static void guard_draw_result(void* hl,int err) {(void)hl;(void)err;}
 static const char* esp_err_to_name(int err) {(void)err;return "error";}
 #define pdMS_TO_TICKS(x) (x)

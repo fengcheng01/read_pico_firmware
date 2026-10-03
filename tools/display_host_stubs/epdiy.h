@@ -13,3 +13,6 @@ void epd_poweron(void);
 void epd_poweroff(void);
 void epd_clear(void);
 void epd_lcd_set_prefill_lines(int lines);
+
+int epd_width(void);
+int epd_height(void);

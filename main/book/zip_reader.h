@@ -10,6 +10,7 @@
  */
 #pragma once
 #include <stddef.h>
+#include <stdbool.h>
 #include "esp_err.h"
 
 #define ZIP_ENTRY_MAX 32768
@@ -33,3 +34,8 @@ size_t zip_entry_size(const zip_reader_t* reader, int index);
 /// 解压并校验 CRC；调用方持有 dst，不补 NUL。失败后缓冲内容未定义。
 /// Extract and verify CRC; caller owns dst, with no NUL appended. Buffer contents are undefined on failure.
 esp_err_t zip_extract(zip_reader_t* reader, int index, void* dst, size_t cap);
+
+/// 离页关闭文件，保留有界目录缓存。/ Close file handles while retaining bounded metadata.
+void zip_suspend(zip_reader_t* reader);
+/// 重开并校验文件大小和完整中央目录；失败仍关闭。/ Reopen and verify size plus the full directory; remain closed on failure.
+bool zip_resume(zip_reader_t* reader, const char* path);

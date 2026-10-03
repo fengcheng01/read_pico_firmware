@@ -346,11 +346,11 @@ void app_loop_run(const app_loop_config_t* config) {
                 if (menu_open) {
                     feedback.updates = 0;
                     ui_draw_menu_page(ctx.fb, current, menu_leaf);
-                    guard_draw_result(ctx.hl, update_display_full(ctx.hl));
+                    guard_draw_result(ctx.hl, update_display_mode(ctx.hl, MODE_GL16));
                 } else if (current->present != NULL && current->present(&ctx, APP_REDRAW_FULL)) {
                 } else if (current->render != NULL) {
                     current->render(&ctx, ctx.fb);
-                    guard_draw_result(ctx.hl, update_display_full(ctx.hl));
+                    guard_draw_result(ctx.hl, update_display_mode(ctx.hl, MODE_GL16));
                 }
             } else if (key == UI_KEY_3 || handle_hit) {
                 menu_open = !menu_open;
@@ -440,7 +440,7 @@ void app_loop_run(const app_loop_config_t* config) {
                 cancel_gesture(&ctx, current, &gesture);
                 if (menu_pressed >= 0) menu_feedback(&ctx, current, menu_leaf, menu_pressed, false, &feedback);
                 menu_pressed = UI_MENU_HIT_NONE;
-                enter_lock_and_sleep(ctx.hl, &s_lock_ignore_until_ms, ctx.acc);
+                enter_lock_and_sleep(ctx.hl, &s_lock_ignore_until_ms, ctx.acc, ctx.tp);
                 ctx.now_ms = esp_timer_get_time() / 1000;
                 poll_media(&ctx, current, &media_mounted, &media_invalidated);
                 last_media_poll_ms = ctx.now_ms;
@@ -448,11 +448,9 @@ void app_loop_run(const app_loop_config_t* config) {
                 ctx.pressed = false;
                 ctx.released = false;
                 s_active_ms = ctx.now_ms;
-                // 醒来还在同一页，重画一次免得留着锁屏图。
-                // Still the same page; redraw so the lock image does not stay.
-                // Still the same page; redraw so the lock image does not stay.
+                // 醒来仍在同一页；无压黑清理后恢复。/ Restore the same page through white cleanup.
                 if (menu_open) present_menu(&ctx, current, menu_leaf, &feedback);
-                else app_present(&ctx, current, APP_REDRAW_PAGE);
+                else app_present(&ctx, current, APP_REDRAW_FULL);
             }
         }
 

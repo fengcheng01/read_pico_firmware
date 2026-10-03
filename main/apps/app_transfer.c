@@ -826,7 +826,7 @@ static app_redraw_t on_gesture(app_ctx_t* ctx, const ui_gesture_event_t* ev) {
 static bool present(app_ctx_t* ctx, app_redraw_t redraw) {
     if (redraw == APP_REDRAW_FULL && s_settle) {
         render(ctx, ctx->fb);
-        guard_draw_result(ctx->hl, update_display_full(ctx->hl));
+        guard_draw_result(ctx->hl, update_display_mode(ctx->hl, MODE_GL16));
         s_settle = false;
         return true;
     }

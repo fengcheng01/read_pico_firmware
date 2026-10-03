@@ -43,3 +43,12 @@ static inline bool book_shake_feed(book_shake_gate_t* g, bool high, bool suppres
     g->first_ms = now;
     return false;
 }
+
+/// -1 上页、0 工具条、1 下页；比例布局与预览示意共用。/ -1 previous, 0 tools, 1 next; shared by taps and diagrams.
+static inline int book_tap_action(unsigned layout, int x, int y, int width, int height) {
+    if (layout == 3) return y < height * 3 / 10 ? -1 : y >= height * 7 / 10 ? 1 : 0;
+    if (layout == 0) return x < width * 3 / 10 ? -1 : x >= width * 7 / 10 ? 1 : 0;
+    if (x >= width * 3 / 10 && x < width * 7 / 10 && y >= height * 3 / 10 && y < height * 7 / 10) return 0;
+    if (layout == 1) return x < width / 4 ? -1 : 1;
+    return x >= width * 3 / 4 ? -1 : 1;
+}

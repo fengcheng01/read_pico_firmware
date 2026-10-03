@@ -63,13 +63,54 @@ EpdRect ui_product_back_rect(void) { return (EpdRect){470, 60, 174, 80}; }
 void ui_product_back(uint8_t* fb, const char* label) { ui_draw_button(fb, ui_product_back_rect(), label, false); }
 static const os_app_id_t roots[] = {OS_APP_HOME, OS_APP_LIBRARY, OS_APP_TODAY, OS_APP_SETTINGS};
 static const char* root_labels[] = {"正在读", "书架", "今日", "设置"};
+
+/* ---- 四根导航位图图标 / Root navigation bitmap icons ---- */
+// 32×32 1bpp 位图，每行 4 字节；1 = 黑。/ 32×32 1bpp, 4 bytes per row; 1 = ink.
+typedef struct { float x0, y0, x1, y1; } icon_stroke_t;
+static const icon_stroke_t root_strokes[4][16] = {
+    {{3,6,10,5},{10,5,16,8},{16,8,22,5},{22,5,29,6},{3,6,3,25},{3,25,10,24},{10,24,16,27},{16,27,22,24},{22,24,29,25},{29,25,29,6},{16,8,16,27},{7,10,12,11},{7,15,12,16},{20,11,25,10},{20,16,25,15}},
+    {{3,27,29,27},{5,26,5,6},{5,6,11,6},{11,6,11,26},{7,10,9,10},{14,26,14,3},{14,3,20,3},{20,3,20,26},{16,8,18,8},{23,8,29,25},{23,8,27,7},{27,7,32,24},{29,25,32,24}},
+    {{4,7,28,7},{28,7,28,28},{28,28,4,28},{4,28,4,7},{4,13,28,13},{10,3,10,9},{22,3,22,9},{10,18,11,18},{16,18,17,18},{22,18,23,18},{10,23,11,23},{16,23,17,23},{22,23,23,23}},
+    {{3,7,9,7},{17,7,29,7},{3,16,18,16},{26,16,29,16},{3,25,6,25},{14,25,29,25},{10,4,16,4},{16,4,16,10},{16,10,10,10},{10,10,10,4},{19,13,25,13},{25,13,25,19},{25,19,19,19},{19,19,19,13},{7,22,13,22},{7,28,13,28}}
+};
+static const unsigned root_stroke_count[] = {15,13,13,16};
+static bool icon_ink(int icon, float x, float y) {
+    float radius = 0.95f;
+    for (unsigned i = 0; i < root_stroke_count[icon]; ++i) {
+        icon_stroke_t s = root_strokes[icon][i];
+        float dx = s.x1 - s.x0, dy = s.y1 - s.y0;
+        float t = ((x - s.x0) * dx + (y - s.y0) * dy) / (dx * dx + dy * dy);
+        if (t < 0) t = 0;
+        if (t > 1) t = 1;
+        float ex = x - s.x0 - t * dx, ey = y - s.y0 - t * dy;
+        if (ex * ex + ey * ey <= radius * radius) return true;
+    }
+    // 第三条滑杆的竖边。/ Vertical edges of the third slider.
+    return icon == 3 && ((x >= 6 && x <= 8) || (x >= 12 && x <= 14)) && y >= 22 && y <= 28;
+}
+static void draw_root_icon(uint8_t* fb, int cx, int cy, int icon) {
+    for (int y = 0; y < 44; ++y) for (int x = 0; x < 44; ++x) {
+        unsigned coverage = 0;
+        for (int sy = 0; sy < 4; ++sy) for (int sx = 0; sx < 4; ++sx)
+            coverage += icon_ink(icon, (x + (sx + 0.5f) / 4) * 34 / 44, (y + (sy + 0.5f) / 4) * 34 / 44);
+        if (coverage) epd_draw_pixel(cx - 22 + x, cy - 22 + y, 255 - coverage * 255 / 16, fb);
+    }
+}
+
 void ui_product_root_bar(uint8_t* fb, os_app_id_t active) {
     ui_clear_rect_fast(fb, (EpdRect){0, UI_BAR_TOP, UI_LOCK_WIDTH, UI_BAR_H});
     ui_hairline(fb, UI_BAR_TOP, UI_MARGIN, ui_content_width(), UI_GRAY_BLACK);
     for (int i = 0; i < 4; ++i) {
         EpdRect r = ui_bar_rect(i, 4);
-        ui_text_vc(fb, r.x + r.width / 2, r.y + 44, 36, root_labels[i], EPD_DRAW_ALIGN_CENTER, false);
-        if (active == roots[i]) epd_fill_rect((EpdRect){r.x + 12, r.y + 78, r.width - 24, 4}, UI_GRAY_BLACK, fb);
+        bool on = active == roots[i];
+        int cx = r.x + r.width / 2, cy = r.y + 26;
+        draw_root_icon(fb, cx, cy, i);
+        // 图标下方保留小字标签（选中加粗），确保语义清楚。/ Small label below
+        // the icon (bold when active) keeps the meaning unambiguous.
+        // 标签恒为黑色；选中态由下划线表达，不再用反白把文字变淡。
+        // Labels stay black; selection shows via the underline, never washed-out text.
+        ui_text_vc(fb, cx, r.y + 70, 26, root_labels[i], EPD_DRAW_ALIGN_CENTER, false);
+        if (on) epd_fill_rect((EpdRect){r.x + 14, r.y + r.height - 10, r.width - 28, 4}, UI_GRAY_BLACK, fb);
     }
     ui_draw_menu_handle(fb, false);
 }

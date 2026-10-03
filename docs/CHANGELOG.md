@@ -3,6 +3,21 @@
 按日期和作者简述对用户可见的功能变化；详细实现历史见 Git。使用方法见 [README](../README.zh-CN.md)。
 User-visible changes by date and author; Git retains implementation history. See [README](../README.md) for usage.
 
+## 2026-10-03 · ZCode · v0.4.2 残影、EPUB 提速与点击分区 / Ghosting, faster EPUB and tap zones
+
+- 整页切换为单遍“白基准 GL16”：back 缓冲归白后一次扫描绘整页，背景像素带厂家 (15,0) 克隆来的整段白推相（18 相），每页自带完整擦白——无黑闪、无累积残影；局部更新到期时同样整页白基准清理；阅读翻页（整屏面积 GL16）走同一路径。冷启动用物理清屏铺白。唤醒后先校验锁屏密码再回原页；开机图无条件展示，锁屏挑战前即可核对版本。
+  Full-page transitions use a single-pass white-baseline GL16: reset the back buffer to white, repaint in one scan while every background pixel carries the vendor whitening sequence cloned from (15,0) (18 phases) — no black flash, no accumulating ghost; accumulated partial updates clean the whole panel the same way. Reading turns (full-screen GL16 areas) share the path. Cold boot whitens physically. Wake challenges the lock PIN before restoring the page; the splash always shows so the version is checkable before the lock challenge.
+- EPUB 打开提速：离页保留最近一本书的目录与当前章（重进前校验 ZIP 中央目录），同一章二次打开即时；ZIP 目录常驻 PSRAM、CRC 查表加速。大书首次解析才显示加载提示，切章不再刷中间页。
+  Faster EPUB opening: the last book's metadata and current chapter survive leaving (re-validated against the ZIP central directory), so re-opening the same chapter is instant; ZIP directories stay resident in PSRAM with table-driven CRC. Only first-time parsing of large books shows a loading note; chapter switches drop the intermediate refresh.
+- 固件版本集中到 version.txt（本版 0.4.2-20261003.1，改版本号会自动触发重配置），开机图底部与设置页显示固件版本和构建时间，刷机是否成功一眼可查。
+  The firmware version lives in version.txt (0.4.2-20261003.1 here; edits reconfigure the build automatically); the splash footer and Settings show the version and build time so a successful flash is obvious.
+- 同步传输加硬：超时 15 秒、TLS 走 PSRAM、PMU 时钟回种系统时间；失败时提示分阶段错误码（连接/写入/响应/正文），替代笼统的“无法访问服务器”。
+  Sync transport hardening: 15 s timeout, TLS allocations in PSRAM, PMU clock seeds system time; failures report staged error codes (connect/write/response/body) instead of a generic server message.
+- 阅读新增“点击分区”设置页：左右翻页、右手、左手、上下四种布局，点正文翻页、中间呼出工具条；底栏四根换为书/书架/日历/设置抗锯齿线条图标，标签恒黑、选中下划线。
+  Reading adds a tap-zone settings page with four layouts (sides, right hand, left hand, vertical): tap the body to turn, the center for tools; root navigation switches to anti-aliased line icons with always-black labels and an active underline.
+- 网页刷机自动重启：elink.aittyy.com 页面补丁先走 ROM 软复位命令（与烧录同一命令通道）再补复位脉冲，烧录完成后设备应自行重启，不必长按电源键。
+  Web flasher auto restart: the patched elink.aittyy.com page sends the ROM soft-reset command (the same command channel as flashing) followed by a reset pulse, so the device restarts itself after writing — no long power-key press.
+
 ## 2026-10-02 · Codex · 锁屏、残影与同步 / Lock, ghosting and sync
 
 - 清理使用完整厂家 GC16，局部刷新到期后清理整屏；默认周期 5 次，已有选择保留。产品扫描采用 12 MHz 和更高预填，封面灰阶刷新前先绘制缓冲；锁屏唤醒去掉空白清屏过渡，密码四点居中，0/清空/退格回到键盘第四行。

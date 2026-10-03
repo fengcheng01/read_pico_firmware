@@ -5,6 +5,14 @@ cmake_minimum_required(VERSION 3.22)
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 # "Trim" the build. Include the minimal set of components, main, and anything it depends on.
 idf_build_set_property(MINIMAL_BUILD ON)
+# 产品版本唯一来源是 version.txt；镜像描述、开机图与设置页共用同一来源。
+# version.txt is the single product version source; app description, splash and settings share it.
+file(READ "${CMAKE_CURRENT_LIST_DIR}/version.txt" PICO_PROJECT_VER)
+string(STRIP "${PICO_PROJECT_VER}" PICO_PROJECT_VER)
+set(PROJECT_VER "${PICO_PROJECT_VER}")
+# version.txt 变更必须触发重配置，否则镜像描述里的版本停留旧值。
+# A version.txt change must trigger reconfigure, or the app description keeps the stale version.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_LIST_DIR}/version.txt")
 project(Read_Pico)
 
 # 固件描述时间统一为 UTC，与概览页标识一致；保留已有编译缓存启动器。

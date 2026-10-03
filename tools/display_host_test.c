@@ -22,6 +22,8 @@ static unsigned cleanup_every = 3;
 static enum EpdDrawMode last_mode;
 static bool last_area;
 static const EpdWaveform* last_waveform;
+int epd_width(void) { return 16; }
+int epd_height(void) { return 16; }
 uint8_t app_settings_gc_every(void) { return (uint8_t)cleanup_every; }
 
 void read_pico_epd_set_pclk(int mhz) { ++clocks; safe_clock = mhz; }
@@ -78,23 +80,39 @@ int main(void) {
     assert(!clocks && !clears && !draws && !memcmp(front, target, FB_BYTES));
     for (int i = 0; i < 7; ++i) {
         guard_draw_result(&hl, update_display_mode(&hl, MODE_GL16));
-        assert(last_mode == (i % 3 == 2 ? MODE_GC16 : MODE_GL16));
+        assert(last_mode == MODE_GL16);
         assert(last_waveform == &E0470_FULL_WAVEFORM && hl.waveform == &E0470_WAVEFORM);
+        // 单遍白基准：每次 GL16 整页都从白 back 出发。/ One white-baseline pass per full GL16 page.
+        assert(white_baseline);
     }
+    // 双遍扫描是白屏事故根因，禁止回归。/ The double scan caused the white-screen regression; keep it out.
     assert(draws == 7 && full_draws == 7 && !clears);
     update_display_full(&hl);
     assert(last_mode == MODE_GC16 && last_waveform == &E0470_FULL_WAVEFORM && !last_area);
     for (int i = 0; i < 3; ++i) {
         update_display_area_with(&hl, &E0470_WAVEFORM, MODE_DU, (EpdRect){1,2,3,4});
-        assert(last_mode == (i == 2 ? MODE_GC16 : MODE_DU));
+        assert(last_mode == (i == 2 ? MODE_GL16 : MODE_DU));
         assert(last_area == (i != 2));
         assert(hl.waveform == &E0470_WAVEFORM);
         if (i == 2) assert(last_waveform == &E0470_FULL_WAVEFORM);
     }
+    // 整屏面积的 GL16 与整页同路走白基准；局部面积仍走面积差分。
+    // Full-screen-area GL16 takes the page white-baseline path; smaller areas keep the area diff.
+    update_display_area_with(&hl, &E0470_WAVEFORM, MODE_GL16, (EpdRect){0, 0, 16, 16});
+    assert(last_mode == MODE_GL16 && !last_area && white_baseline);
+    update_display_area_with(&hl, &E0470_WAVEFORM, MODE_GL16, (EpdRect){1, 2, 8, 8});
+    assert(last_mode == MODE_GL16 && last_area);
     cleanup_every = 0;
     for (int i = 0; i < 20; ++i) {
         update_display_mode(&hl, MODE_GL16); assert(last_mode == MODE_GL16);
     }
+    // 冷启动铺白：物理清屏一次，双缓冲归白，不推任何差分帧。
+    // Cold-boot white: one physical clear, both buffers white, no diff frame pushed.
+    memset(front, 0x11, FB_BYTES); memset(back, 0x22, FB_BYTES);
+    clocks = powerons = clears = draws = full_draws = 0;
+    display_boot_white(&hl);
+    assert(clears == 1 && powerons == 1 && draws == 0);
+    for (size_t i = 0; i < FB_BYTES; ++i) assert(front[i] == 255 && back[i] == 255);
     for (int bulk = 0; bulk < 2; ++bulk) {
         memcpy(front, target, FB_BYTES);
         memset(back, 0x55, FB_BYTES);
@@ -106,10 +124,10 @@ int main(void) {
             return 1;
         }
         assert(correct_target_at_draw && !memcmp(presented, target, FB_BYTES));
-        assert(white_baseline && full_draws == 1 && draws == 1);
+        assert(white_baseline && full_draws == 1 && draws == 1 && last_mode == MODE_GC16);
         assert(!memcmp(back, target, FB_BYTES));
         assert(clocks == 1 && safe_clock == DISPLAY_PCLK_SAFE_MHZ && display_pclk_mhz() == DISPLAY_PCLK_SAFE_MHZ);
-        assert(powerons == 1 && clears == 1 && prefill == 127);
+        assert(powerons == 1 && clears == 0 && prefill == 127);
     }
-    puts("display underrun: front retained, white back baseline, full GC16 recovery and bulk prefill passed");
+    puts("display underrun: front retained, single-pass white baseline and bulk prefill passed");
 }

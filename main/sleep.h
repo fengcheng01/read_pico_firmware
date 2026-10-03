@@ -26,8 +26,11 @@ typedef enum {
     APP_WAKE_PICKUP,
 } app_wake_source_t;
 
+/// 进入锁屏与睡眠；tp 非空时浅睡唤醒后先校验 PIN 再清屏返回。
+/// / Enter lock and sleep; with a touch handle, challenge the PIN after a light-sleep wake.
 void enter_lock_and_sleep(
-    EpdiyHighlevelState* hl, int64_t* ignore_until_ms, sc7a20h_handle_t acc
+    EpdiyHighlevelState* hl, int64_t* ignore_until_ms, sc7a20h_handle_t acc,
+    cst836u_handle_t tp
 );
 
 /// 等电源键松开，避免进睡瞬间被同一下按住立刻唤醒。
@@ -41,9 +44,9 @@ app_wake_source_t app_last_wake_source(void);
 /// Soft sleep or power-off: drop EN and halt; does not return.
 void app_enter_host_sleep(app_sleep_mode_t mode);
 
-/// 开机阻塞校验；未设密码直接通过，输错留在本页，正确后清屏返回。
+/// 开机阻塞校验；未设密码直接通过，输错留在本页，正确后返回。
 /// 键盘绘制/命中见 ui_product 的 ui_product_lock_keypad*。
-/// Blocking boot gate; unarmed passes at once, wrong entries stay, success clears and returns.
+/// Blocking boot gate; unarmed passes at once, wrong entries stay, success returns.
 /// Keypad draw/hit live in ui_product as ui_product_lock_keypad*.
 bool app_lock_pin_challenge(EpdiyHighlevelState* hl, cst836u_handle_t tp);
 

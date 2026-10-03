@@ -21,6 +21,7 @@
 #include "read_pico_pmu.h"
 #include "settings.h"
 #include <time.h>
+#include <sys/time.h>
 
 static const char* TAG = "os_time";
 #define OS_TIME_POLL_MS 15000
@@ -31,6 +32,12 @@ static bool s_recently_synced;
 static void refresh_cache(void) {
     const pmu_snapshot_t* pmu = read_pico_pmu_get();
     os_time_apply(pmu->time_ok ? pmu->unix_sec : 0, app_settings_tz_qh());
+    // PMU 时钟也恢复 libc 时钟，HTTPS 和界面使用同一 UTC 起点。
+    // Seed libc from a valid PMU clock so HTTPS and the UI share the UTC baseline.
+    if (pmu->time_ok && pmu->unix_sec >= OS_TIME_UNIX_MIN && pmu->unix_sec < OS_TIME_UNIX_MAX && time(NULL) < OS_TIME_UNIX_MIN) {
+        struct timeval now = {.tv_sec = pmu->unix_sec, .tv_usec = 0};
+        settimeofday(&now, NULL);
+    }
 }
 
 // UI 任务节流调用；与主循环的 PMU 轮询同任务串行，无需加锁。

@@ -33,7 +33,9 @@ typedef struct {
 struct zip_reader {
     FILE* file;
     zip_entry_t* entries;
-    uint32_t size, directory;
+    uint32_t size, directory, directory_size, directory_crc;
+    char* names;
+    uint32_t names_base;
     uint16_t count;
     char name_scratch[NAME_MAX_BYTES + 1];
 };
@@ -55,7 +57,8 @@ static int entry_compare(const void* a, const void* b) {
     return (x > y) - (x < y);
 }
 static bool entry_name(const zip_reader_t* z, const zip_entry_t* entry, char* out) {
-    if (!read_at((zip_reader_t*)z, entry->name_pos, out, entry->name_len)) return false;
+    if (z->names) memcpy(out, z->names + entry->name_pos - z->names_base, entry->name_len);
+    else if (!read_at((zip_reader_t*)z, entry->name_pos, out, entry->name_len)) return false;
     out[entry->name_len] = 0;
     return true;
 }
@@ -74,11 +77,18 @@ static bool extras_valid(zip_reader_t* z, uint32_t pos, uint16_t len) {
 }
 
 static uint32_t zip_crc32(const uint8_t* data, size_t len) {
-    uint32_t crc = UINT32_MAX;
-    while (len--) {
-        crc ^= *data++;
-        for (int i = 0; i < 8; ++i) crc = (crc >> 1) ^ (UINT32_C(0xedb88320) & (0U - (crc & 1U)));
+    static uint32_t table[256];
+    static bool ready;
+    if (!ready) {
+        for (unsigned n = 0; n < 256; ++n) {
+            uint32_t v = n;
+            for (int bit = 0; bit < 8; ++bit) v = (v >> 1) ^ (UINT32_C(0xedb88320) & (0U - (v & 1U)));
+            table[n] = v;
+        }
+        ready = true;
     }
+    uint32_t crc = UINT32_MAX;
+    while (len--) crc = table[(crc ^ *data++) & 255] ^ (crc >> 8);
     return ~crc;
 }
 
@@ -86,6 +96,7 @@ void zip_close(zip_reader_t* z) {
     if (!z) return;
     if (z->file) fclose(z->file);
 
+    free(z->names);
     free(z->entries);
     free(z);
 }
@@ -187,12 +198,36 @@ esp_err_t zip_open(const char* path, zip_reader_t** out) {
         }
     }
     free(tail);
+    // 常见书籍的目录常驻，避免每次查路径都 seek SD；超预算沿用窗口读取。
+    // Keep typical directories resident to avoid SD seeks per path; large directories retain windowed reads.
+    z->directory_size = dir_size;
+    if (dir_size <= 512U * 1024U) {
+        z->names = heap_caps_malloc(dir_size ? dir_size : 1, PSRAM);
+        if (z->names && !read_at(z, z->directory, z->names, dir_size)) { free(z->names); z->names = NULL; }
+        if (z->names) { z->names_base = z->directory; z->directory_crc = zip_crc32((uint8_t*)z->names, dir_size); }
+    }
     *out = z;
     return ESP_OK;
 fail:
     free(tail);
     zip_close(z);
     return err;
+}
+
+void zip_suspend(zip_reader_t* z) {
+    if (z && z->file) { fclose(z->file); z->file = NULL; }
+}
+bool zip_resume(zip_reader_t* z, const char* path) {
+    if (!z || !z->names || z->file) return false;
+    z->file = fopen(path, "rb");
+    if (!z->file) return false;
+    bool valid = fseek(z->file, 0, SEEK_END) == 0 && ftell(z->file) == z->size;
+    uint8_t* directory = valid ? heap_caps_malloc(z->directory_size ? z->directory_size : 1, PSRAM) : NULL;
+    valid = directory && read_at(z, z->directory, directory, z->directory_size) &&
+            zip_crc32(directory, z->directory_size) == z->directory_crc;
+    free(directory);
+    if (!valid) zip_suspend(z);
+    return valid;
 }
 
 int zip_find(const zip_reader_t* z, const char* name) {

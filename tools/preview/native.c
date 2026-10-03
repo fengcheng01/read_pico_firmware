@@ -16,6 +16,7 @@
 #include "ui_menu.h"
 #include "ui_gesture.h"
 #include "book_entry.h"
+#include "book_source.h"
 #include <string.h>
 #include <time.h>
 
@@ -198,10 +199,10 @@ int main(int argc, char** argv) {
         if (!export_frame(argv[1])) { perror("frame export"); return 1; }
         printf("{\"page\":%d,\"menu\":%s,\"menu_leaf\":%d,\"leaf\":%d,\"asset\":%d,\"unsupported\":%d,\"refresh_mode\":%d,\"presents\":%d,\"reading\":%s}\n",
                app_index_of(current), menu_open ? "true" : "false", menu_leaf, ctx.leaf, asset, unsupported, refresh_mode, presents,
-               current == app_by_id(OS_APP_LIBRARY) ? "true" : "false");
+               current == app_by_id(OS_APP_LIBRARY) && book_chapter_count() > 0 ? "true" : "false");
         fflush(stdout);
         if (!fgets(command, sizeof(command), stdin)) break;
-        int value, x, y;
+        int value, x, y, x1, y1;
         unsupported = -1;
         if (sscanf(command, "page %d", &value) == 1) choose_page(value);
         else if (sscanf(command, "sd %d", &value) == 1) s_sd_fixture = value == 1;
@@ -240,10 +241,10 @@ int main(int argc, char** argv) {
             ctx.now_ms = preview_now_ms();
             present(current->on_tick(&ctx));
         }
-        else if (sscanf(command, "swipe %d %d %d %d", &x, &y, &value, &y) == 4) {
+        else if (sscanf(command, "swipe %d %d %d %d", &x, &y, &x1, &y1) == 4) {
             // 用真实识别器合成一次滑动：按下→移动→抬起，事件走 on_gesture。
             // Synthesize a swipe through the real recognizer: press, move, release into on_gesture.
-            int x1 = value, y1 = y;
+
             ui_gesture_reset(&s_swipe_gesture);
             cst836u_touch_t touch = {.touched = true, .count = 1};
             ctx.now_ms = preview_now_ms();

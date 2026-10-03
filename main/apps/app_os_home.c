@@ -169,7 +169,7 @@ static app_redraw_t on_tick(app_ctx_t* ctx) {
     return APP_REDRAW_PAGE;
 }
 const app_desc_t app_os_home = {
-    .title = "正在读", .detail = "继续阅读 · 书架 · 导入", .enter_full = false,
+    .title = "正在读", .detail = "继续阅读 · 书架 · 导入", .enter_full = true,
     .on_enter = on_enter, .on_exit = home_on_exit, .on_media_lost = on_media_lost,
     .render = render, .on_gesture = on_gesture, .on_key = on_key, .on_tick = on_tick,
 };

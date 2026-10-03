@@ -66,6 +66,7 @@ static bool s_book_indent = true;
 static uint8_t s_book_para;
 static uint8_t s_book_auto;
 static bool s_book_tap = true;
+static uint8_t s_book_tap_layout;
 static bool s_book_night;
 static uint8_t s_lock_style;
 static char s_lock_pin[8];
@@ -130,6 +131,8 @@ void app_settings_init(void) {
     if (nvs_get_u8(h, NVS_KEY_PARA, &para) == ESP_OK && para <= 1) s_book_para = para;
     if (nvs_get_u8(h, NVS_KEY_AUTO, &auto_turn) == ESP_OK && auto_turn <= 3) s_book_auto = auto_turn;
     if (nvs_get_u8(h, NVS_KEY_TAP, &tap) == ESP_OK) s_book_tap = tap != 0;
+    uint8_t zones = 0;
+    if (nvs_get_u8(h, "bk_zones", &zones) == ESP_OK && zones < 4) s_book_tap_layout = zones;
     if (nvs_get_u8(h, NVS_KEY_NIGHT, &night) == ESP_OK) s_book_night = night != 0;
     if (nvs_get_u8(h, NVS_KEY_LOCK_STYLE, &style) == ESP_OK && style <= 3) s_lock_style = style;
     size_t sync_len = sizeof(s_sync_url);
@@ -468,4 +471,14 @@ bool app_settings_set_lock_pin(const char* pin) {
     esp_err_t err = nvs_commit(h);
     nvs_close(h);
     return err == ESP_OK;
+}
+
+uint8_t app_settings_book_tap_layout(void) { return s_book_tap_layout; }
+void app_settings_set_book_tap_layout(uint8_t layout) {
+    if (layout > 3 || layout == s_book_tap_layout) return;
+    s_book_tap_layout = layout;
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS, NVS_READWRITE, &h) == ESP_OK) {
+        nvs_set_u8(h, "bk_zones", layout); nvs_commit(h); nvs_close(h);
+    }
 }

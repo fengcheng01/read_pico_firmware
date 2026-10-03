@@ -551,8 +551,8 @@ class PreviewTests(unittest.TestCase):
         self.assertNotEqual(size_panel, grown)
         self.preview.command("tap 136 944")  # 返回工具 / back to tools
         tools = self.preview.png
-        self.preview.command("tap 342 1038")  # 清除残影 / full refresh
-        self.assertEqual(self.preview.state["refresh_mode"], 2)
+        self.preview.command("tap 342 1038")  # 无压黑清理 / white cleanup
+        self.assertEqual(self.preview.state["refresh_mode"], 5)
         self.assertEqual(tools, self.preview.png)
         night = self.preview.png
         self.preview.command("tap 544 1040")  # 书架 / shelf

@@ -73,3 +73,7 @@ void guard_draw_result(EpdiyHighlevelState* hl, enum EpdDrawError result);
 #ifdef __cplusplus
 }
 #endif
+
+/// 仅冷启动：物理清屏铺白并归白软件基准；不用于普通切页。
+/// Cold boot only: physically clear the panel white and white both software baselines; never for regular transitions.
+enum EpdDrawError display_boot_white(EpdiyHighlevelState* hl);

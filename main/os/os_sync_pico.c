@@ -17,6 +17,7 @@
  * percentage and saying so.
  */
 #include "os_sync.h"
+#include "os_time.h"
 #include "os_sync_http.h"
 #include "book_progress.h"
 #include "esp_crt_bundle.h"
@@ -37,6 +38,7 @@
 static const char* TAG = "os_sync";
 
 static bool sync_cancelled(void);
+static char s_transport_error[128];
 typedef struct { esp_http_client_handle_t client; int64_t deadline; } sync_stream_ctx_t;
 static bool stream_active(void* arg) {
     sync_stream_ctx_t* ctx = arg;
@@ -57,16 +59,17 @@ static bool stream_complete(void* arg) {
 static int sync_request(const char* method, const char* url, const char* user, const char* key,
                         const char* content_type, const char* body, char* resp, size_t resp_cap) {
     if (resp && resp_cap) resp[0] = 0;
+    s_transport_error[0] = 0;
     esp_http_client_config_t config = {
         .url = url,
         .method = strcmp(method, "PUT") == 0 ? HTTP_METHOD_PUT :
                   strcmp(method, "POST") == 0 ? HTTP_METHOD_POST : HTTP_METHOD_GET,
-        .timeout_ms = 5000,
+        .timeout_ms = 15000,
         .crt_bundle_attach = strncmp(url, "https://", 8) == 0 ? esp_crt_bundle_attach : NULL,
-        .buffer_size = 1024,
+        .buffer_size = 2048,
     };
     esp_http_client_handle_t client = esp_http_client_init(&config);
-    if (!client) return -1;
+    if (!client) { snprintf(s_transport_error, sizeof(s_transport_error), "同步内存不足，请退出图书后重试"); return -1; }
     sync_stream_ctx_t ctx = {client, esp_timer_get_time() + 20000000};
     os_sync_stream_t io = {stream_write, stream_read, stream_complete, stream_active, &ctx};
     int status = -1;
@@ -76,11 +79,31 @@ static int sync_request(const char* method, const char* url, const char* user, c
         headers_ok &= esp_http_client_set_header(client, "x-auth-key", key) == ESP_OK;
     }
     if (content_type) headers_ok &= esp_http_client_set_header(client, "Content-Type", content_type) == ESP_OK;
-    if (headers_ok && stream_active(&ctx) &&
-        esp_http_client_open(client, body ? (int)strlen(body) : 0) == ESP_OK &&
-        os_sync_http_write(&io, body) && stream_active(&ctx) &&
-        esp_http_client_fetch_headers(client) >= 0 && os_sync_http_read(&io, resp, resp_cap))
-        status = esp_http_client_get_status_code(client);
+    headers_ok &= esp_http_client_set_header(client, "Connection", "close") == ESP_OK;
+    const char* stage = "headers";
+    esp_err_t opened = ESP_OK;
+    if (headers_ok && stream_active(&ctx)) {
+        stage = "connect";
+        opened = esp_http_client_open(client, body ? (int)strlen(body) : 0);
+        if (opened == ESP_OK) {
+            stage = "write";
+            if (os_sync_http_write(&io, body) && stream_active(&ctx)) {
+                stage = "response";
+                if (esp_http_client_fetch_headers(client) >= 0) {
+                    stage = "body";
+                    if (os_sync_http_read(&io, resp, resp_cap)) status = esp_http_client_get_status_code(client);
+                }
+            }
+        }
+    }
+    if (status < 0) {
+        int tls = 0, flags = 0;
+        esp_http_client_get_and_clear_last_tls_error(client, &tls, &flags);
+        int socket_error = esp_http_client_get_errno(client);
+        snprintf(s_transport_error, sizeof(s_transport_error), "%s E%x TLS%x/%x net%d", stage,
+                 (unsigned)opened, (unsigned)tls, (unsigned)flags, socket_error);
+        ESP_LOGW(TAG, "sync transport: %s", s_transport_error);
+    }
     esp_http_client_cleanup(client);
     ESP_LOGI(TAG, "%s %s -> %d", method, url, status);
     return status;
@@ -141,7 +164,7 @@ static bool s_running, s_pending, s_network_owned, s_claimed;
 static void release_session(void) {
     if (s_claimed) read_pico_transfer_release_sync();
     s_claimed = false;
-    if (s_network_owned) read_pico_transfer_stop();
+    if (s_network_owned) { os_time_network(false); read_pico_transfer_stop(); }
     s_network_owned = false;
 }
 static bool prepare_network(char* note, size_t cap) {
@@ -219,6 +242,8 @@ bool os_sync_job_start(os_sync_job_t job, char* note, size_t cap) {
     }
     if (!s_done) s_done = xSemaphoreCreateBinary();
     if (!s_done) { snprintf(note, cap, "内存不足，请重试"); release_session(); return false; }
+    s_transport_error[0] = 0;
+    os_time_force_poll(); os_time_poll(esp_timer_get_time() / 1000);
     atomic_store(&s_cancel, false);
     atomic_store(&s_link_ready, false);
     s_running = true;
@@ -231,13 +256,16 @@ bool os_sync_job_start(os_sync_job_t job, char* note, size_t cap) {
 bool os_sync_job_poll(char* note, size_t cap) {
     if (!s_running) return false;
     read_pico_transfer_service_poll();
+    read_pico_transfer_status_t network;
+    read_pico_transfer_get_status(&network);
+    os_time_network(network.network_ready);
     if (xSemaphoreTake(s_done, 0) != pdTRUE) return false;
     s_running = false;
     if (sync_cancelled()) s_result = OS_SYNC_OFFLINE;
     if (s_result != OS_SYNC_OK || s_job != OS_SYNC_JOB_PULL) {
         release_session();
         const char* result = s_result == OS_SYNC_OFFLINE ?
-            (atomic_load(&s_link_ready) ? "无法访问同步服务器，请检查地址与网络" : "WiFi 连接失败，请检查已保存网络") : os_sync_result_name(s_result);
+            (atomic_load(&s_link_ready) ? (s_transport_error[0] ? s_transport_error : "服务器连接未完成，请重试") : "WiFi 连接失败，请检查已保存网络") : os_sync_result_name(s_result);
         snprintf(note, cap, "%s", result); return true;
     }
     memset(&s_remote, 0, sizeof(s_remote));
@@ -253,7 +281,7 @@ bool os_sync_job_poll(char* note, size_t cap) {
         s_remote.px = px >= 36 && px <= 72 ? px : 48;
     }
     s_remote.pct = (uint8_t)(s_percent * 100 + 0.5f);
-    if (s_network_owned) read_pico_transfer_stop();
+    if (s_network_owned) { os_time_network(false); read_pico_transfer_stop(); }
     s_network_owned = false;
     s_pending = true;
     snprintf(note, cap, "本地 %u%% → 远端 %u%% · %s", (unsigned)s_local.pct, (unsigned)s_remote.pct,
