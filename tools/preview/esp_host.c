@@ -215,8 +215,8 @@ typedef struct nvs_iterator {
     nvs_iter_item_t items[256];
     unsigned count, at;
 } nvs_iterator_impl_t;
-esp_err_t nvs_entry_find(const char* namespace_, const char* match, int type, nvs_iterator_t* out) {
-    (void)match;
+esp_err_t nvs_entry_find(const char* partition, const char* namespace_, int type, nvs_iterator_t* out) {
+    if (partition && strcmp(partition, "nvs")) return ESP_ERR_NVS_NOT_FOUND;
     if (!out) return ESP_ERR_INVALID_ARG;
     *out = NULL;
     nvs_iterator_t it = calloc(1, sizeof(*it));
@@ -258,27 +258,48 @@ void nvs_release_iterator(nvs_iterator_t it) { free(it); }
 /* ---- FreeRTOS：互斥/二值信号量与预渲染任务映射 pthread ----
    / FreeRTOS: mutexes, binary semaphores and the prep task over pthreads. */
 void vTaskDelay(int ms) { usleep((useconds_t)ms * 1000); }
-void* xSemaphoreCreateMutex(void) {
-    pthread_mutex_t* mutex = malloc(sizeof(*mutex));
-    return mutex && pthread_mutex_init(mutex, NULL) == 0 ? mutex : (free(mutex), NULL);
+typedef struct {
+    pthread_mutex_t lock;
+    pthread_cond_t changed;
+    unsigned count;
+} host_semaphore_t;
+static void cleanup_unlock(void* lock) { pthread_mutex_unlock(lock); }
+static void* semaphore_create(unsigned initial) {
+    host_semaphore_t* sem = calloc(1, sizeof(*sem));
+    if (!sem) return NULL;
+    pthread_mutex_init(&sem->lock, NULL);
+    pthread_cond_init(&sem->changed, NULL);
+    sem->count = initial;
+    return sem;
 }
-void* xSemaphoreCreateBinary(void) {
-    pthread_mutex_t* mutex = xSemaphoreCreateMutex();
-    if (mutex) pthread_mutex_lock(mutex);  // 二值信号量初始为空。/ Binary semaphores start empty.
-    return mutex;
-}
+void* xSemaphoreCreateMutex(void) { return semaphore_create(1); }
+void* xSemaphoreCreateBinary(void) { return semaphore_create(0); }
 int xSemaphoreTake(void* semaphore, int ticks) {
-    (void)ticks;
-    return semaphore && pthread_mutex_lock((pthread_mutex_t*)semaphore) == 0 ? 1 : 0;
+    host_semaphore_t* sem = semaphore;
+    if (!sem) return 0;
+    int taken = 0;
+    pthread_mutex_lock(&sem->lock);
+    pthread_cleanup_push(cleanup_unlock, &sem->lock);
+    while (!sem->count && ticks) pthread_cond_wait(&sem->changed, &sem->lock);
+    if (sem->count) { sem->count = 0; taken = 1; }
+    pthread_cleanup_pop(1);
+    return taken;
 }
 int xSemaphoreGive(void* semaphore) {
-    return semaphore && pthread_mutex_unlock((pthread_mutex_t*)semaphore) == 0 ? 1 : 0;
+    host_semaphore_t* sem = semaphore;
+    if (!sem) return 0;
+    pthread_mutex_lock(&sem->lock);
+    sem->count = 1;
+    pthread_cond_signal(&sem->changed);
+    pthread_mutex_unlock(&sem->lock);
+    return 1;
 }
 void vSemaphoreDelete(void* semaphore) {
-    if (semaphore) {
-        pthread_mutex_destroy((pthread_mutex_t*)semaphore);
-        free(semaphore);
-    }
+    host_semaphore_t* sem = semaphore;
+    if (!sem) return;
+    pthread_cond_destroy(&sem->changed);
+    pthread_mutex_destroy(&sem->lock);
+    free(sem);
 }
 typedef struct {
     void (*entry)(void*);
@@ -300,7 +321,7 @@ int xTaskCreatePinnedToCore(void (*entry)(void*), const char* name, int stack, v
     pthread_t thread;
     pthread_attr_t attr;
     pthread_attr_init(&attr);
-    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+    if (!handle) pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
     int err = pthread_create(&thread, &attr, task_trampoline, spawn);
     pthread_attr_destroy(&attr);
     if (err) {
@@ -310,10 +331,10 @@ int xTaskCreatePinnedToCore(void (*entry)(void*), const char* name, int stack, v
     // 预览句柄只作非空标记；vTaskDelete 通过取消线程实现。
     // The preview handle is a non-null marker; vTaskDelete cancels the thread.
     if (handle) *handle = (void*)thread;
-    return 0;
+    return pdPASS;
 }
 void vTaskDelete(void* handle) {
-    if (handle) pthread_cancel((pthread_t)handle);
+    if (handle) { pthread_cancel((pthread_t)handle); pthread_join((pthread_t)handle, NULL); }
 }
 // 任务通知映射进程级条件变量：预渲染任务是唯一的等待者。
 // Task notifications map to a process-wide condvar: the prep task is the only waiter.
@@ -323,9 +344,10 @@ static atomic_uint s_notify_pending;
 unsigned ulTaskNotifyTake(int clear, int wait) {
     (void)clear; (void)wait;
     pthread_mutex_lock(&s_notify_lock);
+    pthread_cleanup_push(cleanup_unlock, &s_notify_lock);
     while (!s_notify_pending) pthread_cond_wait(&s_notify_cond, &s_notify_lock);
     s_notify_pending = 0;
-    pthread_mutex_unlock(&s_notify_lock);
+    pthread_cleanup_pop(1);
     return 1;
 }
 void xTaskNotifyGive(void* handle) {
@@ -348,7 +370,6 @@ void* heap_caps_aligned_alloc(size_t alignment, size_t size, uint32_t caps) {
 void heap_caps_free(void* pointer) { free(pointer); }
 
 void display_set_bulk_io(bool active) { (void)active; }
-
 /* ---- 传感器空实现：永远未上电，摇动实验不可触发 ----
    / Sensor no-ops: never powered, the shake experiment cannot fire. */
 const sc7a20h_sensor_config_t* sc7a20h_get_config(sc7a20h_handle_t handle) {

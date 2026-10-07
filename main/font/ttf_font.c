@@ -92,7 +92,7 @@ static const char* const k_font_dirs[] = {
 
 typedef struct glyph_entry {
     uint32_t codepoint;
-    uint8_t size;
+    uint16_t size;
     uint16_t weight;
     int16_t width;
     int16_t height;
@@ -1563,7 +1563,7 @@ static int size_to_px(int size) {
 
 static int clamp_px(int pixel_height) {
     if (pixel_height < 12) return 12;
-    if (pixel_height > 120) return 120;
+    if (pixel_height > 320) return 320;
     return pixel_height;
 }
 
@@ -1649,7 +1649,7 @@ static void cache_reserve(size_t extra) {
 static glyph_entry_t* cache_lookup(uint32_t codepoint, int size) {
     unsigned bucket = cache_bucket(codepoint, size);
     for (glyph_entry_t* entry = cache_buckets[bucket]; entry != NULL; entry = entry->hash_next) {
-        if (entry->codepoint == codepoint && entry->size == (uint8_t)size
+        if (entry->codepoint == codepoint && entry->size == (uint16_t)size
             && entry->weight == (uint16_t)current_weight) {
             lru_touch(entry);
             return entry;
@@ -1697,7 +1697,7 @@ static glyph_entry_t* rasterize_glyph(uint32_t codepoint, int pixel_height) {
     stbtt_GetGlyphHMetrics(&font_info, gid, &advance, &lsb);
 
     entry->codepoint = codepoint;
-    entry->size = (uint8_t)pixel_height;
+    entry->size = (uint16_t)pixel_height;
     entry->weight = (uint16_t)current_weight;
     entry->width = (int16_t)width;
     entry->height = (int16_t)height;

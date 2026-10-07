@@ -38,10 +38,18 @@ bool ui_gesture_feed(ui_gesture_t *g, const app_ctx_t *ctx, ui_gesture_event_t *
         if (!ctx->pressed || ctx->released || !touch->touched) return false;
         *g = (ui_gesture_t){ .active = true, .x0 = touch->x, .y0 = touch->y,
             .x = touch->x, .y = touch->y, .t0_ms = ctx->now_ms, .last_ms = ctx->now_ms };
+        // 按下立即派发，底栏无需等待下一次采样或松手；第二帧仍稳定轻点锚点。
+        // Dispatch press immediately so tabs need no second sample or release; stabilize the tap anchor next sample.
         return emit(g, UI_GESTURE_PRESS, ctx->now_ms, out);
     }
     g->last_ms = ctx->now_ms;
     g->x = touch->x; g->y = touch->y;
+    if (!g->press_sent && touch->touched && !ctx->released) {
+        g->press_sent = true;
+        g->x0 = touch->x; g->y0 = touch->y;
+        g->moved = false;
+        return false;
+    }
     int32_t dx = (int32_t)g->x - g->x0, dy = (int32_t)g->y - g->y0;
     int32_t ax = dx < 0 ? -dx : dx, ay = dy < 0 ? -dy : dy;
     // 容差使用二维距离，移回起点也不恢复轻点资格。/ Slop uses two-dimensional distance; returning to the origin never restores tap eligibility.

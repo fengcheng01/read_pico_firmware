@@ -23,7 +23,7 @@ enum EpdFontFlags { EPD_DRAW_ALIGN_LEFT, EPD_DRAW_ALIGN_CENTER, EPD_DRAW_ALIGN_R
 #define MODE_DU 1
 #define MODE_GL16 2
 #define MODE_GC16 3
-extern int E0470_WAVEFORM;
+extern int E0470_WAVEFORM, E0470_NAVIGATION_WAVEFORM;
 bool continuous_du_init(void);
 int64_t esp_timer_get_time(void);
 void vTaskDelay(int);
@@ -32,8 +32,10 @@ void vTaskDelay(int);
 #define ESP_LOGE(...) ((void)0)
 void guard_draw_result(EpdiyHighlevelState*, enum EpdDrawError);
 enum EpdDrawError update_display_area_with(EpdiyHighlevelState*, const void*, int, EpdRect);
+void display_request_navigation_settle(void);
 enum EpdDrawError update_display_full(EpdiyHighlevelState*);
 enum EpdDrawError update_display_mode(EpdiyHighlevelState*, int);
+enum EpdDrawError update_display_with(EpdiyHighlevelState*, const void*, int);
 enum EpdDrawError update_display_white(EpdiyHighlevelState*);
 bool display_take_white_exit(void);
 void rails_idle_check(int64_t);

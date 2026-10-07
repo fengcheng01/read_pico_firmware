@@ -174,6 +174,11 @@ bool read_pico_pmu_take_key_short(void);
 /// 抽干队列；按下或短按都算唤醒（浅睡常先收到 KEY_DOWN）。
 /// / Drain the queue; KEY_DOWN or SHORT both count as wake (light sleep often sees KEY_DOWN first).
 bool read_pico_pmu_take_key_wakeup(void);
+#define READ_PICO_PMU_WAKE_KEY 0x01
+#define READ_PICO_PMU_WAKE_ALARM 0x02
+/// 抽干队列并一次收集唤醒类事件：位0 按键，位1 闹钟。
+/// / Drain the queue and collect wake events at once: bit0 key, bit1 alarm.
+uint8_t read_pico_pmu_take_wake_events(void);
 /// 保证 RUNNING 后发 HOST_SOFT_SLEEP，等到 STATUS 为 SOFT_SLEEP（随后 EN=0）。
 /// / After RUNNING, send HOST_SOFT_SLEEP and wait for STATUS SOFT_SLEEP (then EN=0).
 esp_err_t read_pico_pmu_report_sleep(void);

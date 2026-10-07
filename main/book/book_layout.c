@@ -9,6 +9,10 @@
  * 为尽早进入阅读，支持分批分页；正文插图在分页前加载；失败图片绘制可点击占位，不在绘图时读取资源或解码。
  * Frozen: Caller owns source text and serializes all font measurement and drawing.
  * Incremental pagination enables early reading; inline images load before pagination; failed images show retry placeholders; never read or decode resources while drawing.
+ * 用户确认旧线仅在转场穿字，修订辅助线只绘制的决定：纯文字开线时统一行网格、段距按整槽，关闭恢复原排版。
+ * The user confirmed turn-only rule crossings, revising draw-only guides: text-only guides use one row grid and whole-slot paragraph gaps; disabling restores original layout.
+ * 冻结：构建、绘制与命中共用同一网格；不得只固定辅助线而让文字跨线。图片章节保留原图文布局，不承诺跨页线位兼容。
+ * Frozen: Build, drawing and hits share the grid; never fix rules while letting text cross them. Image chapters retain their original layout without cross-page rule compatibility.
  */
 #include "book_layout.h"
 #include <limits.h>
@@ -36,15 +40,35 @@ static bool s_complete;
 // Leading bonus and night inversion are module state shared by build and draw; callers set them before building.
 static int s_leading_pct;
 static bool s_night;
-// 首行缩进/段落间距影响 build 与 draw；辅助线只影响 draw，三者都在 build 前设置。
-// Indent and paragraph gap affect builds and draws; the guide rule is draw-only; set all before building.
+// 缩进、段距和辅助线开关影响分页，在建立布局前设置；实虚线及线色只影响绘制。
+// Indent, paragraph gaps and guide activation affect pagination; set before building; rule style and color are draw-only.
 static bool s_indent_on = true;
 static int s_para_tier;
 static int s_guide_style;
+static int s_guide_origin;
+static bool s_guide_binary;
+static bool s_guide_grid;
+static int s_grid_height;
+static int s_grid_padding;
 static int s_align;
 
 static const blk_t* s_blocks;
 static size_t s_block_count;
+
+// 图片或失败占位保持原图文排版；纯文字章节才能共用跨页规则位置。
+// Images and failed placeholders retain original illustration layout; only text-only chapters share rule positions across pages.
+static bool guide_grid_requested(void) {
+    if (!s_guide_style) return false;
+    for (size_t i = 0; i < s_block_count; ++i)
+        if (s_blocks[i].image || s_blocks[i].image_src) return false;
+    return true;
+}
+static int grid_padding(EpdRect rect) {
+    if (!s_guide_grid) return 0;
+    int phase = (int)(((int64_t)rect.y - s_guide_origin) % s_grid_height);
+    if (phase < 0) phase += s_grid_height;
+    return phase ? s_grid_height - phase : 0;
+}
 
 // 块表是有序字节区间，二分查找当前行样式。/ Blocks are ordered byte ranges; binary-search the line style.
 static const blk_t* block_at(size_t off) {
@@ -69,6 +93,7 @@ static void image_size(const blk_t* block, int* width, int* height) {
 static int row_height(const blk_t* block, int px) {
     if (block && block->image) { int width, height; image_size(block, &width, &height); return height; }
     if (block && block->image_src) return 2 * s_px < s_rect.height ? 2 * s_px : s_rect.height;
+    if (s_guide_grid) return s_grid_height;
     return px + px / 2 + px * s_leading_pct / 100;
 }
 static EpdRect placeholder_rect(EpdRect body, int top, int height) {
@@ -125,6 +150,8 @@ void book_layout_free(void) {
     s_scan = 0;
     s_used = 0;
     s_complete = false;
+    s_guide_grid = false;
+    s_grid_height = s_grid_padding = 0;
     s_blocks = NULL;
     s_block_count = 0;
 }
@@ -149,8 +176,10 @@ static int line_indent(size_t off, bool heading) {
     char prev = s_text[off - 1];
     return prev == '\n' || prev == '\r' ? 2 * s_px : 0;
 }
-// 段落间距：标题恒为半行，正文标准三分之一行、加大二分之一行。/ Paragraph gap: half a line for headings; body thirds standard and halves relaxed.
+// 网格标题和加大段距空一槽，标准不额外空槽；无网格时保留原半行/三分之一行。
+// Grid headings and relaxed paragraphs leave one slot, standard leaves none; nongrid spacing retains original halves/thirds.
 static int para_gap(int line_height, bool heading) {
+    if (s_guide_grid) return heading || s_para_tier ? s_grid_height : 0;
     return line_height / (heading ? 2 : s_para_tier ? 2 : 3);
 }
 // 折行时保留原文字节位置；CRLF 算一个段落边界。/ Preserve source offsets while wrapping; CRLF is one paragraph boundary.
@@ -238,6 +267,13 @@ bool book_layout_begin_blocks(const char* utf8, size_t len, const blk_t* blocks,
     s_len = len;
     s_px = px;
     s_rect = rect;
+    s_guide_grid = guide_grid_requested();
+    int64_t grid_height = (int64_t)px + px / 2 + (int64_t)px * s_leading_pct / 100;
+    if (s_guide_grid && (grid_height < 3 || grid_height > rect.height)) goto fail;
+    s_grid_height = s_guide_grid ? (int)grid_height : 0;
+    s_grid_padding = grid_padding(rect);
+    if (s_guide_grid && (int64_t)s_grid_padding + s_grid_height > rect.height) goto fail;
+    s_used = s_grid_padding;
     s_line = heap_caps_malloc(len + 1, PSRAM_CAPS);
     if (!s_line || !append_page(0)) goto fail;
     return book_layout_extend(2);
@@ -260,7 +296,7 @@ bool book_layout_extend(size_t pages) {
         if (line_height > s_rect.height) goto fail;
         if (s_used + line_height > s_rect.height) {
             if (!append_page(s_scan)) goto fail;
-            s_used = 0;
+            s_used = s_grid_padding;
             if (book_layout_page_count() >= target) return true;
         }
         s_used += line_height;
@@ -294,13 +330,14 @@ size_t book_layout_page_for_offset(size_t off) {
 void book_layout_draw_page(uint8_t* fb, size_t page, EpdRect rect, int px) {
     if (!fb || page >= book_layout_page_count() || px != s_px || rect.width != s_rect.width ||
         rect.height != s_rect.height || rect.x < 0 || rect.y < 0 ||
-        rect.x > INT_MAX - rect.width || rect.y > INT_MAX - rect.height) return;
+        rect.x > INT_MAX - rect.width || rect.y > INT_MAX - rect.height ||
+        guide_grid_requested() != s_guide_grid || grid_padding(rect) != s_grid_padding) return;
     // 夜间模式整块反色：黑底、白字、图片灰度翻转。/ Night inverts the whole body: black ground, white text, flipped image grays.
     uint8_t fg = s_night ? 15 : 0, bg = s_night ? 0 : 15;
     if (s_night) epd_fill_rect(rect, 0, fb);
     size_t off = s_pages[page];
     size_t end = page + 1 < s_count ? s_pages[page + 1] : s_len;
-    int64_t used = 0;
+    int64_t used = s_grid_padding;
     while (off < end) {
         size_t next;
         bool paragraph_end, heading;
@@ -327,15 +364,15 @@ void book_layout_draw_page(uint8_t* fb, size_t page, EpdRect rect, int px) {
             // Alignment: center centers the whole line; justification covers mid-paragraph lines only.
             if (s_align == 1) {
                 ttf_draw_text_px(fb, rect.x + indent + (rect.width - indent - (int)width) / 2,
-                                 rect.y + (int)used + ttf_ascender_px(line_px), line_px,
-                                 s_line, EPD_DRAW_ALIGN_LEFT, fg, bg);
+                                      rect.y + (int)used + ttf_ascender_px(line_px), line_px,
+                                      s_line, EPD_DRAW_ALIGN_LEFT, fg, bg);
             } else if (s_align == 2 && !paragraph_end && !heading && width < rect.width - indent) {
                 // 两端对齐：逐字绘制并在字隙均摊余量；余量过小走整行绘制。
                 // Justified: draw glyph by glyph spreading the slack; tiny slack keeps whole-line draws.
                 int slack = rect.width - indent - (int)width;
                 if (slack < line_px / 2) {
                     ttf_draw_text_px(fb, rect.x + indent, rect.y + (int)used + ttf_ascender_px(line_px),
-                                     line_px, s_line, EPD_DRAW_ALIGN_LEFT, fg, bg);
+                                          line_px, s_line, EPD_DRAW_ALIGN_LEFT, fg, bg);
                 } else {
                     size_t glyphs = 0;
                     for (const char* q = s_line; *q; ++glyphs) {
@@ -353,20 +390,20 @@ void book_layout_draw_page(uint8_t* fb, size_t page, EpdRect rect, int px) {
                         memcpy(glyph, q, n);
                         glyph[n] = 0;
                         ttf_draw_text_px(fb, x, rect.y + (int)used + ttf_ascender_px(line_px), line_px,
-                                         glyph, EPD_DRAW_ALIGN_LEFT, fg, bg);
+                                              glyph, EPD_DRAW_ALIGN_LEFT, fg, bg);
                         x += (int)ttf_text_width_px(line_px, glyph) + per_gap + (extra-- > 0 ? 1 : 0);
                         q += n;
                     }
                 }
             } else {
                 ttf_draw_text_px(fb, rect.x + indent, rect.y + (int)used + ttf_ascender_px(line_px), line_px,
-                                 s_line, EPD_DRAW_ALIGN_LEFT, fg, bg);
+                                      s_line, EPD_DRAW_ALIGN_LEFT, fg, bg);
             }
-            // 行辅助线：每行文字下方一条横线，实线整条、虚线 8/6 分段，随夜间换灰。
-            // Guide rule: one rule under each text line, solid whole or dashed 8/6 segments, graying with night.
+            // 网格线固定在槽底，旧页线不进入新页文字带；图文回退沿用原行位置。
+            // Grid rules stay at slot bottoms so old-page rules avoid new text bands; illustration fallback retains original row positions.
             if (s_guide_style) {
-                int y = rect.y + (int)used + line_px + (line_height - line_px) / 2 - 1;
-                uint8_t gray = s_night ? 0x50 : 0xB0;
+                int y = rect.y + (int)used + (s_guide_grid ? line_height - 3 : line_px + (line_height - line_px) / 2 - 1);
+                uint8_t gray = s_guide_binary ? (s_night ? 0xF0 : 0x00) : (s_night ? 0x50 : 0xB0);
                 if (s_guide_style == 1) {
                     epd_fill_rect((EpdRect){rect.x, y, rect.width, 2}, gray, fb);
                 } else {
@@ -383,9 +420,10 @@ void book_layout_draw_page(uint8_t* fb, size_t page, EpdRect rect, int px) {
 size_t book_layout_image_at(size_t page, EpdRect rect, int x, int y, EpdRect* hit) {
     if (page >= book_layout_page_count() || rect.width != s_rect.width || rect.height != s_rect.height ||
         rect.x < 0 || rect.y < 0 || rect.x > INT_MAX - rect.width || rect.y > INT_MAX - rect.height ||
-        x < rect.x || y < rect.y || x >= rect.x + rect.width || y >= rect.y + rect.height) return SIZE_MAX;
+        x < rect.x || y < rect.y || x >= rect.x + rect.width || y >= rect.y + rect.height ||
+        guide_grid_requested() != s_guide_grid || grid_padding(rect) != s_grid_padding) return SIZE_MAX;
     size_t off = s_pages[page], end = page + 1 < s_count ? s_pages[page + 1] : s_len;
-    int64_t used = 0;
+    int64_t used = s_grid_padding;
     while (off < end) {
         size_t next; bool paragraph_end, heading; int px;
         if (!take_line(off, &next, &paragraph_end, &px, &heading)) return SIZE_MAX;
@@ -402,6 +440,46 @@ size_t book_layout_image_at(size_t page, EpdRect rect, int x, int y, EpdRect* hi
         used += height;
         if (paragraph_end) used += para_gap(height, heading);
         off = next;
+    }
+    return SIZE_MAX;
+}
+
+// 字符命中沿用绘制的行高、缩进与对齐。/ Glyph hits share drawing heights, indentation and alignment.
+size_t book_layout_text_at(size_t page, EpdRect rect, int x, int y) {
+    if (page >= book_layout_page_count() || rect.width != s_rect.width || rect.height != s_rect.height ||
+        rect.x < 0 || rect.y < 0 || rect.x > INT_MAX - rect.width || rect.y > INT_MAX - rect.height ||
+        x < rect.x || y < rect.y || x >= rect.x + rect.width || y >= rect.y + rect.height ||
+        guide_grid_requested() != s_guide_grid || grid_padding(rect) != s_grid_padding) return SIZE_MAX;
+    size_t off = s_pages[page], end = page + 1 < s_count ? s_pages[page + 1] : s_len;
+    int used = s_grid_padding;
+    while (off < end) {
+        size_t next; bool paragraph_end, heading; int px;
+        if (!take_line(off, &next, &paragraph_end, &px, &heading)) return SIZE_MAX;
+        const blk_t* block = block_at(off); int height = row_height(block, px);
+        if (used + height > rect.height) return SIZE_MAX;
+        if (y >= rect.y + used && y < rect.y + used + px && s_line[0] && !(block && (block->image || block->image_src))) {
+            int indent = line_indent(off, heading), width = ttf_text_width_px(px, s_line);
+            int left = rect.x + indent, slack = rect.width - indent - width;
+            if (s_align == 1) left += slack / 2;
+            size_t len = strlen(s_line), glyphs = 0;
+            for (size_t i=0;i<len;) { size_t n=codepoint_size(s_line+i,len-i); if(!n)return SIZE_MAX; i+=n; ++glyphs; }
+            bool justified = s_align == 2 && !paragraph_end && !heading && slack >= px / 2 && glyphs > 1;
+            int gap = justified ? slack / (int)(glyphs-1) : 0, extra = justified ? slack % (int)(glyphs-1) : 0;
+            int pen = left;
+            for (size_t i=0;i<len;) {
+                size_t n=codepoint_size(s_line+i,len-i); if(!n)return SIZE_MAX;
+                char glyph[5]; memcpy(glyph,s_line+i,n); glyph[n]=0;
+                int w=ttf_text_width_px(px,glyph);
+                if (!justified) {
+                    char keep=s_line[i]; s_line[i]=0; pen=left+ttf_text_width_px(px,s_line); s_line[i]=keep;
+                    char after=s_line[i+n]; s_line[i+n]=0; w=left+ttf_text_width_px(px,s_line)-pen; s_line[i+n]=after;
+                }
+                if(x>=pen && x<pen+w && !(n==1 && (glyph[0]==' '||glyph[0]=='\t'))) return off+i;
+                pen+=w+gap+(extra-- > 0 ? 1 : 0); i+=n;
+            }
+            return SIZE_MAX;
+        }
+        used += height; if(paragraph_end) used += para_gap(height,heading); off=next;
     }
     return SIZE_MAX;
 }
@@ -426,6 +504,12 @@ void book_layout_set_paragraph(int tier) {
 
 void book_layout_set_guide(int style) {
     s_guide_style = style == 1 || style == 2 ? style : 0;
+}
+void book_layout_set_guide_origin(int y) {
+    s_guide_origin = y >= 0 ? y : 0;
+}
+void book_layout_set_guide_contrast(bool binary) {
+    s_guide_binary = binary;
 }
 
 void book_layout_set_align(int align) {

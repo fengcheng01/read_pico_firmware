@@ -30,6 +30,7 @@ static const char* TAG = "os_crash";
 // boot_check 暂存的待写记录；written 标记本次开机已完成。
 // The stashed record from boot_check; written marks this boot as done.
 static bool s_pending, s_written;
+static bool s_boot_abnormal;
 
 void os_crash_boot_check(void) {
     if (s_pending || s_written) return;
@@ -39,8 +40,11 @@ void os_crash_boot_check(void) {
         return;
     }
     s_pending = true;
+    s_boot_abnormal = true;
     ESP_LOGW(TAG, "previous reset was abnormal: %s", os_crash_reset_name(reason));
 }
+
+bool os_crash_boot_abnormal(void) { return s_boot_abnormal; }
 
 void os_crash_flush(void) {
     if (!s_pending || s_written) return;

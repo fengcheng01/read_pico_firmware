@@ -10,7 +10,7 @@
 #include <string.h>
 #include <math.h>
 
-static char s_method[8], s_url[224], s_user[64], s_key[64], s_body[288], s_type[40];
+static char s_method[8], s_url[224], s_user[64], s_key[64], s_body[4096], s_type[40];
 static const char* s_resp;
 static int s_status = 200;
 static unsigned s_calls;
@@ -91,6 +91,12 @@ int main(void) {
     assert(strstr(s_body, "\"progress\":\"rp1|123456|7|4321|48\""));
     assert(strstr(s_body, "\"percentage\":0.42"));
     assert(os_sync_push(&cfg, "short", rp1, 0.5f) == OS_SYNC_IO);
+    const char* long_path="/body/DocFragment[42]/body/div[1]/section[1]/div[2]/section[3]/p[129]";
+    assert(strlen(long_path)>64);
+    assert(os_sync_push(&cfg,"0123456789abcdef0123456789abcdef",long_path,0.8f)==OS_SYNC_OK);
+    assert(strstr(s_body,long_path));
+    char oversized[OS_SYNC_PROGRESS_MAX+1];memset(oversized,'x',sizeof(oversized)-1);oversized[sizeof(oversized)-1]=0;
+    assert(os_sync_push(&cfg,"0123456789abcdef0123456789abcdef",oversized,0.8f)==OS_SYNC_IO);
     s_status = -1;
     assert(os_sync_push(&cfg, "0123456789abcdef0123456789abcdef", rp1, 0.5f) == OS_SYNC_OFFLINE);
 

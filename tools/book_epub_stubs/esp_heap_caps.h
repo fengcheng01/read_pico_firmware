@@ -14,6 +14,10 @@ void *book_test_realloc(void *p, size_t n);
 #define malloc book_test_malloc
 #define calloc book_test_calloc
 #define realloc book_test_realloc
+#ifdef BOOK_HEAP_DIRECT_FREE
+void book_test_free(void *p);
+#define free book_test_free
+#endif
 #endif
 static inline void *heap_caps_malloc(size_t n, int caps) { (void)caps; return malloc(n); }
 static inline void *heap_caps_calloc(size_t n, size_t s, int caps) { (void)caps; return calloc(n,s); }

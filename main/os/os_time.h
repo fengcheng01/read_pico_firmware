@@ -67,6 +67,9 @@ bool os_time_tz_valid(int16_t tz_qh);
 void os_time_poll(int64_t now_ms);
 /// 强制下次 poll 立即刷新。/ Force the next poll to refresh immediately.
 void os_time_invalidate(void);
+/// 显式要求下一次 poll 从 PMU RTC 重锚；浅睡唤醒不得调用，须保留单调钟锚点。
+/// Explicitly re-anchor from PMU on the next poll; light-sleep wakes must retain the monotonic anchor instead.
+void os_time_rtc_reanchor(void);
 /// 仅强制下次 poll 刷新，保留校准状态。/ Force the next poll to refresh while keeping the sync state.
 void os_time_force_poll(void);
 /// 保存并应用新时区。/ Persist and apply a new timezone.
@@ -77,3 +80,14 @@ void os_time_network(bool sta_uplink);
 int os_time_battery_permille(void);
 /// 最近一次 STA 会话内是否成功校时；会话结束或失效后复位。/ Whether the last STA session calibrated time; cleared when it ends or on invalidate.
 bool os_time_recently_synced(void);
+
+/// 记录成功浅睡的单调钟时长，用于网络实测补偿；失败或醒着的等待不计。/ Record successful light-sleep monotonic duration for network-measured compensation; omit failed sleep and awake waits.
+void os_time_record_sleep(int64_t duration_us);
+/// 格式化实测走时状态，只读缓存；与联网对时成功分开显示。/ Format cached measured-rate status separately from network sync success.
+void os_time_clock_status(char* out, size_t cap);
+/// 动态锁屏维护是否到期：首轮一小时，已学习后六小时。/ Whether dynamic-lock maintenance is due: one hour initially, six hours after learning.
+bool os_time_maintenance_due(int64_t now_ms);
+/// UI任务推进有界锁屏校时，返回是否仍在联网；仅自有会话。/ UI advances bounded lock sync; true means networking, with owned sessions only.
+bool os_time_lock_sync_tick(int64_t now_ms);
+/// 按键解锁或离开锁屏时收尾联网。/ Release maintenance networking on key unlock or lock exit.
+void os_time_lock_sync_cancel(void);

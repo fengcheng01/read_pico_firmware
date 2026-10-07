@@ -45,11 +45,20 @@ void *book_test_realloc(void *p, size_t n) {
     }
     return next;
 }
+#ifndef BOOK_HEAP_DIRECT_FREE
 void __real_free(void *p);
-void __wrap_free(void *p) {
+#endif
+void book_test_free(void *p) {
     if (p) { size_t i = slot(p); if (slots[i].ptr) remove_slot(i); }
+#ifdef BOOK_HEAP_DIRECT_FREE
+    free(p);
+#else
     __real_free(p);
+#endif
 }
+#ifndef BOOK_HEAP_DIRECT_FREE
+void __wrap_free(void *p) { book_test_free(p); }
+#endif
 void book_heap_reset(void) {
     assert(!live);
     for (size_t i = 0; i < 131072; ++i) slots[i] = (allocation_t){0};

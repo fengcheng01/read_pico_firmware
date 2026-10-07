@@ -15,6 +15,8 @@
  * must retain full refresh and menu exits.
  * 冻结：返回恢复最近切页来源，菜单来源保留菜单位置。
  * Frozen: Return restores the latest page origin, preserving its menu position.
+ * 冻结：用户反馈同页菜单书架误回正文；明确菜单入口先退出再调用 on_menu_select/on_enter，同页也重新进入。
+ * Frozen: User reports same-page Library returning to the body; explicit menu entry exits then calls on_menu_select/on_enter, even for the same descriptor.
  */
 
 #pragma once
@@ -79,6 +81,9 @@ typedef struct {
     /// 页面想跳到别的页时填这里，主循环会在本轮末尾切过去。
     /// / Request a page switch; the loop applies it at the end of the tick.
     const struct app_desc_s* request_app;
+    /// 按下即切页的导航可重置触摸沿，接收刷屏期间发生的下一次点击；只用于共享导航区域。
+    /// Press navigation may rearm touch edges to catch the next tap during presentation; shared navigation regions only.
+    bool request_app_rearm_touch;
     /// 本轮末打开菜单；切页请求优先。/ Open the menu at tick end; page requests take priority.
     bool request_menu;
     /// 返回最近切页来源；菜单来源直接恢复菜单，无历史打开当前所属菜单；优先于其它请求。
@@ -96,6 +101,8 @@ struct app_desc_s {
     /// true = 进页走 APP_REDRAW_FULL（均衡配置下整屏 GC16）。内容和上一页差别大的页面用，避免差分刷留边。
     /// / true = enter with APP_REDRAW_FULL so a differential update does not leave a seam.
     bool enter_full;
+    /// 常规更新用单遍GL16导航表；进页清理由enter_full声明。/ Routine updates use one GL16 navigation pass; enter_full declares entry cleanup.
+    bool clean_page;
     /// 菜单关闭时接管三键，页面必须提供强刷和菜单入口。
     /// Own all three keys outside the menu; provide full refresh and menu exits.
     bool owns_keys;
@@ -103,6 +110,9 @@ struct app_desc_s {
     /// / Enter/exit. on_enter powers up, wakes sensors, takes a first sample.
     void (*on_enter)(app_ctx_t* ctx);
     void (*on_exit)(app_ctx_t* ctx);
+    /// 菜单选择后的明确入口；同页也先退出再重入，普通请求不调用。
+    /// Explicit menu entry after exit; reenter even the same page, excluding ordinary requests.
+    void (*on_menu_select)(app_ctx_t* ctx);
     /// TF 挂载失效：停止并等待后台任务、关闭文件；主循环随后回退字体并重绘，菜单打开时也通知。
     /// On TF mount loss, join background work and close files before font fallback/redraw; also called behind menus.
     void (*on_media_lost)(app_ctx_t* ctx);

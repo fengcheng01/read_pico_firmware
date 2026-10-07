@@ -8,6 +8,7 @@
  */
 #pragma once
 #include "ui_kit.h"
+#include "ui_gesture.h"
 #include "book_cover.h"
 #include "os_catalog.h"
 #include "app.h"
@@ -31,6 +32,9 @@ void ui_product_root_bar(uint8_t* fb, os_app_id_t active);
 os_app_id_t ui_product_root_hit(uint16_t x, uint16_t y);
 /// 请求产品根页；书架为明确进入请求，不触发默认续读。/ Request a root page; Library uses an explicit shelf entry without default resume.
 bool ui_product_navigate(app_ctx_t* ctx, os_app_id_t id);
+/// 按下即导航底栏 tab（PRESS 事件传入）；命中并已发起切换返回 true。
+/// Navigate a bottom-bar tab on press (pass PRESS events); true when a target was hit.
+bool ui_product_root_press(app_ctx_t* ctx, const ui_gesture_event_t* ev);
 /// 文件名排版封面，不假称 EPUB 真实封面。/ Typographic filename cover, never advertised as an extracted EPUB cover.
 void ui_product_cover(uint8_t* fb, EpdRect rect, const char* title, int px);
 /// 三行书封列表与翻页管理行的共享绘图/触区。/ Shared three-row cover list and paging/management geometry.
@@ -54,6 +58,13 @@ void ui_product_reader_chrome(uint8_t* fb, const char* title, unsigned page, uns
 /// Lock-PIN keypad draw/hit; digits are entered dots, back adds a return button, hits return 0..9 digits, 10 clear, 11 backspace.
 void ui_product_lock_keypad(uint8_t* fb, const char* title, const char* message, unsigned digits, bool back);
 int ui_product_lock_keypad_hit(uint16_t x, uint16_t y);
+/// 单键几何与重绘；pressed 为按下灰底态，key 取值与命中一致。
+/// Single-key geometry and repaint; pressed paints the gray bed, key matches the hit codes.
+EpdRect ui_product_lock_key_rect(int key);
+void ui_product_lock_key(uint8_t* fb, int key, bool pressed);
+/// 只画圆点、键位与提示，不清屏不画标题；页面自带头部时使用。
+/// Dots, keys and hint only, without clearing or the title; for pages with their own header.
+void ui_product_lock_keypad_body(uint8_t* fb, const char* message, unsigned digits);
 
 /// 缩放内存封面，保留灰阶和比例；不读取文件。/ Scale an in-memory cover preserving grayscale and aspect; never read files.
 void ui_product_cover_bitmap(uint8_t* fb, EpdRect rect, const uint8_t* gray);

@@ -42,3 +42,9 @@ esp_err_t html_to_blocks(const char* html, size_t len, html_text_t* out);
 void html_text_free(html_text_t* text);
 /// 释放块表及其图片，不释放正文；可传 NULL。/ Free blocks and their images without freeing text; NULL is allowed.
 void html_blocks_free(blk_t* blocks, size_t count);
+/// 按同一正文转换规则映射文字字节到原始HTML；生成图片占位不作为锚点。
+/// Map a rendered byte to source HTML with the same extraction rules; generated image labels are not anchors.
+bool html_text_source_byte(const char* html, size_t len, size_t text_byte, size_t* source_byte);
+/// 找到源区间内首个实际文字的正文偏移；空元素或隐藏内容返回false。
+/// Find the first rendered text byte within a source range; empty or hidden elements return false.
+bool html_text_visible_byte(const char* html, size_t len, size_t source_begin, size_t source_end, size_t* text_byte);

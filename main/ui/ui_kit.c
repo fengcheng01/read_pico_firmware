@@ -1140,8 +1140,7 @@ int ui_no_font_hit_test(uint16_t x, uint16_t y) {
     return UI_NO_FONT_HIT_NONE;
 }
 
-// 开机图 / 锁屏图：整屏 4bpp 位图，尺寸必须和 framebuffer 一致。
-// Boot / lock image: full-screen 4bpp bitmap; size must match the framebuffer.
+// 逻辑方向整屏位图，源和物理帧缓冲独立。/ Full-screen logical image; source and physical scan memory are separate.
 void ui_draw_full_image(uint8_t* framebuffer, const uint8_t* image) {
     ui_clear_page(framebuffer);
     if (image == NULL) return;

@@ -39,6 +39,7 @@
 #define NVS_KEY_NIGHT "bk_night"
 #define NVS_KEY_LOCK_STYLE "lk_style"
 #define NVS_KEY_LOCK_PIN "lk_pin"
+#define NVS_KEY_LOCK_PIN_WAKE "lk_pinwk"
 #define NVS_KEY_SYNC_URL "sy_url"
 #define NVS_KEY_SYNC_USER "sy_user"
 #define NVS_KEY_SYNC_KEY "sy_key"
@@ -49,6 +50,7 @@
 #define NVS_KEY_F_BAR "ft_bar"
 #define NVS_KEY_IDLE "idle_min"
 #define NVS_KEY_GC_EVERY "gc_every"
+#define NVS_KEY_BOOK_DIRECT "bk_direct"
 #define FONT_PATH_MAX 160
 
 static app_sleep_mode_t s_sleep = APP_SLEEP_DEEP;
@@ -59,6 +61,8 @@ static bool s_pickup_wake;
 static uint8_t s_book_px = 48;
 static bool s_book_shake;
 static int8_t s_tz_qh = 32;
+static int32_t s_sleep_clock_ppm;
+static bool s_sleep_clock_valid, s_clock_auto = true;
 static uint8_t s_book_leading;
 static uint8_t s_book_margin;
 static uint8_t s_book_guide;
@@ -67,9 +71,11 @@ static uint8_t s_book_para;
 static uint8_t s_book_auto;
 static bool s_book_tap = true;
 static uint8_t s_book_tap_layout;
+static uint8_t s_book_tap_zones[9] = {1, 3, 2, 1, 3, 2, 1, 3, 2}; // 默认九宫格：左=上页(1), 中=菜单(3), 右=下页(2)
 static bool s_book_night;
 static uint8_t s_lock_style;
 static char s_lock_pin[8];
+static bool s_lock_pin_wake = true;
 static char s_sync_url[OS_SYNC_URL_MAX] = "https://sync.koreader.rocks";
 static char s_sync_user[OS_SYNC_USER_MAX];
 static char s_sync_key[33];
@@ -79,6 +85,7 @@ static bool s_footer_clock, s_footer_battery, s_footer_bar = true;
 static uint8_t s_idle_lock;
 // 与 app_config.h 的原编译期档一致，保持升级无行为变化。/ Matches the old compile-time tier in app_config.h; upgrades keep behavior.
 static uint8_t s_gc_every = 5;
+static bool s_book_direct;
 
 static uint8_t valid_book_px(uint8_t px) {
     return px >= 36 && px <= 72 && (px - 36) % 4 == 0 ? px : 48;
@@ -133,6 +140,10 @@ void app_settings_init(void) {
     if (nvs_get_u8(h, NVS_KEY_TAP, &tap) == ESP_OK) s_book_tap = tap != 0;
     uint8_t zones = 0;
     if (nvs_get_u8(h, "bk_zones", &zones) == ESP_OK && zones < 4) s_book_tap_layout = zones;
+    uint32_t packed_zones = 0;
+    if (nvs_get_u32(h, "bk_zones9", &packed_zones) == ESP_OK) {
+        for (int i = 0; i < 9; ++i) s_book_tap_zones[i] = (uint8_t)((packed_zones >> (i * 2)) & 0x03);
+    }
     if (nvs_get_u8(h, NVS_KEY_NIGHT, &night) == ESP_OK) s_book_night = night != 0;
     if (nvs_get_u8(h, NVS_KEY_LOCK_STYLE, &style) == ESP_OK && style <= 3) s_lock_style = style;
     size_t sync_len = sizeof(s_sync_url);
@@ -152,6 +163,15 @@ void app_settings_init(void) {
         (idle == 0 || idle == 5 || idle == 10 || idle == 30)) s_idle_lock = idle;
     uint8_t gc_every = 5;
     if (nvs_get_u8(h, NVS_KEY_GC_EVERY, &gc_every) == ESP_OK && gc_every_valid(gc_every)) s_gc_every = gc_every;
+    uint8_t direct = 0;
+    if (nvs_get_u8(h, NVS_KEY_BOOK_DIRECT, &direct) == ESP_OK) s_book_direct = direct == 1;
+    uint32_t clock_ppm = 0;
+    if (nvs_get_u32(h, "sl_clk_ppm", &clock_ppm) == ESP_OK && clock_ppm <= 20000) {
+        s_sleep_clock_ppm = (int32_t)clock_ppm - 10000;
+        s_sleep_clock_valid = true;
+    }
+    uint8_t clock_auto = 1;
+    if (nvs_get_u8(h, "clk_auto", &clock_auto) == ESP_OK) s_clock_auto = clock_auto != 0;
     size_t pin_len = sizeof(s_lock_pin);
     if (nvs_get_str(h, NVS_KEY_LOCK_PIN, s_lock_pin, &pin_len) != ESP_OK) s_lock_pin[0] = '\0';
     // 旧数据不是 4 位数字就视为未设密码，不阻塞启动。/ Legacy junk other than 4 digits counts as unarmed.
@@ -159,6 +179,8 @@ void app_settings_init(void) {
     bool pin_ok = pin_size == 0 || pin_size == 4;
     for (size_t i = 0; pin_ok && i < pin_size; ++i) pin_ok = s_lock_pin[i] >= '0' && s_lock_pin[i] <= '9';
     if (!pin_ok) s_lock_pin[0] = '\0';
+    uint8_t pin_wake = 1;
+    if (nvs_get_u8(h, NVS_KEY_LOCK_PIN_WAKE, &pin_wake) == ESP_OK) s_lock_pin_wake = pin_wake != 0;
     nvs_close(h);
     ESP_LOGI(
         TAG, "sleep mode %s, font %s",
@@ -364,6 +386,14 @@ void app_settings_set_lock_style(uint8_t style) {
     nvs_put_u8_checked(NVS_KEY_LOCK_STYLE, style);
 }
 
+bool app_settings_lock_pin_wake(void) { return s_lock_pin_wake; }
+
+void app_settings_set_lock_pin_wake(bool on) {
+    if (s_lock_pin_wake == on) return;
+    s_lock_pin_wake = on;
+    nvs_put_u8_checked(NVS_KEY_LOCK_PIN_WAKE, on ? 1 : 0);
+}
+
 bool app_settings_lock_pin(char* out, size_t cap) {
     if (out && cap) {
         strncpy(out, s_lock_pin, cap - 1);
@@ -445,6 +475,13 @@ void app_settings_set_idle_lock_min(uint8_t minutes) {
 
 uint8_t app_settings_gc_every(void) { return s_gc_every; }
 
+bool app_settings_book_direct(void) { return s_book_direct; }
+void app_settings_set_book_direct(bool on) {
+    if (s_book_direct == on) return;
+    s_book_direct = on;
+    nvs_put_u8_checked(NVS_KEY_BOOK_DIRECT, on);
+}
+
 void app_settings_set_gc_every(uint8_t every) {
     if (!gc_every_valid(every) || s_gc_every == every) return;
     s_gc_every = every;
@@ -481,4 +518,55 @@ void app_settings_set_book_tap_layout(uint8_t layout) {
     if (nvs_open(NVS_NS, NVS_READWRITE, &h) == ESP_OK) {
         nvs_set_u8(h, "bk_zones", layout); nvs_commit(h); nvs_close(h);
     }
+}
+
+uint8_t app_settings_book_tap_zone(uint8_t zone_idx) {
+    if (zone_idx >= 9) return 0;
+    return s_book_tap_zones[zone_idx];
+}
+
+void app_settings_set_book_tap_zone(uint8_t zone_idx, uint8_t action) {
+    if (zone_idx >= 9 || action > 3) return;
+    s_book_tap_zones[zone_idx] = action;
+    uint32_t packed = 0;
+    for (int i = 0; i < 9; ++i) packed |= ((uint32_t)(s_book_tap_zones[i] & 0x03) << (i * 2));
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS, NVS_READWRITE, &h) == ESP_OK) {
+        nvs_set_u32(h, "bk_zones9", packed);
+        nvs_commit(h);
+        nvs_close(h);
+    }
+}
+
+void app_settings_reset_book_tap_zones_default(void) {
+    static const uint8_t def[9] = {1, 3, 2, 1, 3, 2, 1, 3, 2};
+    for (int i = 0; i < 9; ++i) s_book_tap_zones[i] = def[i];
+    uint32_t packed = 0;
+    for (int i = 0; i < 9; ++i) packed |= ((uint32_t)(s_book_tap_zones[i] & 0x03) << (i * 2));
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS, NVS_READWRITE, &h) == ESP_OK) {
+        nvs_set_u32(h, "bk_zones9", packed);
+        nvs_commit(h);
+        nvs_close(h);
+    }
+}
+
+int32_t app_settings_sleep_clock_ppm(void) { return s_sleep_clock_ppm; }
+void app_settings_set_sleep_clock_ppm(int32_t ppm) {
+    if (ppm < -10000 || ppm > 10000 || (ppm == s_sleep_clock_ppm && s_sleep_clock_valid)) return;
+    s_sleep_clock_ppm = ppm;
+    s_sleep_clock_valid = false;
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS, NVS_READWRITE, &h) != ESP_OK) return;
+    if (nvs_set_u32(h, "sl_clk_ppm", (uint32_t)(ppm + 10000)) == ESP_OK && nvs_commit(h) == ESP_OK)
+        s_sleep_clock_valid = true;
+    nvs_close(h);
+}
+bool app_settings_sleep_clock_valid(void) { return s_sleep_clock_valid; }
+bool app_settings_clock_auto(void) { return s_clock_auto; }
+void app_settings_set_clock_auto(bool on) {
+    s_clock_auto = on;
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS, NVS_READWRITE, &h) != ESP_OK) return;
+    nvs_set_u8(h, "clk_auto", on); nvs_commit(h); nvs_close(h);
 }

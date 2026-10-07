@@ -22,20 +22,30 @@ that can be reused. The product UI now has four roots, a cover-first home and th
 RTC/todos, restyling every Settings child and system-wide recovery remain incomplete; this is not a complete OS release.
 
 Normal boot opens Now reading; daily roots are Now reading / Library / Today / Settings, with original tests under Settings → Diagnostics.
-Explicit home resume skips a second prompt, root-bar Library enters directly, while menu Library still asks.
+Explicit home resume skips a second prompt, root-bar and menu Library enter the shelf directly, saving the open reader before leaving.
 See [product UI, maintenance boundaries and verification](docs/READING_HOME.md).
 No second-device driver or flashable image is supplied without developer documentation.
 
 Agent-facing layout, `app_desc_t` contract, glossary and comment style are in
 [AGENTS.md](AGENTS.md).
 
-The refined toolbar exposes TOC/bookmarks, Add Bookmark, a size subpanel, More Settings, Clean and Library. Settings group typography, turns/display and progress sync. Bookmark deletion requires confirmation. Sync runs in a worker, confirms pulled positions before applying, excludes uploads/deletions during sync and cancels on exit. Home avoids a permanent font notice; the reader offers a full-font entry only when glyphs are missing.
+The refined toolbar exposes TOC/bookmarks, Add Bookmark, a size subpanel, More Settings, Clean and Library. Settings group typography, turns/display and progress sync. Bookmark deletion requires confirmation. Sync runs in a worker, confirms pulled positions before applying, excludes uploads/deletions during sync and cancels on exit. Reader Clean closes tools/settings before cleaning the body; Home avoids a permanent font notice; the reader offers a full-font entry only when glyphs are missing.
 
 
 TF also supports **USB computer connection**: Settings → Storage → USB connection. Confirm to reboot into disk mode; safely eject on the computer before exiting/restarting the device. Reading/transfer pause, and the flashing serial port returns after exit. See [USB disk usage](docs/USB_SD.md).
 
 
-Home/Today reuse complete summaries and Library retains its catalog/page until books or progress change. Tap a home book to open directly; EPUB uses its extracted cover with filename fallback for TXT/coverless books. Saved WiFi reconnects without password entry and is the default on Transfer entry. Reader tools → More Settings → Progress Sync connects automatically for testing/push/pull; pulls require confirmation and foreign positions use approximate percentages. Fresh installs default to cleanup every 5 updates; upgrades retain selected intervals (choose 5 under turns/display if desired). Cleaning covers the whole panel with complete GC16 and the product scan clock is 12 MHz. Wake transitions directly to centered PIN entry; enabled boxes show checkmarks.
+Home/Today reuse complete summaries and Library retains its catalog/page until books or progress change. Tap a home book to open directly; EPUB uses its extracted cover with filename fallback for TXT/coverless books. Saved WiFi reconnects without password entry and is the default on Transfer entry. Reader tools → More Settings → Progress Sync connects automatically for testing/push/pull; pulls require confirmation and foreign positions use approximate percentages. Generic-page cleanup defaults to every 5 updates; upgrades retain selected intervals (choose 5 under turns/display if desired). Cleaning covers the whole panel with complete GC16 and the product scan clock is 12 MHz. Wake transitions directly to centered PIN entry; enabled boxes show checkmarks.
+
+Reader tools → More Settings → Turns/Display selects standard gray (default) with antialiasing, or flicker-free direct with vendor black/white DU and binary text edges. Standard day turns restore vendor reconditioning of unchanged black/gray strokes; night retains selective holds to avoid flashing the black background light. Chapters with decoded illustrations remain standard. Ordinary turns keep their selected profile without scheduled full-screen flashes; actual layout changes clean once with GC16, and Clean remains available manually. An independent touch queue retains complete taps through scans.
+
+With guides enabled, text-only chapters share a fixed row grid for body text, headings and paragraph gaps so old rules avoid new text during turns. Direct uses black guides by day and white guides at night. Toggling guides repaginates at the saved text position; solid/dashed changes only drawing. Unguided and illustrated layouts retain their behavior. The user confirmed guide placement and direct speed on 0.5.20 hardware; standard stroke reconditioning and layout cleanup in 0.5.21 still need device comparison, without claims of whiter backgrounds or eliminated ghosts. See the [refresh contract and test commands](docs/READING_HOME.md).
+
+Footer titles show only chapters. Network-time measurements learn and persist a sleep-only clock rate. Sync after upgrading, remain booted through lock sleep and obtain a second time sample; see the Time page for automatic maintenance. Long-run accuracy still requires device comparison.
+
+Version 0.5.15 adds enabled-by-default lock automatic time sync on the Time page. Sync after upgrading, remain booted through about an hour of lock sleep to learn the measured rate automatically, then maintain time every six hours. Sessions use saved WiFi only, last at most 30 seconds, retry failures after an hour and cancel on unlock; the switch can disable them. Time displays measured ppm/save status and offline use retains the rate; long-run accuracy needs hardware testing. EPUB KOReader sync prefers real chapter/paragraph paths with a paragraph-location notice. TXT/unsupported structures retain rp1, unresolved positions use percentage fallback, and pulls require confirmation.
+
+Actual app/menu layout changes, reader-view changes and return from displayed reader overlays use one GC16 cleanup, briefly flashing the screen. Ordinary redraws, controls, loading ticks and consecutive turns do not repeat it. Home Upload Progress sends saved progress. Reader sync shows actions/results, with account configuration in Transfer. EPUB KOReader positions retain leaf text nodes and Unicode character offsets; unsupported structures show approximate fallback and pulls require confirmation. Actual cross-device precision needs comparison with the same book.
 
 ## Documentation & More Devices
 
@@ -101,10 +111,10 @@ Global navigation lists only four roots; existing features below are grouped und
 | --- | --- |
 | Now reading | Normal boot home, real saved progress, three recent books, resume and shelf/import actions |
 | Today | Large clock and date (PMU RTC + timezone, explicit when uncalibrated), today/7-day reading minutes, current-book progress; todos stay explicitly unavailable |
-| Time & timezone | Settings subpage; clock state, 15-minute timezone steps, auto SNTP sync during STA transfer |
+| Time & timezone | Settings subpage; clock state, 15-minute timezone steps, direct sync over saved WiFi without leaving the page; auto SNTP during STA transfer |
 | Settings | Reading, transfer, time, sleep, storage and separate diagnostic entries |
 | Reading settings | Default size (36–72 in steps of 4), body-font entry and the shake experiment switch |
-| Sleep settings | Post-lock mode: light/deep/off; pickup wake; lock style (static/clock/calendar/almanac) and the 4-digit lock PIN |
+| Sleep settings | Post-lock mode: light/deep/off; pickup wake; static/clock/calendar/almanac face and 4-digit PIN. Dynamic faces use minute-timed light sleep even under the deep setting; off still powers down |
 | Storage status | TF and internal library capacities, read-only probing with manual recheck; an abnormal-reset summary from the internal crash.log (no backtrace) |
 | Overview | Boot I2C scan, IDs, battery and charging status, build time |
 | EPD Refresh | Full-screen GC16, partial DU, 16-gray and fast 8-gray ladders, each with measured refresh time |
@@ -129,7 +139,7 @@ Global navigation lists only four roots; existing features below are grouped und
 | Progress sync | Transfer and reader More Settings → Progress Sync: kosync (KOReader-compatible), on-demand saved-WiFi connection, manual push/pull and transfer auto-push |
 | Transfer | Device hotspot or existing WiFi, with browser TXT/EPUB upload and complete TTF font uploads to TF; TF card preferred, internal storage limited to 1 MB per file. Scan the hotspot QR to join, or select a 2.4 GHz network and enter its password on the touchscreen. Web provisioning remains available. The browser lists and searches books in the current upload destination, confirms replacement or deletion, and supports upload cancellation and retry. Saved WiFi can be forgotten on the device. Leaving the page stops networking. |
 
-In Books, KEY1 / KEY2 / KEY3 select previous page / toolbar / next page. The toolbar includes full refresh. Hold KEY2 for 500 ms to open the demo menu. Other pages retain KEY2 full GC16 refresh and KEY3 menu. Menu rows select on release; slide away to cancel.
+In Books, KEY1 / KEY2 / KEY3 select previous page / toolbar / next page. Toolbar/settings Clean first closes overlays, then fully cleans the body. Hold KEY2 for 500 ms to open the demo menu. Other pages retain KEY2 full GC16 refresh and KEY3 menu. Menu rows select on release; slide away to cancel.
 
 ## Repository Layout
 
@@ -173,7 +183,7 @@ The main loop stays untouched.
 EPD power enable, XOE, MODE, VCOM_EN, touch reset and card detection are on FCA9555
 Port-0; see the pin table in [main/apps/app_ioe.c](main/apps/app_ioe.c).
 
-Daily reading and Settings use the complete 48-phase GL16 grayscale update, retaining antialiasing. Body and footer update together; Settings navigation and font selection no longer force a black flash. One cleanup counter defaults to GC16 every 5 ordinary updates; Off allows continuous direct updates with manual ghost cleaning. Root typography is larger and the font picker shows six rows per page. Physical ghosting and speed need device testing.
+Boot/static-lock images inflate then rotate into scan memory to avoid boot stripes. Standard day turns use all 48 vendor GL16 phases and black/gray diagonals plus one neutral phase; night uses the same changed paths with unchanged holds. Black/white direct retains all 20 vendor DU phases plus one neutral. Ordinary root/menu/Journal redraws retain vendor GL49; actual layout boundaries clean once with complete GC16. White holds during ordinary GL redraws without historical glyph erasure, and actual baselines commit only on success. Board power sequencing owns MODE/XOE without extra scan-end MODE switching. Normal body turns never trigger scheduled GC16; full GC16 is used for actual layout boundaries, manual cleaning and fault recovery. Local controls/minute bands do not consume whole-screen cleanup counts; ordinary updates power off immediately. Recent reading has pagination and totals for every valid record. Home Upload Progress sends saved progress; pulls remain confirmed in sync settings. Hold a body sentence and confirm an excerpt; Journal Notes page through the latest 16 real excerpts and jump to their source positions, with bookmarks retained in TOC. Light sleep uses divided fast RC and preserves its time anchor on wake. Sync once after upgrading; long-term drift and panel results need device testing. The two-row reader footer updates independently on minute changes.
 
 ## Transfer and limitations
 
@@ -183,7 +193,7 @@ The transfer server runs only on its page and stops on exit. It uses local-netwo
 
 Stopping transfer returns to the entry page or menu position. When a mounted TF card becomes unavailable, affected reading/transfer stops and fonts fall back; explicitly remount from the TF page after reinserting it. Removing a card during writes can damage the filesystem. EPUB chapter loading decodes local JPEG/PNG illustrations for inline pagination with text. It automatically attempts up to 64 images per chapter, sharing a 768 KiB grayscale budget and scaling proportionally. Failed or over-limit images retain tappable placeholders with a separate preview that returns to the same position. Page turns and drawing do not decode again. ZIP entries, manifest items and spine chapters are each limited to 32768; OPF/navigation metadata is limited to 4 MiB uncompressed and chapter/image reads to 2 MiB. The ZIP central directory has an 8 MiB limit; title storage has a 1 MiB budget, with numbered fallback titles beyond it. Entries above 4 MiB are rejected even when unused. These are independent memory/resource limits, so chapter count alone does not guarantee acceptance; ZIP64 and books over 32768 entries or chapters are unsupported. Externally replaced files or another card with the same path and file size may still match old reading progress. Pending retries after failed saves are not guaranteed to survive power loss.
 
-Entering Books offers to resume the previous book; staying on the shelf does not open it (KEY1 cancels, KEY3 resumes). The reader parses metadata and the current chapter, then paginates the first two pages or through the saved position. Remaining pagination advances two pages at a time; other chapters load on demand. The page total shows “…” while incomplete; entering the previous chapter at its last page still requires paginating that chapter. Width measurement uses resident font tables without rasterizing a whole chapter. Opening and chapter loading retain waiting hints and visible failure reasons (memory, limits, unsupported format or invalid file).
+Entry without an explicit shelf/open request offers to resume the previous book; staying on the shelf does not open it (KEY1 cancels, KEY3 resumes). The reader parses metadata and the current chapter, then paginates the first two pages or through the saved position. Remaining pagination advances two pages at a time; other chapters load on demand. The page total shows “…” while incomplete; entering the previous chapter at its last page still requires paginating that chapter. Width measurement uses resident font tables without rasterizing a whole chapter. Opening and chapter loading retain waiting hints and visible failure reasons (memory, limits, unsupported format or invalid file).
 
 Swipe page turns commit on release at 64 pixels (previously 120); movement beyond the 24-pixel tap tolerance but below the swipe threshold cancels, and an image-placeholder swipe turns the page without loading the image.
 

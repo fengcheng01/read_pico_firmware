@@ -29,6 +29,10 @@ typedef struct {
     book_entry_kind_t kind;
     /// 自有路径副本。/ Owned path copy.
     char path[BOOK_STORE_PATH_MAX];
+    /// 可选的原文锚点。/ Optional source anchor.
+    bool has_position;
+    uint16_t chapter;
+    uint32_t byte_off;
 } book_entry_request_t;
 
 /// 忙时拒绝替换；仅接受书根内直接 TXT/EPUB 路径。/ Reject replacement while busy; accept only direct TXT/EPUB paths in book roots.
@@ -39,3 +43,6 @@ bool book_entry_take(book_entry_request_t* out);
 void book_entry_finish(book_entry_status_t status);
 /// 只读结果，不触发开书。/ Read the result without opening a book.
 book_entry_status_t book_entry_status(void);
+
+/// 明确开书并定位到章节字节锚点。/ Explicitly open and seek to a chapter byte anchor.
+bool book_entry_request_position(const char* path, uint16_t chapter, uint32_t byte_off);

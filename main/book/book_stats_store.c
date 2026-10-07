@@ -85,15 +85,15 @@ void book_stats_store_visit(bool (*fn)(uint32_t yyyymmdd, uint16_t minutes, void
     nvs_handle_t h;
     if (nvs_open(BOOK_STATS_NS, NVS_READONLY, &h) != ESP_OK) return;
     nvs_iterator_t it = NULL;
-    esp_err_t res = nvs_entry_find(BOOK_STATS_NS, NULL, NVS_TYPE_U16, &it);
+    esp_err_t res = nvs_entry_find("nvs", BOOK_STATS_NS, NVS_TYPE_U16, &it);
     while (res == ESP_OK && it) {
-        nvs_entry_info_t info;
+        nvs_entry_info_t info = {0};
         nvs_entry_info(it, &info);
-        res = nvs_entry_next(&it);
-        uint32_t date = 0;
+        unsigned long date = 0;
         uint16_t minutes = 0;
-        if (sscanf(info.key, "st_%lu", (unsigned long*)&date) == 1 && date >= 10000101UL && date <= 99991231UL &&
-            nvs_get_u16(h, info.key, &minutes) == ESP_OK && !fn(date, minutes, ctx)) {
+        char extra;
+        if (sscanf(info.key, "st_%lu%c", &date, &extra) == 1 && date >= 10000101UL && date <= 99991231UL &&
+            nvs_get_u16(h, info.key, &minutes) == ESP_OK && !fn((uint32_t)date, minutes, ctx)) {
             nvs_release_iterator(it);
             break;
         }

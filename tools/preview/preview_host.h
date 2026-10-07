@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  * 中文：电脑预览的硬件与 RTOS 边界，供真实页面和字体代码编译。
  * English: Hardware and RTOS boundary for compiling real pages and fonts on the host.
- * 冻结：不模拟真实刷新耗时、硬件电源或后台预绘制任务。
- * Frozen: No physical refresh timing, power emulation or background prepainting.
+ * 冻结：为验证后台封面与预绘制生命周期，任务使用 pthread；仍不模拟真实刷新耗时或硬件电源。
+ * Frozen: Use pthread tasks to verify cover/prepaint lifecycles; never simulate physical refresh timing or power.
  */
 #pragma once
 #include <stdbool.h>
@@ -51,6 +51,7 @@ enum EpdRotation { EPD_ROT_LANDSCAPE, EPD_ROT_PORTRAIT, EPD_ROT_INVERTED_LANDSCA
 enum EpdFontFlags { EPD_DRAW_BACKGROUND = 1, EPD_DRAW_ALIGN_LEFT = 2, EPD_DRAW_ALIGN_RIGHT = 4, EPD_DRAW_ALIGN_CENTER = 8 };
 extern const EpdWaveform E0470_WAVEFORM, E0470_FULL_WAVEFORM, E0470_GRAY8_WAVEFORM;
 extern const EpdWaveform E0470_FOLLOW_WAVEFORM;
+extern const EpdWaveform E0470_NAVIGATION_WAVEFORM;
 int epd_width(void);
 int epd_height(void);
 int epd_rotated_display_width(void);
@@ -69,11 +70,16 @@ void epd_draw_rotated_image(EpdRect rect, const uint8_t* image, uint8_t* fb);
 uint8_t* epd_hl_get_framebuffer(EpdiyHighlevelState* hl);
 enum EpdDrawError update_display_mode(EpdiyHighlevelState* hl, enum EpdDrawMode mode);
 enum EpdDrawError update_display_full(EpdiyHighlevelState* hl);
+enum EpdDrawError update_display_text_turn(EpdiyHighlevelState* hl, bool white_on_black);
+enum EpdDrawError update_display_text_direct(EpdiyHighlevelState* hl, bool white_on_black);
 enum EpdDrawError update_display_white(EpdiyHighlevelState* hl);
+enum EpdDrawError update_display_with(EpdiyHighlevelState*, const EpdWaveform*, enum EpdDrawMode);
 enum EpdDrawError update_display_from_white(EpdiyHighlevelState* hl);
 enum EpdDrawError update_display_from_white_with(EpdiyHighlevelState* hl, const EpdWaveform* wave, enum EpdDrawMode mode);
 enum EpdDrawError update_display_area_with(EpdiyHighlevelState* hl, const EpdWaveform* wave, enum EpdDrawMode mode, EpdRect area);
+enum EpdDrawError update_display_area_quiet(EpdiyHighlevelState* hl, EpdRect area);
 void display_set_bulk_io(bool bulk);
+void display_request_navigation_settle(void);
 size_t heap_caps_get_free_size(uint32_t caps);
 #define MALLOC_CAP_INTERNAL 1
 #define MALLOC_CAP_8BIT 2
@@ -174,3 +180,6 @@ esp_err_t read_pico_sd_sync(void);
 esp_err_t read_pico_sd_remount(void);
 
 void epd_draw_line(int x0, int y0, int x1, int y1, uint8_t c, uint8_t* fb);
+
+// 后台任务有界等待。/ Yield during bounded worker joins.
+void vTaskDelay(int ms);

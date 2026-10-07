@@ -10,11 +10,11 @@
  * device uses esp_http_client plus the partial MD5, tests use fakes; this file
  * reads no NVS and touches no network.
  *
- * 冻结：密码只以 MD5 十六进制参与协议，不存/不传明文；进度串是自有 rp1 格式，
- * 解析不了的远端进度只按百分比回退，不伪造精确位置。
+ * 冻结：密码只以 MD5 十六进制参与协议，不存/不传明文；EPUB优先真实XHTML段落路径，保留rp1；
+ * 用户要求优化KOReader互通；解析不了的远端进度只按百分比回退，不伪造字符精度。
  * Frozen: Passwords exist only as MD5 hex on the wire, never plain; the
- * progress string is our rp1 format, and unparsable remote progress falls back
- * to percentage only, never faking a precise position.
+ * user-requested KOReader interoperability prefers real XHTML paragraph paths for EPUB, retains rp1,
+ * and falls back to percentage without inventing character precision.
  */
 #pragma once
 #include <stdbool.h>
@@ -23,7 +23,7 @@
 
 #define OS_SYNC_URL_MAX 128
 #define OS_SYNC_USER_MAX 32
-#define OS_SYNC_PROGRESS_MAX 64
+#define OS_SYNC_PROGRESS_MAX 512
 #define OS_SYNC_DEVICE "Read Pico"
 #define OS_SYNC_DEFAULT_URL "https://sync.koreader.rocks"
 
@@ -68,7 +68,7 @@ bool os_sync_config_ready(os_sync_config_t* config);
 
 os_sync_result_t os_sync_register(const os_sync_config_t* config);
 os_sync_result_t os_sync_auth(const os_sync_config_t* config);
-/// 上传：progress 为 rp1 串，percent 为 0..1。/ Push an rp1 string with a 0..1 percentage.
+/// 上传：progress 为有界的 EPUB 路径或 rp1 串，percent 为 0..1。/ Push a bounded EPUB path or rp1 string with a 0..1 percentage.
 os_sync_result_t os_sync_push(const os_sync_config_t* config, const char* doc_id,
                               const char* progress, float percent);
 /// 拉取：输出远端 progress（可为 KOReader 任意串）与百分比。/ Pull the remote progress string and percentage.

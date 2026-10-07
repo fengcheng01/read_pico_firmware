@@ -8,18 +8,18 @@
  * verifies certificates, never skipped), document identity is the KOReader
  * partial MD5, and push/pull act on the last-read book's progress record.
  *
- * 冻结：用户批准非阻塞同步；UI 准备/应用快照，单个后台请求只做网络；离页取消并收齐；密码仅以 MD5 落盘；
+ * 冻结：用户批准非阻塞同步；UI 准备/应用快照，后台不读写NVS；离页取消并收齐；密码仅以 MD5 落盘；
  * 用户反馈后由 UI 按需启动已保存 WiFi，后台等到 STA 可用才请求；独占联网不启动传书 HTTP，结果收齐后释放。
- * 拉取只在文件大小匹配时套用 rp1 精确位置，否则按百分比近似并明示。
- * Frozen: User-approved nonblocking sync: UI prepares/applies snapshots, one worker only networks, and exit cancels/joins; no
+ * 用户要求提高KOReader定位：后台可独立只读解析EPUB真实祖先、文本节点与Unicode偏移；旧段落仍兼容，rp1需文件大小匹配，其余明示百分比近似。
+ * Frozen: User-approved nonblocking sync: UI prepares/applies snapshots, the worker never accesses NVS, and exit cancels/joins; no
  * periodic background polling; UI owns on-demand saved-WiFi sessions, the worker waits for STA and network-only sessions never start upload HTTP; the password persists only as MD5; pulls apply the exact
- * rp1 position only when file sizes match, otherwise approximating by
- * percentage and saying so.
+ * rp1 position only when file sizes match; for user-requested accuracy, the worker independently reads EPUB ancestry, text nodes and Unicode offsets, retaining legacy paragraphs and clearly approximating unsupported positions by percentage.
  */
 #include "os_sync.h"
 #include "os_time.h"
 #include "os_sync_http.h"
 #include "book_progress.h"
+#include "book_epub.h"
 #include "esp_crt_bundle.h"
 #include "esp_http_client.h"
 #include "esp_log.h"
@@ -29,6 +29,7 @@
 #include "read_pico_transfer.h"
 #include <stdio.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/stat.h>
 #include <stdatomic.h>
 #include "freertos/FreeRTOS.h"
@@ -190,6 +191,9 @@ static bool s_has_local;
 static uint32_t s_size;
 static float s_percent;
 static os_sync_result_t s_result;
+static bool s_paragraph;
+static uint16_t s_paragraph_chapter;
+static uint32_t s_paragraph_byte;
 static bool sync_cancelled(void) { return atomic_load(&s_cancel); }
 
 static void sync_worker(void* arg) {
@@ -207,10 +211,20 @@ static void sync_worker(void* arg) {
     } while (true);
     atomic_store(&s_link_ready, true);
     if (sync_cancelled()) { s_result = OS_SYNC_OFFLINE; goto done; }
+    const char* ext = strrchr(s_path, '.');
+    bool epub = ext && !strcasecmp(ext, ".epub");
+    if (s_job == OS_SYNC_JOB_PUSH && epub && !s_local.approximate) {
+        char position[OS_SYNC_PROGRESS_MAX];
+        if (book_epub_sync_encode(s_path, s_local.chapter, s_local.byte_off, position, sizeof(position)))
+            memcpy(s_position, position, strlen(position) + 1);
+    }
+    if (sync_cancelled()) { s_result = OS_SYNC_OFFLINE; goto done; }
     if (s_job == OS_SYNC_JOB_AUTH) s_result = os_sync_auth(&s_config);
     else if (s_job == OS_SYNC_JOB_REGISTER) s_result = os_sync_register(&s_config);
     else if (s_job == OS_SYNC_JOB_PUSH) s_result = os_sync_push(&s_config, s_doc, s_position, s_percent);
     else s_result = os_sync_pull(&s_config, s_doc, s_position, sizeof(s_position), &s_percent);
+    if (s_job == OS_SYNC_JOB_PULL && s_result == OS_SYNC_OK && epub && !sync_cancelled())
+        s_paragraph = book_epub_sync_decode(s_path, s_position, &s_paragraph_chapter, &s_paragraph_byte);
     // 信号发出后不再访问快照，UI 可以安全接收或离页。/ After signaling, never access snapshots; UI may receive or exit safely.
 done:
     xSemaphoreGive(s_done);
@@ -224,6 +238,7 @@ bool os_sync_job_start(os_sync_job_t job, char* note, size_t cap) {
     if (!os_sync_config_ready(&s_config)) { snprintf(note, cap, "请先设置同步账号"); return false; }
     if (!prepare_network(note, cap)) return false;
     s_job = job;
+    s_paragraph = false;
     if (job == OS_SYNC_JOB_PUSH || job == OS_SYNC_JOB_PULL) {
         struct stat st;
         if (!book_progress_last_path(s_path, sizeof(s_path)) || !s_path[0] ||
@@ -247,7 +262,7 @@ bool os_sync_job_start(os_sync_job_t job, char* note, size_t cap) {
     atomic_store(&s_cancel, false);
     atomic_store(&s_link_ready, false);
     s_running = true;
-    if (xTaskCreate(sync_worker, "progress_sync", 8192, NULL, 3, NULL) != pdPASS) {
+    if (xTaskCreate(sync_worker, "progress_sync", 12288, NULL, 3, NULL) != pdPASS) {
         s_running = false; release_session(); snprintf(note, cap, "无法启动同步，请重试"); return false;
     }
     snprintf(note, cap, "%s", "正在连接已保存 WiFi 并同步…");
@@ -274,18 +289,19 @@ bool os_sync_job_poll(char* note, size_t cap) {
     uint8_t px;
     bool exact = os_sync_progress_decode(s_position, &size, &chapter, &off, &px) && size == s_size;
     s_remote.file_size = s_size;
-    s_remote.approximate = !exact;
+    s_remote.approximate = !exact && !s_paragraph;
     s_remote.px = app_settings_book_px();
     if (exact) {
         s_remote.chapter = chapter; s_remote.byte_off = off;
         s_remote.px = px >= 36 && px <= 72 ? px : 48;
     }
+    if (s_paragraph) { s_remote.chapter = s_paragraph_chapter; s_remote.byte_off = s_paragraph_byte; }
     s_remote.pct = (uint8_t)(s_percent * 100 + 0.5f);
     if (s_network_owned) { os_time_network(false); read_pico_transfer_stop(); }
     s_network_owned = false;
     s_pending = true;
     snprintf(note, cap, "本地 %u%% → 远端 %u%% · %s", (unsigned)s_local.pct, (unsigned)s_remote.pct,
-             exact ? "精确位置" : "近似位置");
+             exact ? "精确位置" : s_paragraph ? (strstr(s_position,"/text()")?"文本位置":"段落位置") : "近似位置");
     return true;
 }
 static bool finish_pull_confirmation(bool apply, char* note, size_t cap) {

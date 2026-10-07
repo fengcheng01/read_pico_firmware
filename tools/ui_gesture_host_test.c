@@ -1,6 +1,6 @@
 /*
  * SPDX-FileCopyrightText: 2026 mindreset
- * SPDX-License-Identifier: Apache-2.0
+ *
  * 中文：真实识别器的时序与边界测试。
  * English: Timing and boundary tests for the actual recognizer.
  * 冻结：仅用于主机测试。/ Frozen: Host tests only.
@@ -19,14 +19,17 @@ static bool feed(int x, int y, int64_t time, bool down, bool press, bool release
     ctx = (app_ctx_t){ .touch = &touch, .now_ms = time, .pressed = press, .released = release, .consumed = consumed };
     return ui_gesture_feed(&g, &ctx, &event);
 }
+// 首帧立即发 PRESS；第二帧稳定轻点锚点，不再重复派发。
+// The first sample emits PRESS immediately; the second stabilizes taps without emitting twice.
 static void press(int x, int y, int64_t time) {
     ui_gesture_reset(&g);
     assert(feed(x, y, time, true, true, false, false));
     assert(event.type == UI_GESTURE_PRESS && event.hold_ms == 0);
+    assert(!feed(x, y, time + 1, true, false, false, false));
 }
 int main(void) {
     press(200, 300, 100);
-    assert(!feed(200, 300, 100, true, true, false, false));
+    assert(!feed(200, 300, 110, true, true, false, false));
     assert(feed(210, 310, 200, false, false, true, false));
     assert(event.type == UI_GESTURE_TAP && event.x0 == 200 && event.y0 == 300);
     assert(event.x == 210 && event.y == 310 && event.hold_ms == 100);
@@ -78,8 +81,24 @@ int main(void) {
     ui_gesture_reset(&g);
     assert(!feed(10, 10, 100, true, true, false, true));
     assert(feed(10, 10, 100, true, true, false, false));
+    assert(!feed(10, 10, 101, true, false, false, false));
     assert(feed(10, 10, INT64_MIN, true, false, false, false));
     assert(event.type == UI_GESTURE_CANCEL && event.hold_ms == 0);
+    // 抖动回归：首帧偏移超容差，PRESS 以第二帧稳定坐标重锚，轻点不再被误判取消。
+    // Jitter regression: a first sample off beyond slop re-anchors on the settled
+    // second frame, so the tap is no longer misread as a drag and cancelled.
+    ui_gesture_reset(&g);
+    assert(feed(300, 300, 100, true, true, false, false));
+    assert(event.type == UI_GESTURE_PRESS);
+    assert(!feed(200, 300, 120, true, false, false, false));
+    assert(feed(205, 302, 260, false, false, true, false));
+    assert(event.type == UI_GESTURE_TAP && event.x0 == 200 && event.y0 == 300);
+    // 单帧速点：等不到第二帧就抬起，仍按首帧坐标发 TAP，不丢输入。
+    // One-sample quick tap: lifting before the second sample still emits a TAP at the origin.
+    ui_gesture_reset(&g);
+    assert(feed(150, 150, 0, true, true, false, false));
+    assert(feed(150, 150, 25, false, false, true, false));
+    assert(event.type == UI_GESTURE_TAP && event.x0 == 150);
     assert(!ui_gesture_feed(NULL, &ctx, &event));
     puts("gesture host tests passed");
 }

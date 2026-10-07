@@ -15,6 +15,7 @@
 #include "book_epub.h"
 #include "zip_reader.h"
 #include "book_image.h"
+#include "book_xpointer.h"
 #include "esp_heap_caps.h"
 #include <stdbool.h>
 #include <stdlib.h>
@@ -634,6 +635,26 @@ esp_err_t book_epub_load_image_budget(book_epub_t *book, size_t i, const char *r
 }
 uint32_t book_epub_total_bytes(const book_epub_t *book) { return book ? book->total : 0; }
 uint32_t book_epub_chapter_byte_offset(const book_epub_t *book, size_t i) { return book && i < book->count ? book->chapters[i].offset : 0; }
+static bool sync_position(const char* path, size_t* chapter, uint32_t* byte, const char* input, char* out, size_t cap) {
+    book_epub_t* book=NULL; char* html=NULL; size_t len=0; bool ok=false;
+    if(book_epub_open(path,&book)!=ESP_OK) return false;
+    if(*chapter<book->count && load_entry(book,book->chapters[*chapter].zip_index,&html,&len)==ESP_OK) {
+        if(input) { size_t visible=0;ok=book_xpointer_decode(html,len,input,&visible)&&visible<=UINT32_MAX;if(ok)*byte=(uint32_t)visible; }
+        else ok=book_xpointer_encode(html,len,*chapter,*byte,out,cap);
+    }
+    free(html);book_epub_close(book);return ok;
+}
+bool book_epub_sync_encode(const char* path,uint16_t chapter,uint32_t byte,char* out,size_t cap) {
+    if (!path || !out || !cap) return false;
+    size_t index=chapter;
+    return sync_position(path,&index,&byte,NULL,out,cap);
+}
+bool book_epub_sync_decode(const char* path,const char* position,uint16_t* chapter,uint32_t* byte) {
+    if (!path || !chapter || !byte) return false;
+    size_t index;uint32_t offset=0;
+    if(!book_xpointer_chapter(position,&index)||!sync_position(path,&index,&offset,position,NULL,0))return false;
+    *chapter=(uint16_t)index;*byte=offset;return true;
+}
 
 void book_epub_suspend(book_epub_t* book) { if (book) zip_suspend(book->zip); }
 bool book_epub_resume(book_epub_t* book, const char* path) { return book && zip_resume(book->zip, path); }

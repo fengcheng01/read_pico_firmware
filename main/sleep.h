@@ -24,6 +24,7 @@ typedef enum {
     APP_WAKE_NONE = 0,
     APP_WAKE_KEY,
     APP_WAKE_PICKUP,
+    APP_WAKE_TIMER, ///< 分钟到点定时唤醒，仅刷新锁屏时钟 / Minute-boundary timer wake, lock-clock refresh only
 } app_wake_source_t;
 
 /// 进入锁屏与睡眠；tp 非空时浅睡唤醒后先校验 PIN 再清屏返回。
@@ -39,6 +40,12 @@ void app_lock_wait_key_idle(int timeout_ms);
 /// ESP 浅睡，按键或拿起唤醒。acc 为空则只等按键。
 /// ESP light sleep; wake on key or pickup. Key only when acc is NULL.
 app_wake_source_t app_light_sleep_wait(sc7a20h_handle_t acc);
+/// 退出锁屏分钟等待时取消 ESP 定时唤醒及轮询期限。
+/// Cancel the ESP minute wake and polling deadline on exit from the lock wait.
+void app_sleep_disarm_minute_wake(void);
+/// 旧版 PMU 时钟闹钟控制；开机和进入锁屏时关闭，动态锁屏使用 ESP 定时唤醒。
+/// Legacy PMU clock alarm control; disabled at boot/lock entry, with dynamic faces using ESP timer wakes.
+void app_sleep_alarm_clock(bool on);
 app_wake_source_t app_last_wake_source(void);
 /// 软睡或关机，拉掉 EN 后停住，不会返回。
 /// Soft sleep or power-off: drop EN and halt; does not return.

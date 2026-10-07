@@ -14,6 +14,181 @@ from serve import Preview, action_command, png_from_pgm
 
 
 class PreviewTests(unittest.TestCase):
+    def test_home_sync_uploads_without_opening_book(self):
+        self.preview.command("fixture 1")
+        self.settle()
+        starts = self.state()["sync_starts"]
+        before = self.preview.png
+        self.preview.command("tap 584 425")
+        self.assertEqual(self.state()["page"], self.indices["app_os_home"])
+        self.assertFalse(self.state()["reading"])
+        self.assertNotEqual(before, self.preview.png)
+        self.preview.command("tick")
+        self.assertEqual(self.state()["sync_starts"], starts + 1)
+        self.assertEqual(self.state()["sync_job"], 2)  # OS_SYNC_JOB_PUSH
+        self.settle()
+        self.assertEqual(self.state()["page"], self.indices["app_os_home"])
+        self.assertEqual(self.state()["sync_starts"], starts + 1)
+        self.preview.command("tap 400 425")
+        self.settle()
+        self.assertTrue(self.state()["reading"])
+
+    def test_reader_menu_library_is_shelf_without_resume(self):
+        self.preview.command("fixture 1")
+        self.settle()
+        self.preview.command("tap 400 425")
+        self.settle()
+        self.assertTrue(self.state()["reading"])
+        self.preview.command("tap 650 1150")
+        self.assertTrue(self.state()["menu"])
+        self.assertEqual(self.state()["refresh_mode"], 2)
+        self.preview.command("key 1")  # 手动清理仍为 GC16。/ Manual cleaning retains GC16.
+        self.assertEqual(self.state()["refresh_mode"], 2)
+        before = self.state()["presents"]
+        self.preview.command("tap 300 450")
+        self.assertEqual(self.state()["page"], self.indices["app_book"])
+        self.assertFalse(self.state()["menu"])
+        self.assertFalse(self.state()["reading"])
+        self.assertEqual(self.state()["presents"], before + 1)
+        self.assertEqual(self.state()["refresh_mode"], 2)
+        self.settle()
+        self.assertFalse(self.state()["reading"])
+        # 明确书架入口不弹续读，可直接打开第一行。/ Explicit shelf entry skips resume so the first row opens directly.
+        self.preview.command("tap 300 400")
+        self.settle()
+        self.assertTrue(self.state()["reading"])
+
+    def test_home_pages_all_six_reading_records(self):
+        self.preview.command("fixture 3")
+        self.settle()
+        self.assertEqual(self.state()["history_count"], 6)
+        first = self.preview.png
+        self.preview.command("tap 570 972")
+        self.settle()
+        self.assertEqual(self.state()["history_page"], 1)
+        self.assertNotEqual(first, self.preview.png)
+        self.preview.command("tap 110 972")
+        self.settle()
+        self.assertEqual(self.state()["history_page"], 0)
+        self.assertEqual(first, self.preview.png)
+
+    def test_body_sentence_excerpt_and_source_jump(self):
+        self.preview.command("fixture 1")
+        self.settle()
+        self.preview.command("tap 400 425")
+        self.settle()
+        first = self.preview.png
+        self.preview.command("hold 180 432")
+        self.assertTrue(self.state()["reading"])
+        self.assertNotEqual(first, self.preview.png)
+        self.preview.command("tap 490 974")
+        self.assertEqual(self.state()["quote_count"], 1)
+        self.preview.command("key 2")
+        self.preview.command("key 2")
+        self.preview.command("key 2")
+        self.settle()
+        later = self.preview.png
+        self.page("app_os_today")
+        self.settle()
+        self.preview.command("tap 534 301")
+        self.preview.command("tap 300 410")
+        self.settle()
+        self.assertTrue(self.state()["reading"])
+        self.assertNotEqual(later, self.preview.png)
+        self.assertEqual(first, self.preview.png)
+
+    def test_reader_minute_updates_only_footer(self):
+        self.page("app_os_reading")
+        self.preview.command("tap 300 900")
+        self.preview.command("tap 300 966")
+        self.page("app_os_home")
+        self.preview.command("fixture 1")
+        self.settle()
+        self.preview.command("tap 400 425")
+        self.settle()
+        before = self.preview.frame.read_bytes()[len(b"P5\n684 1216\n255\n"):]
+        presents = self.state()["presents"]
+        self.preview.command("time_step 60")
+        after = self.preview.frame.read_bytes()[len(b"P5\n684 1216\n255\n"):]
+        changed = [i for i, (a, b) in enumerate(zip(before, after)) if a != b]
+        self.assertTrue(changed)
+        self.assertTrue(all(1096 <= i // 684 < 1192 and 40 <= i % 684 < 548 for i in changed))
+        self.assertEqual(self.state()["presents"], presents + 1)
+        self.assertEqual(self.state()["refresh_mode"], 5)
+        self.preview.command("tick")
+        self.assertEqual(self.state()["presents"], presents + 1)
+
+    def test_home_sync_cancel_and_hit_boundaries(self):
+        self.preview.command("fixture 1")
+        self.settle()
+        starts = self.state()["sync_starts"]
+        self.preview.command("swipe 584 425 400 425")
+        self.assertEqual(self.state()["page"], self.indices["app_os_home"])
+        self.assertEqual(self.state()["sync_starts"], starts)
+        self.preview.command("tap 627 461")
+        self.preview.command("tap 584 425")
+        self.preview.command("tick")
+        self.assertEqual(self.state()["sync_starts"], starts + 1)
+        self.preview.command("tap 584 425")
+        self.preview.command("tap 480 1140")
+        self.preview.command("tick")
+        self.assertEqual(self.state()["page"], self.indices["app_os_settings"])
+        self.assertEqual(self.state()["sync_starts"], starts + 2)
+
+    def test_home_upload_progress_accepts_edges_without_stealing_resume(self):
+        # 边缘容差内轻点及小幅移动仍上传；继续阅读与卡片封面仍开书。
+        # Taps and small movement within edge tolerance upload; resume and the cover still open the book.
+        for command in ("tap 466 386", "tap 634 484", "tap 490 470", "swipe 476 400 467 394"):
+            self.preview.command("fixture 1")
+            self.settle()
+            starts = self.state()["sync_starts"]
+            self.preview.command(command)
+            self.assertEqual(self.state()["page"], self.indices["app_os_home"])
+            self.assertFalse(self.state()["reading"])
+            self.preview.command("tick")
+            self.assertEqual(self.state()["sync_starts"], starts + 1)
+            self.assertEqual(self.state()["sync_job"], 2)
+        for x, y in ((450, 440), (200, 380)):
+            self.preview.command("fixture 1")
+            self.settle()
+            starts = self.state()["sync_starts"]
+            self.preview.command(f"tap {x} {y}")
+            self.settle()
+            self.assertTrue(self.state()["reading"])
+            self.assertEqual(self.state()["sync_starts"], starts)
+
+    def test_lock_clock_glyphs_and_minute_band(self):
+        # 编译真实锁屏绘制与字体：10:12→10:13 的所有变化必须在实际刷新区域中。
+        # Compile real lock painting/fonts: every 10:12-to-10:13 change must fit the actual update band.
+        import datetime
+        import re
+        utc = int(datetime.datetime(2026, 10, 4, 2, 12, tzinfo=datetime.timezone.utc).timestamp())
+        self.preview.command("glyph 44")
+        small = self.preview.png
+        self.preview.command(f"clock {utc}")
+        before = self.preview.frame.read_bytes()[len(b"P5\n684 1216\n255\n"):]
+        self.preview.command(f"clock {utc + 60}")
+        after = self.preview.frame.read_bytes()[len(b"P5\n684 1216\n255\n"):]
+        source = (ROOT / "main/sleep.c").read_text()
+        match = re.search(r"style == 1 \? \(EpdRect\)\{0, (\d+), UI_LOCK_WIDTH, (\d+)\}", source)
+        top, height = map(int, match.groups())
+        changed = [i for i, (a, b) in enumerate(zip(before, after)) if a != b]
+        self.assertTrue(changed)
+        self.assertTrue(all(top <= i // 684 < top + height for i in changed))
+        ink = [i for i, gray in enumerate(after) if gray < 128 and 260 <= i // 684 < 640]
+        self.assertGreater(max(i // 684 for i in ink) - min(i // 684 for i in ink), 150)
+        self.assertGreater(max(i % 684 for i in ink) - min(i % 684 for i in ink), 350)
+        # 44与300不能共用截断后的缓存键；多字号触发淘汰后大字仍一致。
+        # Sizes 44 and 300 must never share a truncated cache key; eviction must retain identical large glyphs.
+        for px in range(12, 321):
+            self.preview.command(f"glyph {px}")
+        self.preview.command("glyph 44")
+        self.assertEqual(small, self.preview.png)
+        for minute in range(1, 120):
+            self.preview.command(f"clock {utc + minute * 60}")
+        self.preview.command(f"clock {utc + 60}")
+        self.assertEqual(after, self.preview.frame.read_bytes()[len(b"P5\n684 1216\n255\n"):])
+
     def setUp(self):
         self.preview = Preview(BINARY)
         self.addCleanup(self.preview.close)
@@ -102,11 +277,13 @@ class PreviewTests(unittest.TestCase):
         decoded = b"".join(scanlines[y * 685 + 1:(y + 1) * 685] for y in range(1216))
         self.assertEqual(decoded, pixels)
 
-    def test_font_picker_multiple_rows_and_no_entry_flash(self):
+    def test_font_picker_cleans_only_entries_and_keeps_row_updates_gray(self):
         self.page("app_os_reading")
+        cleans = self.state()["gc_presents"]
         self.preview.command("tap 200 732")
         self.assertEqual(self.preview.state["page"], self.indices["app_font_pick"])
-        self.assertEqual(self.preview.state["refresh_mode"], 5)
+        self.assertEqual(self.preview.state["refresh_mode"], 2)
+        self.assertEqual(self.state()["gc_presents"], cleans + 1)
         first = self.preview.png
         self.preview.command("tap 300 370")
         self.assertNotEqual(first, self.preview.png)
@@ -117,11 +294,15 @@ class PreviewTests(unittest.TestCase):
         self.assertNotEqual(selected, self.preview.png)
         self.preview.command("tap 100 890")
         self.assertEqual(self.preview.state["leaf"], 0)
+        self.assertEqual(self.state()["gc_presents"], cleans + 1)
         self.preview.command("tap 590 100")
         self.assertEqual(self.preview.state["page"], self.indices["app_os_reading"])
-        self.assertEqual(self.preview.state["refresh_mode"], 5)
+        self.assertEqual(self.preview.state["refresh_mode"], 2)
+        self.assertEqual(self.state()["gc_presents"], cleans + 2)
+        self.preview.command("tick")
+        self.assertEqual(self.state()["gc_presents"], cleans + 2)
 
-    def test_static_assets_match_portrait_pixels(self):
+    def test_packed_static_assets_match_portrait_pixels(self):
         for which, name in enumerate(("loading", "lock")):
             self.preview.command(f"asset {which}")
             packed = (ROOT / f"main/assets/{name}_4bpp.bin").read_bytes()
@@ -131,7 +312,7 @@ class PreviewTests(unittest.TestCase):
             self.assertEqual(pixels, expected)
             self.assertEqual(self.preview.state["asset"], which)
 
-    def test_inline_epub_and_single_grayscale_turn(self):
+    def test_inline_epub_and_fast_gl16_turn(self):
         self.preview.command("fixture 1")
         self.preview.command("tap 220 1140")
         self.settle()
@@ -141,10 +322,17 @@ class PreviewTests(unittest.TestCase):
         pixels = self.preview.frame.read_bytes()[len(b"P5\n684 1216\n255\n"):]
         image_region = [pixels[y * 684 + x] for y in range(200, 390) for x in range(240, 430)]
         self.assertGreater(sum(value < 255 for value in image_region), 10000)
+        # 选择直刷也不能把插图章节二值化。/ Selecting direct must not binarize an image chapter.
+        self.preview.command("key 1")
+        self.preview.command("tap 136 1038")
+        self.preview.command("tap 342 224")
+        self.preview.command("tap 300 1006")
+        self.preview.command("tap 424 1140")
         before = self.preview.state["presents"]
         first = self.preview.png
         self.preview.command("key 2")
         self.assertEqual(self.preview.state["presents"], before + 1)
+        # 普通翻页保持快速 GL16。/ Ordinary body turns retain fast GL16.
         self.assertEqual(self.preview.state["refresh_mode"], 5)
         self.assertNotEqual(first, self.preview.png)
 
@@ -193,7 +381,13 @@ class PreviewTests(unittest.TestCase):
             self.assertEqual(settled["page"], self.indices["app_book"])
             self.assertNotEqual(settled["page"], self.indices["app_reading"])
 
-
+    def test_home_all_books_link_routes_to_shelf(self):
+        self.preview.command("fixture 1")
+        self.page("app_os_home")
+        self.settle()
+        self.preview.command("tap 600 734")  # 全部图书 › / All books link
+        settled = self.settle()
+        self.assertEqual(settled["page"], self.indices["app_book"])
 
     def test_product_roots_settings_and_empty_today(self):
         for x, symbol in ((350, "app_os_today"), (480, "app_os_settings"), (90, "app_os_home")):
@@ -266,6 +460,9 @@ class PreviewTests(unittest.TestCase):
         self.preview.command("key 0")
         self.assertEqual(empty, self.preview.png)
         self.preview.command("sd 1")
+        # 同页请求不重新初始化；离页后重入才重新检测卡状态。
+        # Same-page requests do not initialize again; leave and reenter to reprobe card state.
+        self.page("app_os_settings")
         self.page("app_os_storage")
         self.preview.command("tick")
         ready = self.preview.png
@@ -294,7 +491,7 @@ class PreviewTests(unittest.TestCase):
         self.preview.command("tap 300 452")  # 行距 / leading（菜单保持打开）
         relaxed = self.preview.png
         self.assertNotEqual(typography, relaxed)
-        self.preview.command("tap 300 900")  # 行辅助线 / guide rule (row5 y546-612)
+        self.preview.command("tap 300 900")  # 行辅助线 / guide rule (row5 y852-948)
         solid = self.preview.png
         self.assertNotEqual(relaxed, solid)
         self.preview.command("tap 424 1140")  # 返回阅读（底栏）/ return via the bottom bar
@@ -304,10 +501,10 @@ class PreviewTests(unittest.TestCase):
         self.preview.command("tap 136 1038")
         self.preview.command("tap 342 224")  # 翻页与显示 / turns and display
         normal = self.preview.png
-        self.preview.command("tap 300 676")  # 夜间开关 / night switch
+        self.preview.command("tap 300 676")  # 夜间开关 / night switch (row9 y628-724)
         night = self.preview.png
         self.assertNotEqual(normal, night)
-        self.preview.command("tap 300 676")
+        self.preview.command("tap 300 630")
         self.assertEqual(normal, self.preview.png)
 
 
@@ -338,8 +535,9 @@ class PreviewTests(unittest.TestCase):
         self.preview.command("tap 136 1038")
         self.preview.command("tap 550 224")
         sync = self.preview.png
-        self.preview.command("tap 300 500")
+        self.preview.command("tap 300 340")
         self.assertTrue(sync != self.preview.png, "Reader settings admit sync directly")
+        self.assertEqual(self.state()["sync_job"], 0)
         self.preview.command("tap 424 1140")
         self.assertTrue(self.state()["reading"])
         self.page("app_os_home")
@@ -348,6 +546,40 @@ class PreviewTests(unittest.TestCase):
         self.page("app_os_today")
         self.page("app_os_home")
         self.assertTrue(home == self.preview.png, "Cached roots paint immediately without loading")
+
+    def test_reader_sync_hides_account_details_but_keeps_configuration(self):
+        def reader_sync():
+            self.page("app_os_home")
+            self.settle()
+            self.preview.command("tap 400 425")
+            self.settle()
+            self.preview.command("key 1")
+            self.preview.command("tap 136 1038")
+            self.preview.command("tap 550 224")
+            return self.preview.png
+
+        def account_band():
+            data = self.preview.frame.read_bytes()[len(b"P5\n684 1216\n255\n"):]
+            return data[200 * 684:500 * 684]
+
+        self.preview.command("fixture 1")
+        self.settle()
+        original = reader_sync()
+        self.page("app_transfer")
+        self.preview.command("tap 320 638")
+        before = account_band()
+        # 通过真实账号键盘修改地址和用户名，不引入只供测试的设置入口。
+        # Change URL and username through the real account keyboard, without a test-only settings entry.
+        for y, x in ((234, 67), (310, 124)):
+            self.preview.command(f"tap 300 {y}")
+            self.preview.command(f"tap {x} 464")
+            self.preview.command("tap 470 1140")
+        configured = account_band()
+        self.assertNotEqual(before, configured)
+        self.assertEqual(original, reader_sync(), "Reader sync must not reveal configured URL or username")
+        self.page("app_transfer")
+        self.preview.command("tap 320 638")
+        self.assertEqual(configured, account_band(), "Account configuration must survive reader entry")
 
     def test_home_epub_cover_and_shelf_cache(self):
         self.preview.command("fixture 1")
@@ -503,8 +735,118 @@ class PreviewTests(unittest.TestCase):
         opened = self.preview.png
         self.assertNotEqual(reopened, opened)
 
+    def test_time_sync_stays_on_page_and_can_stop(self):
+        self.page("app_os_time")
+        self.preview.command("tap 424 740")
+        self.preview.command("tap 300 848")
+        self.assertEqual(self.state()["page"], self.indices["app_os_time"])
+        for _ in range(3): self.preview.command("tick")
+        self.assertEqual(self.state()["page"], self.indices["app_os_time"])
+        self.preview.command("tap 557 102")
+        self.assertEqual(self.state()["page"], self.indices["app_os_settings"])
+
+    def test_time_auto_sync_toggle_persists_after_reentry(self):
+        self.page("app_os_time")
+        enabled = self.preview.png
+        self.preview.command("tap 300 1044")
+        disabled = self.preview.png
+        self.assertNotEqual(enabled, disabled)
+        self.page("app_os_settings")
+        self.page("app_os_time")
+        self.assertEqual(disabled, self.preview.png)
+        self.preview.command("tap 300 1044")
+        self.assertEqual(enabled, self.preview.png)
+
+    def test_root_tabs_and_reader_clean_once_at_entries(self):
+        self.preview.command("fixture 1")
+        self.settle()
+        for x, symbol in ((220, "app_book"), (350, "app_os_today"),
+                          (480, "app_os_settings"), (70, "app_os_home")):
+            before = self.state()["gc_presents"]
+            self.preview.command(f"tap {x} 1140")
+            self.assertEqual(self.state()["page"], self.indices[symbol])
+            self.assertEqual(self.state()["gc_presents"], before + 1)
+            self.settle()
+            self.assertEqual(self.state()["gc_presents"], before + 1)
+        before = self.state()["gc_presents"]
+        self.preview.command("tap 400 425")
+        self.settle()
+        self.assertTrue(self.state()["reading"])
+        self.assertEqual(self.state()["gc_presents"], before + 1)
+        before = self.state()["gc_presents"]
+        self.preview.command("key 2")
+        self.preview.command("key 0")
+        self.assertEqual(self.state()["gc_presents"], before)
+        self.preview.command("key 1")
+        self.assertEqual(self.state()["gc_presents"], before)
+        self.preview.command("tap 136 1038")
+        self.assertEqual(self.state()["gc_presents"], before + 1)
+        self.preview.command("tap 300 452")
+        self.assertEqual(self.state()["gc_presents"], before + 1)
+        self.preview.command("tap 424 1140")
+        self.assertEqual(self.state()["gc_presents"], before + 2)
+        self.preview.command("tick")
+        self.assertEqual(self.state()["gc_presents"], before + 2)
+
+    def test_menu_cleans_only_show_close_not_unchanged_or_disabled_navigation(self):
+        cleans = self.state()["gc_presents"]
+        self.preview.command("menu")
+        self.assertTrue(self.state()["menu"])
+        self.assertEqual(self.state()["gc_presents"], cleans + 1)
+        self.preview.command("menu")
+        self.preview.command("tap 10 500")
+        self.assertEqual(self.state()["gc_presents"], cleans + 1)
+        self.preview.command("tap 424 1140")
+        # 当前四个产品入口只有一叶，空白及不可用翻页不请求清理。
+        # The four product entries occupy one leaf; empty taps and unavailable paging do not request cleanup.
+        self.assertEqual(self.state()["menu_leaf"], 0)
+        self.assertEqual(self.state()["gc_presents"], cleans + 1)
+        self.preview.command("key 0")
+        self.assertEqual(self.state()["menu_leaf"], 0)
+        self.assertEqual(self.state()["gc_presents"], cleans + 1)
+        self.preview.command("key 2")
+        self.assertFalse(self.state()["menu"])
+        self.assertEqual(self.state()["gc_presents"], cleans + 2)
+        self.preview.command("tick")
+        self.assertEqual(self.state()["gc_presents"], cleans + 2)
+
+    def test_reader_toolbar_and_settings_returns_clean_once_then_turns_stay_gray(self):
+        self.preview.command("fixture 1")
+        self.settle()
+        self.preview.command("tap 400 425")
+        self.settle()
+        cleans = self.state()["gc_presents"]
+        self.preview.command("key 1")
+        self.assertEqual(self.state()["gc_presents"], cleans)
+        self.preview.command("key 1")
+        self.assertEqual(self.state()["gc_presents"], cleans + 1)
+        self.preview.command("tick")
+        self.assertEqual(self.state()["gc_presents"], cleans + 1)
+        self.preview.command("key 1")
+        self.preview.command("tap 136 1038")
+        self.assertEqual(self.state()["gc_presents"], cleans + 2)
+        self.preview.command("tap 300 452")
+        self.assertEqual(self.state()["gc_presents"], cleans + 2)
+        self.preview.command("tap 424 1140")
+        self.assertEqual(self.state()["gc_presents"], cleans + 3)
+        for key in (2, 0, 2, 0):
+            self.preview.command(f"key {key}")
+            self.settle()
+            self.assertEqual(self.state()["refresh_mode"], 5)
+            self.assertEqual(self.state()["gc_presents"], cleans + 3)
+
+    def test_loading_shelf_accepts_root_navigation(self):
+        self.preview.command("fixture 1")
+        self.preview.command("tap 220 1140")
+        self.preview.command("tap 480 1140")
+        self.assertEqual(self.state()["page"], self.indices["app_os_settings"])
+        self.preview.command("tap 350 1140")
+        self.preview.command("tap 542 320")
+        self.assertEqual(self.state()["page"], self.indices["app_os_today"])
+
     def test_today_clock_summary_and_time_settings(self):
         self.preview.command("fixture 1")
+        for _ in range(20): self.preview.command("tick")
         self.preview.command("tap 350 1140")
         self.assertEqual(self.state()["page"], self.indices["app_os_today"])
         loading = self.preview.png
@@ -515,6 +857,18 @@ class PreviewTests(unittest.TestCase):
         settled = self.settle()
         self.assertEqual(settled["page"], self.indices["app_book"])
         self.assertNotEqual(today, self.preview.png)
+        # 手帐子标签切换：打卡月历、金句便签、今日手记
+        self.page("app_os_today")
+        self.settle()
+        tab_today = self.preview.png
+        self.preview.command("tap 342 320")  # 打卡月历 / Month calendar tab
+        tab_month = self.preview.png
+        self.assertNotEqual(tab_today, tab_month)
+        self.preview.command("tap 542 320")  # 金句便签 / Quotes tab
+        tab_quotes = self.preview.png
+        self.assertNotEqual(tab_month, tab_quotes)
+        self.preview.command("tap 142 320")  # 切回今日手记 / Back to Today tab
+        self.assertEqual(tab_today, self.preview.png)
         self.preview.command("fixture 0")
         self.preview.command("tap 350 1140")
         self.assertEqual(self.state()["page"], self.indices["app_os_today"])
@@ -551,15 +905,138 @@ class PreviewTests(unittest.TestCase):
         self.assertNotEqual(size_panel, grown)
         self.preview.command("tap 136 944")  # 返回工具 / back to tools
         tools = self.preview.png
-        self.preview.command("tap 342 1038")  # 无压黑清理 / white cleanup
-        self.assertEqual(self.preview.state["refresh_mode"], 5)
-        self.assertEqual(tools, self.preview.png)
+        presents = self.state()["presents"]
+        cleans = self.state()["gc_presents"]
+        self.preview.command("tap 342 1038")  # 清除残影 / clean ghosting (GC16)
+        self.assertEqual(self.preview.state["refresh_mode"], 2)
+        # 按下局推反馈，抬起仅一次正文清理。/ Local press feedback, then one body cleanup on release.
+        self.assertEqual(self.state()["presents"], presents + 2)
+        self.assertEqual(self.state()["gc_presents"], cleans + 1)
+        self.assertNotEqual(tools, self.preview.png)
         night = self.preview.png
+        self.preview.command("key 1")
+        self.preview.command("key 1")
+        self.assertEqual(night, self.preview.png)
+        self.preview.command("key 1")
         self.preview.command("tap 544 1040")  # 书架 / shelf
         shelf = self.preview.png
         self.assertNotEqual(night, shelf)
         self.preview.command("tap 480 1140")  # 根导航设置 / root to Settings
         self.assertEqual(self.state()["page"], self.indices["app_os_settings"])
+
+    def test_reader_direct_profile_and_return_to_gray(self):
+        self.preview.command("fixture 1")
+        self.settle()
+        self.preview.command("tap 400 425")
+        self.settle()
+        self.preview.command("key 1")
+        self.preview.command("tap 136 1038")
+        self.preview.command("tap 342 224")
+        standard = self.preview.png
+        self.preview.command("tap 300 1006")
+        self.assertNotEqual(standard, self.preview.png)
+        self.preview.command("tap 424 1140")
+        pixels = self.preview.frame.read_bytes()[len(b"P5\n684 1216\n255\n"):]
+        self.assertEqual(set(pixels), {0, 255}, "Direct entry commits the same binary target as turns")
+        cleans = self.state()["gc_presents"]
+        for _ in range(6):
+            for key in (2, 0):
+                self.preview.command(f"key {key}")
+                self.settle()
+                self.assertEqual(self.state()["refresh_mode"], 5)
+                self.assertEqual(self.state()["gc_presents"], cleans)
+                pixels = self.preview.frame.read_bytes()[len(b"P5\n684 1216\n255\n"):]
+                self.assertEqual(set(pixels), {0, 255})
+        # 离页重进仍保留选项，切回灰阶后不留下虚假参考帧。
+        # Leaving/reentering retains the choice; switching back restores grayscale rather than a false reference.
+        self.page("app_os_home")
+        self.settle()
+        self.preview.command("tap 400 425")
+        self.settle()
+        pixels = self.preview.frame.read_bytes()[len(b"P5\n684 1216\n255\n"):]
+        self.assertEqual(set(pixels), {0, 255})
+        self.preview.command("key 2")
+        self.settle()
+        self.assertEqual(self.state()["refresh_mode"], 5)
+        self.preview.command("key 1")
+        self.preview.command("tap 136 1038")
+        self.preview.command("tap 342 224")
+        self.preview.command("tap 300 1006")
+        self.assertEqual(standard, self.preview.png)
+        self.preview.command("tap 424 1140")
+        self.preview.command("key 0")
+        self.settle()
+        self.assertEqual(self.state()["refresh_mode"], 5)
+        pixels = self.preview.frame.read_bytes()[len(b"P5\n684 1216\n255\n"):]
+        self.assertGreater(len(set(pixels)), 2)
+
+    def test_reader_binary_guides_keep_grid_through_turns(self):
+        self.preview.command("fixture 1")
+        self.settle()
+        self.preview.command("tap 400 425")
+        self.settle()
+        self.preview.command("key 1")
+        self.preview.command("tap 136 1038")
+        self.preview.command("tap 300 900")
+        self.preview.command("tap 342 224")
+        self.preview.command("tap 300 1006")
+        self.preview.command("tap 424 1140")
+        for night in (False, True):
+            if night:
+                self.preview.command("key 1")
+                self.preview.command("tap 136 1038")
+                self.preview.command("tap 342 224")
+                self.preview.command("tap 300 676")
+                self.preview.command("tap 424 1140")
+            cleans = self.state()["gc_presents"]
+            for key in (2, 0, 2, 0):
+                self.preview.command(f"key {key}")
+                self.settle()
+                self.assertEqual(self.state()["gc_presents"], cleans)
+                pixels = self.preview.frame.read_bytes()[len(b"P5\n684 1216\n255\n"):]
+                self.assertEqual(set(pixels), {0, 255})
+                # 检查量化后的线仍可见且位置固定；字形避线由真实轮廓回归验证。
+                # Quantized rules stay visible on one grid; real-outline regression checks glyph separation.
+                ink = 255 if night else 0
+                rules = [y for y in range(88, 1088)
+                         if set(pixels[y * 684 + 40:y * 684 + 644]) == {ink}]
+                self.assertTrue(rules, "Binary quantization must preserve visible guide rules")
+                self.assertTrue(all((y - 24) % 72 in (69, 70) for y in rules))
+
+    def test_reader_settings_clean_returns_to_body_once(self):
+        self.preview.command("fixture 1")
+        self.settle()
+        self.preview.command("tap 400 425")
+        self.settle()
+        # 首次保存会更新底栏已读比例；先取得正常返回后的正文基准。
+        # The first save updates the footer's saved percentage; use a normal return as the body reference.
+        self.preview.command("key 1")
+        self.preview.command("tap 136 1038")
+        self.preview.command("tap 424 1140")
+        body = self.preview.png
+        for group in (0, 1, 2):
+            self.preview.command("key 1")
+            self.preview.command("tap 136 1038")
+            self.preview.command(f"tap {136 + 206 * group} 224")
+            self.assertNotEqual(body, self.preview.png)
+            presents = self.state()["presents"]
+            cleans = self.state()["gc_presents"]
+            self.preview.command("tap 164 1140")
+            self.assertEqual(self.state()["refresh_mode"], 2)
+            self.assertEqual(self.state()["presents"], presents + 2)
+            self.assertEqual(self.state()["gc_presents"], cleans + 1)
+            self.assertEqual(body, self.preview.png)
+            self.preview.command("tick")
+            self.assertEqual(self.state()["presents"], presents + 2)
+            self.assertEqual(self.state()["gc_presents"], cleans + 1)
+        self.preview.command("key 2")
+        self.settle()
+        self.assertEqual(self.state()["refresh_mode"], 5)
+        self.assertNotEqual(body, self.preview.png)
+        self.preview.command("key 0")
+        self.settle()
+        self.assertEqual(self.state()["refresh_mode"], 5)
+        self.assertEqual(body, self.preview.png)
 
 
 if __name__ == "__main__":

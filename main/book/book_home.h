@@ -29,6 +29,10 @@ typedef struct {
     book_home_item_t recent[BOOK_HOME_RECENT_MAX];
     /// 有界摘要与可用文件数。/ Bounded summaries and available file count.
     unsigned recent_count, book_count;
+    /// 全部有效阅读记录数与最近列表页码。/ Total valid reading records and recent-list page index.
+    unsigned history_count, recent_page;
+    /// 最近列表还有后页。/ More recent-list pages follow.
+    bool recent_more;
     /// 扫描完成与部分来源失败。/ Scan finished and partial-source failure.
     bool complete, degraded;
 } book_home_snapshot_t;
@@ -36,7 +40,7 @@ typedef struct {
 /// UI 线程开始/停止扫描；只查询已有书目录，允许无卡。/ Start/stop on UI thread; query existing roots, tolerate absent media.
 void book_home_begin(void);
 void book_home_cancel(void);
-/// 每次最多检查 16 个目录项；完成后不再访问文件。/ Inspect at most 16 entries per call; no file access after completion.
+/// 每次最多检查 4 个目录项；完成后不再访问文件。/ Inspect at most 4 entries per call; no file access after completion.
 bool book_home_step(void);
 /// 只读快照；未完成时不得据此发起开书。/ Read-only snapshot; never open from incomplete data.
 const book_home_snapshot_t* book_home_snapshot(void);
@@ -44,3 +48,6 @@ const book_home_snapshot_t* book_home_snapshot(void);
 /// 来源或进度未变时复用完整摘要；移除媒体时显式失效。/ Reuse complete summaries until source/progress changes; explicitly invalidate lost media.
 bool book_home_cached(void);
 void book_home_invalidate(void);
+
+/// 最近记录翻页；每页仍只有三条，继续使用分批扫描。/ Page through every recent record with three fixed slots and incremental scans.
+bool book_home_recent_move(int direction);

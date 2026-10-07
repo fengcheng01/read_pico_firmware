@@ -42,6 +42,9 @@ size_t os_crash_trim_tail(const char* text, size_t len, size_t keep);
  */
 /// 开机早期读一次复位原因并暂存（幂等）。/ Read and stash the reset reason once early at boot (idempotent).
 void os_crash_boot_check(void);
+/// 上次复位是否异常（panic/看门狗/掉电）；开机装配据此加强面板清理。
+/// Whether the previous reset was abnormal; boot wiring strengthens the panel cleanup with it.
+bool os_crash_boot_abnormal(void);
 /// 内置存储挂载后把暂存记录写入日志文件（幂等，失败静默保留待重试）。
 /// Append the stashed record after the internal FAT mounts (idempotent; failures keep it for retry).
 void os_crash_flush(void);

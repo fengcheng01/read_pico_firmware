@@ -402,15 +402,26 @@ bool read_pico_pmu_take_key_short(void) {
 }
 
 bool read_pico_pmu_take_key_wakeup(void) {
-    bool wake = false;
+    return read_pico_pmu_take_wake_events() & READ_PICO_PMU_WAKE_KEY;
+}
+
+// 一次抽干同时看按键与闹钟；单独 take 会在另一类事件被 ack 后漏报。
+// One drain watches keys and alarms together; separate takes would miss an
+// event class acked while looking for the other.
+uint8_t read_pico_pmu_take_wake_events(void) {
+    uint8_t wake = 0;
     for (int i = 0; i < PMU_EVENT_FIFO_DEPTH; i++) {
         if (read_pico_pmu_poll() != ESP_OK) break;
         if (!s_snap.event_ok || s_snap.pending_events == 0) break;
         uint8_t type = s_snap.event.type;
         uint16_t id = s_snap.event.event_id;
         if (type == PMU_EVT_KEY_DOWN || type == PMU_EVT_KEY_SHORT) {
-            wake = true;
+            wake |= READ_PICO_PMU_WAKE_KEY;
             ESP_LOGI(TAG, "key wake %s id=%u", pmu_event_name(type), (unsigned)id);
+        }
+        if (type == PMU_EVT_ALARM_FIRED) {
+            wake |= READ_PICO_PMU_WAKE_ALARM;
+            ESP_LOGI(TAG, "alarm wake id=%u mode=%u", (unsigned)id, (unsigned)s_snap.event.arg0);
         }
         if (id == 0) break;
         if (read_pico_pmu_event_ack(id) != ESP_OK) break;

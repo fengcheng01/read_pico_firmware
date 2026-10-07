@@ -12,10 +12,8 @@
 
 #include "epdiy.h"
 
-// 日常整页先擦白再 GL16；局部更新到期时同样清理整屏。
-// 用户要求日常页面、锁屏及清理均避免压黑；诊断波形仍可显式 GC16。
-// Daily pages erase white before GL16; accumulated area updates use the same panel cleanup.
-// User-requested daily pages, lock and cleanup avoid inversion; diagnostic waveforms may explicitly use GC16.
+// 普通页与正文 GL16，周期/手动 GC16，按钮反馈不触发整屏清理。
+// Ordinary pages/body use GL16; GC16 is scheduled/manual and control feedback never cleans the whole screen.
 #define APP_REFRESH_BALANCED 0
 #define APP_REFRESH_ALL_DU 1
 #define APP_REFRESH_PROFILE APP_REFRESH_BALANCED
@@ -26,15 +24,14 @@
 #define APP_SETTLE_REFRESH_MODE MODE_DU
 #else
 #define APP_PAGE_REFRESH_MODE MODE_GL16
-// 日常强刷也走无压黑清理。/ Daily forced redraws also use white cleanup.
-#define APP_PAGE_FORCE_FULL 0
-// 抬手定稿使用无压黑清理。/ Settle through white cleanup without inversion.
+// 日常强刷走完整全像素 GC16 深度清理。/ Full redraws use true GC16 cleanup.
+#define APP_PAGE_FORCE_FULL 1
+// 抬手定稿使用 GL16。/ Settle through GL16.
 #define APP_SETTLE_REFRESH_MODE MODE_GL16
 #endif
 
 // 通用控件保留灰阶；连续笔迹页面有自己的 DU 出口。/ Generic controls retain grayscale; live ink owns a dedicated DU path.
 #define APP_DYNAMIC_REFRESH_MODE MODE_GL16
 
-// 局部更新累计到期后擦白再绘整页，不做自动压黑；普通整页每次均擦白再绘。
-// Accumulated partial updates erase white then repaint the panel; full pages always use that path without automatic inversion.
+// 非跟手更新累计到期时使用整屏 GC16。/ Accumulated non-tracking updates trigger full-screen GC16.
 #define APP_GC16_EVERY 5

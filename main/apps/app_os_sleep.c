@@ -77,7 +77,9 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
     bool armed = app_settings_lock_pin(pin, sizeof(pin));
     ui_text(fb, UI_MARGIN, 942, 32, "锁屏密码", EPD_DRAW_ALIGN_LEFT, false);
     ui_product_title(fb, (EpdRect){UI_MARGIN, 988, ui_content_width() - 140, 30},
-                     armed ? "开机需输入密码；可修改或清除" : "设置后开机需输入密码", 22, 1);
+                     armed ? (app_settings_lock_pin_wake() ? "开机与解锁验证；可修改、关闭或清除"
+                                                           : "仅开机验证；唤醒免输，可修改或清除")
+                           : "设置后开机需输入密码", 22, 1);
     ui_text_vc(fb, ui_content_right(), 970, 30, armed ? "已设置 ›" : "未设置 ›", EPD_DRAW_ALIGN_RIGHT, false);
     ui_hairline(fb, 1046, UI_MARGIN, ui_content_width(), UI_GRAY_BLACK);
     uint8_t idle = app_settings_idle_lock_min();

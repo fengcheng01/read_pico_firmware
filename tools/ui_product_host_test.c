@@ -10,6 +10,7 @@
 #include "app_registry.h"
 #include "ttf_font.h"
 #include "book_entry.h"
+#include "ui_gesture.h"
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
@@ -20,6 +21,9 @@ static bool s_has_transfer = true;
 static unsigned s_lines;
 static char s_line[260];
 static int s_width;
+static bool s_footer_capture;
+static struct { int x, y, px, width; enum EpdFontFlags align; char text[260]; } s_footer[4];
+static unsigned s_footer_count;
 const app_desc_t* app_by_id(os_app_id_t id) {
     if (id == OS_APP_LIBRARY) return &s_library;
     if (id == OS_APP_TRANSFER && s_has_transfer) return &s_transfer;
@@ -38,6 +42,13 @@ void ui_text(uint8_t* fb, int x, int y, int px, const char* text, enum EpdFontFl
     (void)fb; (void)x; (void)y; (void)align; (void)inverted;
     assert(ttf_text_width_px(px, text) <= s_width);
     ++s_lines; snprintf(s_line, sizeof(s_line), "%s", text);
+    if (s_footer_capture) {
+        assert(s_footer_count < 4);
+        s_footer[s_footer_count].x = x; s_footer[s_footer_count].y = y;
+        s_footer[s_footer_count].px = px; s_footer[s_footer_count].align = align;
+        s_footer[s_footer_count].width = ttf_text_width_px(px, text);
+        snprintf(s_footer[s_footer_count++].text, sizeof(s_footer[0].text), "%s", text);
+    }
     // 省略必须保留完整的中文字符。/ Ellipsizing must retain complete Chinese characters.
     for (const unsigned char* p = (const unsigned char*)text; *p; ++p) {
         if (*p >= 0xe0 && *p <= 0xef) { assert((p[1] & 0xc0) == 0x80 && (p[2] & 0xc0) == 0x80); p += 2; }
@@ -92,12 +103,34 @@ int main(void) {
     assert(ui_product_root_hit(480, 1140) == OS_APP_SETTINGS);
     assert(ui_product_root_hit(612, 1140) == OS_APP_NONE);
     app_ctx_t ctx = {0};
+    const os_app_id_t roots[] = {OS_APP_HOME, OS_APP_LIBRARY, OS_APP_TODAY, OS_APP_SETTINGS};
+    for (int i=0;i<4;++i) {
+        ui_gesture_event_t press={.type=UI_GESTURE_PRESS,.x=90+130*i,.y=1140};
+        ctx.request_app=NULL;
+        assert(ui_product_root_press(&ctx,&press) && ctx.request_app==app_by_id(roots[i]));
+    }
     assert(ui_product_navigate(&ctx, OS_APP_LIBRARY) && ctx.request_app == &s_library);
-    assert(!ui_product_navigate(&ctx, OS_APP_LIBRARY));
+    // 排队中的请求被新请求覆盖，导航不再拒绝。/ A queued request is overwritten; navigation no longer bounces.
+    assert(ui_product_navigate(&ctx, OS_APP_LIBRARY) && ctx.request_app == &s_library);
     book_entry_request_t entry;
     assert(book_entry_take(&entry) && entry.kind == BOOK_ENTRY_SHELF);
     book_entry_finish(BOOK_ENTRY_SHELF_READY);
     assert(ui_product_shelf_rect(2).y + ui_product_shelf_rect(2).height < ui_product_shelf_nav_rect(0).y);
+
+    s_width = 508; s_footer_capture = true;
+    ui_product_reader_chrome(NULL, "这是一个很长很长的中文书名用于检查省略", 125, 2048, 67, false, "10:13 · 78%", true);
+    assert(s_footer_count == 3);
+    assert(s_footer[0].y == 1104 && s_footer[0].px == 28 && strstr(s_footer[0].text, "…"));
+    assert(s_footer[1].y == 1150 && s_footer[2].y == 1150);
+    assert(s_footer[1].x + s_footer[1].width + 20 <= s_footer[2].x - s_footer[2].width);
+    assert(!strcmp(s_footer[2].text, "125/2048 · 67%"));
+    s_footer_count = 0;
+    ui_product_reader_chrome(NULL, "书名", 5, 0, 0, false, "", false);
+    assert(s_footer_count == 2 && !strcmp(s_footer[1].text, "5/…"));
+    s_footer_count = 0;
+    ui_product_reader_chrome(NULL, "书名", 99999, 99999, 100, false, "10:13 · 100%", true);
+    assert(s_footer[s_footer_count - 1].x == 548);
+    s_footer_capture = false;
     puts("ui_product: bounded UTF-8 text and disabled/missing navigation passed");
     return 0;
 }

@@ -64,6 +64,16 @@ int main(int argc, char **argv) {
                 assert(text.utf8 && text.blocks && text.count);
                 ++readable;
             } else assert(inspect);
+            if (strstr(argv[a], "good_paths") && i == 1) {
+                char position[512]; uint16_t chapter; uint32_t byte;
+                assert(text.count > 1);
+                assert(book_epub_sync_encode(argv[a], i, text.blocks[1].offset + 3, position, sizeof(position)));
+                assert(!strcmp(position, "/body/DocFragment[2]/body/div[1]/text()[1].1"));
+                assert(book_epub_sync_decode(argv[a], position, &chapter, &byte));
+                assert(chapter == i && byte == text.blocks[1].offset + 3);
+                // 独立同步读取不破坏已打开书源。/ Independent sync reads preserve the open book source.
+                assert(book_epub_chapter_count(book) == count);
+            }
             html_text_free(&text);
         }
         assert(book_epub_total_bytes(book) > previous);

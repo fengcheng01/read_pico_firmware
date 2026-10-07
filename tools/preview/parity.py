@@ -25,10 +25,12 @@ DEVICE_ONLY = {
     "app_main.c",          # 板级装配与真机引导 / board assembly and boot
     "display.c",           # 波形/推屏驱动 / waveform and present driver
     "sleep.c",             # PMU/GPIO 睡眠路径 / PMU/GPIO sleep path
+    "app/app_touch_input.c", # RTOS触摸采样，独立pthread回归 / RTOS touch sampler with independent pthread regression
     "app/app_loop.c",      # 真机事件循环 / the real event loop
     "os/os_usb_disk_pico.c", # USB 重启请求 / USB reboot request
     "usb/usb_disk.c", # USB 专用启动与 SDMMC/TinyUSB / dedicated USB boot + SDMMC/TinyUSB
     "os/os_time_pico.c",   # PMU/SNTP 设备桥 / PMU/SNTP bridge
+    "os/os_time_maintenance.c", # 锁屏网络会话，宿主回归覆盖 / lock-network session covered by host regressions
     "os/os_sync_pico.c",
     "os/os_crash_pico.c",  # esp_reset_reason 与内置 FAT 追加 / reset reason + internal-FAT append   # HTTP/MD5 设备桥 / HTTP/MD5 bridge
     "book/book_store.c",   # FATFS 挂载策略（预览用夹具根）/ FATFS policy (preview uses fixture roots)

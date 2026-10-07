@@ -7,6 +7,8 @@
  *
  * 冻结：不释放原文、不刷新屏幕；调用方持有字体绘制互斥锁。
  * Frozen: Never free source text or present the display; caller holds the font draw lock.
+ * 用户确认仅翻页转场旧线穿字：纯文字辅助线启用稳定行网格，改变分页时保持文本字节锚点。
+ * The user confirmed old rules cross text only during turns: text-only guides use a stable row grid; retain byte anchors when repaginating.
  */
 #pragma once
 #include <stdbool.h>
@@ -47,7 +49,16 @@ void book_layout_set_night(bool on);
 void book_layout_set_indent(bool on);
 /// 段落间距档 0=标准 1=加大；影响 build，改变后需重建。/ Paragraph gap tier 0=standard 1=relaxed; build-affecting, rebuild after changing.
 void book_layout_set_paragraph(int tier);
-/// 行辅助线 0=关 1=实线 2=虚线；只影响 draw，不需要重建。/ Per-line guide rule 0=off 1=solid 2=dashed; draw-only, no rebuild needed.
+/// 行辅助线 0=关 1=实线 2=虚线；开关须重建分页，实虚切换只影响绘制；含图片或占位的章节保持原图文布局。
+/// Guide rules 0=off 1=solid 2=dashed; toggling off/on requires repagination, solid/dashed is draw-only; image/placeholder chapters keep their original layout.
 void book_layout_set_guide(int style);
+/// 纯文字辅助线网格的屏幕纵向原点；在建立布局前设置，改变后需重建；正文顶部变化仍对齐同一网格。
+/// Screen-y origin for text-only guide grids; set before building and rebuild after changes; varying body tops align to the same grid.
+void book_layout_set_guide_origin(int y);
+/// 辅助线用日间黑/夜间白以适配真黑白直刷；否则用原灰阶，只影响绘制。/ Use day-black/night-white guides for binary direct; otherwise retain gray guides; draw-only.
+void book_layout_set_guide_contrast(bool binary);
 /// 正文对齐 0=左 1=居中 2=两端对齐；只影响 draw（断行不变），不需要重建。/ Body alignment 0=left 1=center 2=justified; draw-only (line breaks unchanged), no rebuild needed.
 void book_layout_set_align(int align);
+
+/// 命中实际正文字符，空白/图片返回 SIZE_MAX；与绘制共用锁。/ Hit actual body glyphs; whitespace/images return SIZE_MAX; share the drawing lock.
+size_t book_layout_text_at(size_t page, EpdRect rect, int x, int y);

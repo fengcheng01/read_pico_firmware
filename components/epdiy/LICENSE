@@ -22,3 +22,13 @@ listed above.
 The full text of the GNU Lesser General Public License version 3 is available at
 https://www.gnu.org/licenses/lgpl-3.0.txt and applies to all files in this
 directory unless a file states otherwise. 上游文件头部的版权声明保持原样。
+
+- src/output_common/line_queue.c、src/highlevel.c：借鉴 CrossMux freeink-sdk
+  96de1be6ce08eb732909e6e8149af8f892b9a2c5 的 Pico 修复，指针表按指针宽度分配，
+  刷新失败不回写显示参考帧。/ Adapt Pico fixes from CrossMux freeink-sdk at the
+  above revision: pointer-sized queue tables and success-only display-baseline copies.
+  Source: https://github.com/0x1abin/freeink-sdk/tree/96de1be6ce08eb732909e6e8149af8f892b9a2c5/libs/display/EpdiyLcd/src/epdiy
+
+- src/epdiy.h：新增板级上电失败错误，不扫描或提交参考帧。/ Add a board-power failure error without scanning or committing reference frames.
+
+- src/highlevel.c、render.c、epd_highlevel.h、epdiy.h：源帧合并动作码与出现表，避免重读差分PSRAM；页专用选择码扫描与相同灰阶组快速保持，成功提交真实帧；非NULL白选择图仅作实验。/ Page-specific selectors and identical-gray fast holds commit actual frames only on success; non-NULL white selectors are experimental.

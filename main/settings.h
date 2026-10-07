@@ -106,11 +106,40 @@ void app_settings_set_sync_auto(bool on);
 bool app_settings_lock_pin(char* out, size_t cap);
 /// 保存或清除（空串）锁屏密码；非法输入返回 false。/ Save or clear (empty) the lock PIN; invalid input returns false.
 bool app_settings_set_lock_pin(const char* pin);
+/// 解锁验证频率：true 每次解锁都验证，false 仅开机验证（浅睡唤醒免输）。默认 true。
+/// Unlock challenge cadence: true verifies every unlock, false boot-only (light-sleep wake skips it). True by default.
+bool app_settings_lock_pin_wake(void);
+void app_settings_set_lock_pin_wake(bool on);
 /// 清残影周期：差分刷多少次后升一次全像素 GC16，0=关；档位 0/3/5/10/14/20/30，默认 14（原编译期档）。
 /// Ghost-cleanup period: promote one full-pixel GC16 after this many soft updates, 0=off; tiers 0/3/5/10/14/20/30, initially 14 (the old compile-time tier).
 uint8_t app_settings_gc_every(void);
 void app_settings_set_gc_every(uint8_t every);
+/// 可选正文八档灰阶直刷，默认关；图片章节保留标准GL16。/ Optional eight-gray direct body turns, off by default; image chapters retain standard GL16.
+bool app_settings_book_direct(void);
+void app_settings_set_book_direct(bool on);
+
+enum {
+    BOOK_TAP_ACTION_NONE = 0, ///< 无操作 / None
+    BOOK_TAP_ACTION_PREV = 1, ///< 上一页 / Previous page
+    BOOK_TAP_ACTION_NEXT = 2, ///< 下一页 / Next page
+    BOOK_TAP_ACTION_MENU = 3, ///< 菜单 / Menu toolbar
+};
 
 /// 点击布局：左右、右手、左手、上下，取值 0..3。/ Tap layouts: sides, right hand, left hand, vertical; 0..3.
 uint8_t app_settings_book_tap_layout(void);
 void app_settings_set_book_tap_layout(uint8_t layout);
+/// 九宫格各区域动作：0=无、1=上一页、2=下一页、3=菜单。/ 9-grid zone action: 0=none, 1=prev, 2=next, 3=menu.
+uint8_t app_settings_book_tap_zone(uint8_t zone_idx);
+void app_settings_set_book_tap_zone(uint8_t zone_idx, uint8_t action);
+void app_settings_reset_book_tap_zones_default(void);
+
+/// 联网实测的睡眠走时补偿ppm，默认0。/ Network-measured sleep correction in ppm, default zero.
+int32_t app_settings_sleep_clock_ppm(void);
+/// 保存可信测量，范围±10000ppm。/ Persist trusted measurements within ±10000ppm.
+void app_settings_set_sleep_clock_ppm(int32_t ppm);
+/// 是否有成功持久化的实测比例，包括零补偿。/ Whether a measured rate was persisted successfully, including zero.
+bool app_settings_sleep_clock_valid(void);
+/// 动态锁屏低频联网维护走时，默认开启；仅使用已保存WiFi。/ Infrequent dynamic-lock clock maintenance, enabled by default using saved WiFi only.
+bool app_settings_clock_auto(void);
+/// 保存锁屏自动校时开关。/ Persist the lock clock maintenance switch.
+void app_settings_set_clock_auto(bool on);

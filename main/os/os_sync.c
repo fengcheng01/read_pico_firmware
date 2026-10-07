@@ -98,18 +98,25 @@ os_sync_result_t os_sync_push(const os_sync_config_t* config, const char* doc_id
     os_sync_result_t pre = check(config);
     if (pre != OS_SYNC_OK) return pre;
     if (!doc_id || strlen(doc_id) != 32 || !progress || !progress[0]) return OS_SYNC_IO;
-    char doc[67], prog[OS_SYNC_PROGRESS_MAX * 6 + 1], body[640];
-    if (!json_escape(doc, sizeof(doc), doc_id)) return OS_SYNC_IO;
-    if (!json_escape(prog, sizeof(prog), progress) || !isfinite(percent)) return OS_SYNC_IO;
+    if (strlen(progress) >= OS_SYNC_PROGRESS_MAX) return OS_SYNC_IO;
+    char doc[67];
+    // 长XPath的转义与JSON放堆上，不能挤占同步任务栈。
+    // Keep long XPath escaping and JSON on the heap instead of consuming the sync task stack.
+    char* prog = malloc(OS_SYNC_PROGRESS_MAX * 6 + 1);
+    char* body = malloc(OS_SYNC_PROGRESS_MAX * 6 + 320);
+    if (!prog || !body) { free(prog); free(body); return OS_SYNC_IO; }
+    if (!json_escape(doc, sizeof(doc), doc_id)) { free(prog); free(body); return OS_SYNC_IO; }
+    if (!json_escape(prog, OS_SYNC_PROGRESS_MAX * 6 + 1, progress) || !isfinite(percent)) { free(prog); free(body); return OS_SYNC_IO; }
     if (percent < 0) percent = 0;
     if (percent > 1) percent = 1;
-    snprintf(body, sizeof(body),
+    snprintf(body, OS_SYNC_PROGRESS_MAX * 6 + 320,
              "{\"document\":\"%s\",\"progress\":\"%s\",\"percentage\":%.4f,"
              "\"device\":\"" OS_SYNC_DEVICE "\",\"device_id\":\"readpico\"}",
              doc, prog, percent);
     char url[OS_SYNC_URL_MAX + 32];
     snprintf(url, sizeof(url), "%s/syncs/progress", s_url);
-    return status_result(s_io->request("PUT", url, config->user, config->key, "application/json", body, NULL, 0));
+    os_sync_result_t result = status_result(s_io->request("PUT", url, config->user, config->key, "application/json", body, NULL, 0));
+    free(prog); free(body); return result;
 }
 
 // 响应很小且结构浅，解析前限制嵌套，避免恶意 JSON 消耗任务栈。
@@ -134,7 +141,7 @@ os_sync_result_t os_sync_pull(const os_sync_config_t* config, const char* doc_id
     os_sync_result_t pre = check(config);
     if (pre != OS_SYNC_OK) return pre;
     if (!doc_id || strlen(doc_id) != 32 || !progress || !cap || !percent) return OS_SYNC_IO;
-    char url[OS_SYNC_URL_MAX + 64], resp[512] = {0};
+    char url[OS_SYNC_URL_MAX + 64], resp[OS_SYNC_PROGRESS_MAX * 6 + 512] = {0};
     snprintf(url, sizeof(url), "%s/syncs/progress/%s", s_url, doc_id);
     os_sync_result_t result = status_result(s_io->request("GET", url, config->user, config->key,
                                                           NULL, NULL, resp, sizeof(resp)));

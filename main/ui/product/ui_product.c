@@ -5,6 +5,7 @@
  * English: Product layout atop the existing drawing kit, using fixed text buffers.
  */
 #include "ui_product.h"
+#include "ui_gesture.h"
 #include "ttf_font.h"
 #include "app_registry.h"
 #include "ui_menu.h"
@@ -62,7 +63,7 @@ void ui_product_header(uint8_t* fb, const char* title, const char* detail) {
 EpdRect ui_product_back_rect(void) { return (EpdRect){470, 60, 174, 80}; }
 void ui_product_back(uint8_t* fb, const char* label) { ui_draw_button(fb, ui_product_back_rect(), label, false); }
 static const os_app_id_t roots[] = {OS_APP_HOME, OS_APP_LIBRARY, OS_APP_TODAY, OS_APP_SETTINGS};
-static const char* root_labels[] = {"正在读", "书架", "今日", "设置"};
+static const char* root_labels[] = {"正在读", "书架", "手帐", "设置"};
 
 /* ---- 四根导航位图图标 / Root navigation bitmap icons ---- */
 // 32×32 1bpp 位图，每行 4 字节；1 = 黑。/ 32×32 1bpp, 4 bytes per row; 1 = ink.
@@ -70,7 +71,7 @@ typedef struct { float x0, y0, x1, y1; } icon_stroke_t;
 static const icon_stroke_t root_strokes[4][16] = {
     {{3,6,10,5},{10,5,16,8},{16,8,22,5},{22,5,29,6},{3,6,3,25},{3,25,10,24},{10,24,16,27},{16,27,22,24},{22,24,29,25},{29,25,29,6},{16,8,16,27},{7,10,12,11},{7,15,12,16},{20,11,25,10},{20,16,25,15}},
     {{3,27,29,27},{5,26,5,6},{5,6,11,6},{11,6,11,26},{7,10,9,10},{14,26,14,3},{14,3,20,3},{20,3,20,26},{16,8,18,8},{23,8,29,25},{23,8,27,7},{27,7,32,24},{29,25,32,24}},
-    {{4,7,28,7},{28,7,28,28},{28,28,4,28},{4,28,4,7},{4,13,28,13},{10,3,10,9},{22,3,22,9},{10,18,11,18},{16,18,17,18},{22,18,23,18},{10,23,11,23},{16,23,17,23},{22,23,23,23}},
+    {{5,6,5,26},{5,26,16,24},{16,24,27,26},{27,26,27,6},{27,6,16,8},{16,8,5,6},{16,8,16,24},{8,11,13,12},{8,16,13,17},{8,21,13,21},{19,12,24,11},{19,17,24,16},{19,21,24,21}},
     {{3,7,9,7},{17,7,29,7},{3,16,18,16},{26,16,29,16},{3,25,6,25},{14,25,29,25},{10,4,16,4},{16,4,16,10},{16,10,10,10},{10,10,10,4},{19,13,25,13},{25,13,25,19},{25,19,19,19},{19,19,19,13},{7,22,13,22},{7,28,13,28}}
 };
 static const unsigned root_stroke_count[] = {15,13,13,16};
@@ -88,12 +89,22 @@ static bool icon_ink(int icon, float x, float y) {
     // 第三条滑杆的竖边。/ Vertical edges of the third slider.
     return icon == 3 && ((x >= 6 && x <= 8) || (x >= 12 && x <= 14)) && y >= 22 && y <= 28;
 }
+static uint8_t root_icon_pixels[4][44 * 44];
+static bool root_icon_ready[4];
 static void draw_root_icon(uint8_t* fb, int cx, int cy, int icon) {
+    // 覆盖率只算一次，切根页复用像素。/ Compute coverage once and reuse pixels across roots.
+    if (!root_icon_ready[icon]) {
+        for (int y = 0; y < 44; ++y) for (int x = 0; x < 44; ++x) {
+            unsigned coverage = 0;
+            for (int sy = 0; sy < 4; ++sy) for (int sx = 0; sx < 4; ++sx)
+                coverage += icon_ink(icon, (x + (sx + 0.5f) / 4) * 34 / 44, (y + (sy + 0.5f) / 4) * 34 / 44);
+            root_icon_pixels[icon][y * 44 + x] = 255 - coverage * 255 / 16;
+        }
+        root_icon_ready[icon] = true;
+    }
     for (int y = 0; y < 44; ++y) for (int x = 0; x < 44; ++x) {
-        unsigned coverage = 0;
-        for (int sy = 0; sy < 4; ++sy) for (int sx = 0; sx < 4; ++sx)
-            coverage += icon_ink(icon, (x + (sx + 0.5f) / 4) * 34 / 44, (y + (sy + 0.5f) / 4) * 34 / 44);
-        if (coverage) epd_draw_pixel(cx - 22 + x, cy - 22 + y, 255 - coverage * 255 / 16, fb);
+        uint8_t gray = root_icon_pixels[icon][y * 44 + x];
+        if (gray != 255) epd_draw_pixel(cx - 22 + x, cy - 22 + y, gray, fb);
     }
 }
 
@@ -118,10 +129,24 @@ os_app_id_t ui_product_root_hit(uint16_t x, uint16_t y) {
     int i = ui_bar_hit(x, y, 4);
     return i >= 0 && i < 4 && app_by_id(roots[i]) ? roots[i] : OS_APP_NONE;
 }
+// 按下即导航（跨面板参考固件的列表按压行为）：底栏 tab 按下立即切换，不等抬起。
+// Navigate on press (the cross-panel reference behavior for lists): bottom-bar tabs
+// switch the moment they are pressed instead of waiting for the release.
+bool ui_product_root_press(app_ctx_t* ctx, const ui_gesture_event_t* ev) {
+    if (ev == NULL || ev->type != UI_GESTURE_PRESS) return false;
+    os_app_id_t id = ui_product_root_hit(ev->x, ev->y);
+    if (id == OS_APP_NONE) return false;
+    ctx->request_app_rearm_touch = true;
+    return ui_product_navigate(ctx, id);
+}
 bool ui_product_navigate(app_ctx_t* ctx, os_app_id_t id) {
     const app_desc_t* next = app_by_id(id);
     if (!next) return false;
-    if (id == OS_APP_LIBRARY && !book_entry_request(BOOK_ENTRY_SHELF, NULL)) return false;
+    // 书架入口被上一条目加载占用时也照常切页：页面会呈现自己的加载态，
+    // 静默吞掉 tab 按下只会变成“要点两次才切换”。
+    // Switch even when a previous book entry is still loading: the page shows its
+    // own loading state; silently swallowing the tab press just becomes "tap twice".
+    if (id == OS_APP_LIBRARY) (void)book_entry_request(BOOK_ENTRY_SHELF, NULL);
     ctx->request_app = next;
     return true;
 }
@@ -203,21 +228,20 @@ void ui_product_reader_chrome(uint8_t* fb, const char* title, unsigned page, uns
         ui_hairline(fb, 76, UI_MARGIN, ui_content_width(), UI_GRAY_LIGHT);
     }
     EpdRect track = ui_bar_rect(0, 1);
-    // 页脚左侧可先放状态（时钟/电量），标题让位；右侧保持页码与百分比。
-    // The footer left may open with the status cluster (clock/battery); the right keeps pages and percent.
-    int left_x = track.x, left_w = track.width - 260;
-    if (status && status[0]) {
-        ui_text(fb, track.x, track.y + 36, 24, status, EPD_DRAW_ALIGN_LEFT, false);
-        left_x = track.x + ttf_text_width_px(24, status) + 20;
-        left_w = track.x + track.width - 260 - left_x;
-    }
-    if (left_w > 40) ui_product_title(fb, (EpdRect){left_x, track.y + 36, left_w, 32}, title, 24, 1);
+    // 标题独占首行；次行左侧时钟/电量，右侧页码/全书百分比，按实测宽度留间隙。
+    // Title owns the first row; clock/battery sit below left, page/book percent right, with measured spacing.
+    ui_product_title(fb, (EpdRect){track.x, track.y + 8, track.width, 36}, title, 28, 1);
     char label[48];
     if (!bar && pages) snprintf(label, sizeof(label), "%u/%u", page, pages);
     else if (!bar) snprintf(label, sizeof(label), "%u/…", page);
     else if (pages) snprintf(label, sizeof(label), "%u/%u · %u%%", page, pages, percent);
     else snprintf(label, sizeof(label), "%u/… · %u%%", page, percent);
-    ui_text(fb, track.x + track.width, track.y + 36, 24, label, EPD_DRAW_ALIGN_RIGHT, false);
+    int label_px = 26;
+    while (label_px > 20 && ttf_text_width_px(label_px, label) > track.width) label_px -= 2;
+    int status_width = track.width - ttf_text_width_px(label_px, label) - 20;
+    if (status && status[0] && status_width > 26)
+        ui_product_title(fb, (EpdRect){track.x, track.y + 54, status_width, 36}, status, 26, 1);
+    ui_text(fb, track.x + track.width, track.y + 54, label_px, label, EPD_DRAW_ALIGN_RIGHT, false);
     ui_draw_menu_handle(fb, false);
 }
 
@@ -229,9 +253,11 @@ static EpdRect lock_key_rect(int index) {
     if (index == 10) return ui_grid_rect(0, 3, 3, 372, 104);
     return ui_grid_rect(2, 3, 3, 372, 104);
 }
-void ui_product_lock_keypad(uint8_t* fb, const char* title, const char* message, unsigned digits, bool back) {
-    ui_clear_page(fb);
-    ui_text(fb, UI_LOCK_WIDTH / 2, 128, 44, title, EPD_DRAW_ALIGN_CENTER, false);
+void ui_product_lock_keypad_body(uint8_t* fb, const char* message, unsigned digits) {
+    // 先清圆点、键位与提示带再重画：盖在按下灰底上调用时也能完整恢复常态。
+    // Clear the dots, keys and hint band first: restores normal state even when
+    // called over a pressed gray bed.
+    ui_clear_rect_fast(fb, (EpdRect){0, 210, UI_LOCK_WIDTH, 830});
     for (int i = 0; i < 4; ++i) {
         EpdRect dot = {(UI_LOCK_WIDTH - 336) / 2 + i * 100, 224, 36, 36};
         if ((unsigned)i < digits) ui_fill_round_rect(fb, dot, 18, UI_GRAY_BLACK);
@@ -252,6 +278,11 @@ void ui_product_lock_keypad(uint8_t* fb, const char* title, const char* message,
         ui_text(fb, UI_LOCK_WIDTH / 2, 986, 30, message, EPD_DRAW_ALIGN_CENTER, false);
     else
         ui_text(fb, UI_LOCK_WIDTH / 2, 986, 26, "4 位数字 · 输完自动校验", EPD_DRAW_ALIGN_CENTER, false);
+}
+void ui_product_lock_keypad(uint8_t* fb, const char* title, const char* message, unsigned digits, bool back) {
+    ui_clear_page(fb);
+    ui_text(fb, UI_LOCK_WIDTH / 2, 128, 44, title, EPD_DRAW_ALIGN_CENTER, false);
+    ui_product_lock_keypad_body(fb, message, digits);
     if (back) ui_draw_button(fb, (EpdRect){470, 68, 174, 68}, "返回", false);
 }
 int ui_product_lock_keypad_hit(uint16_t x, uint16_t y) {
@@ -261,4 +292,31 @@ int ui_product_lock_keypad_hit(uint16_t x, uint16_t y) {
     if (ui_rect_hit(lock_key_rect(10), x, y)) return 10;
     if (ui_rect_hit(lock_key_rect(11), x, y)) return 11;
     return -1;
+}
+// 命中码转几何下标：1..9→0..8，0→9，10/11 原样。/ Hit code to geometry index: 1..9→0..8, 0→9, 10/11 as-is.
+static int lock_key_index(int key) {
+    if (key >= 1 && key <= 9) return key - 1;
+    if (key == 0) return 9;
+    return key;
+}
+EpdRect ui_product_lock_key_rect(int key) {
+    return lock_key_rect(lock_key_index(key));
+}
+void ui_product_lock_key(uint8_t* fb, int key, bool pressed) {
+    if (key < 0 || key > 11) return;
+    EpdRect r = lock_key_rect(lock_key_index(key));
+    ui_clear_rect_fast(fb, r);
+    if (key < 10) {
+        if (pressed) ui_draw_pressed_round_rect(fb, r, UI_BTN_RADIUS);
+        else ui_draw_round_rect(fb, r, UI_BTN_RADIUS, UI_GRAY_BLACK);
+        char label[2] = {(char)('0' + key), 0};
+        ui_text_vc(fb, r.x + r.width / 2, r.y + r.height / 2, 44, label, EPD_DRAW_ALIGN_CENTER, false);
+    } else if (pressed) {
+        // 清空/退格常态是实底按钮，按下改灰底粗边保持可辨。/ Action keys invert to the gray pressed bed for contrast.
+        ui_draw_pressed_round_rect(fb, r, UI_BTN_RADIUS);
+        ui_text_vc(fb, r.x + r.width / 2, r.y + r.height / 2, UI_PX_BTN, key == 10 ? "清空" : "退格",
+                   EPD_DRAW_ALIGN_CENTER, false);
+    } else {
+        ui_draw_button(fb, r, key == 10 ? "清空" : "退格", true);
+    }
 }

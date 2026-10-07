@@ -32,6 +32,7 @@
 #include <string.h>
 
 #include "app.h"
+#include "book_cover.h"
 #include "book_store.h"
 #include "book_progress.h"
 #include "display.h"
@@ -629,6 +630,7 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
 
 static bool transfer_prepare_sleep(void) { os_sync_job_request_cancel(); return true; }
 static void on_enter(app_ctx_t* ctx) {
+    book_cover_join();
     app_sleep_prepare_register(transfer_prepare_sleep);
     (void)ctx;
     // 先关闭卡上字库，再开放替换；主循环的字体重试也会被暂停。

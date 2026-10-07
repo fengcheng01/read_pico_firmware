@@ -48,6 +48,9 @@ enum EpdDrawError update_display_from_white(EpdiyHighlevelState* hl);
 enum EpdDrawError update_display_from_white_with(
     EpdiyHighlevelState* hl, const EpdWaveform* waveform, enum EpdDrawMode mode
 );
+/// 下一次导航整页用厂家GC16清理一次；成功消费，失败保留，不用于按钮或普通翻页。
+/// Arm one vendor GC16 cleaning at the next whole-page navigation; consume on success, retain on failure, never arm for controls or ordinary turns.
+void display_request_navigation_settle(void);
 /// 把前缓冲铺白再 GC16 全刷，物理屏回到白底。
 /// Paint the front buffer white and GC16 the panel back to white.
 enum EpdDrawError update_display_white(EpdiyHighlevelState* hl);
@@ -55,6 +58,11 @@ enum EpdDrawError update_display_full(EpdiyHighlevelState* hl);
 enum EpdDrawError update_display_with(
     EpdiyHighlevelState* hl, const EpdWaveform* waveform, enum EpdDrawMode mode
 );
+/// 标准正文：日间厂家GL16黑/灰定稿，夜间未变保持，两者不计清理周期。
+/// Standard body: vendor GL16 black/gray settling by day and unchanged-pixel hold at night, both outside cleanup counting.
+enum EpdDrawError update_display_text_turn(EpdiyHighlevelState* hl, bool white_on_black);
+/// 可选厂家黑白DU直刷，实际二值目标、真实旧灰参考，不计周期GC16。/ Optional vendor black/white DU with actual binary targets and real prior gray references, outside scheduled GC16.
+enum EpdDrawError update_display_text_direct(EpdiyHighlevelState* hl, bool white_on_black);
 /// 灰阶图还在屏上时置位：菜单盖上来或离页先刷白，避免从中间灰差分。
 /// Set while a gray image is still on panel: wipe to white before the menu or leave so the next update is not a mid-gray differential.
 void display_hold_white_exit(bool hold);
@@ -63,11 +71,14 @@ enum EpdDrawError update_display_area_with(
     EpdiyHighlevelState* hl, const EpdWaveform* waveform, enum EpdDrawMode mode,
     EpdRect area
 );
+/// 静默局推：产品GL16全像素推一个区域，不进清残影档位。时钟字带专用。
+/// Quiet band push: product GL16 full-pixel area update outside the cleanup tier. For clock digit bands.
+enum EpdDrawError update_display_area_quiet(EpdiyHighlevelState* hl, EpdRect area);
 
 /// 当前像素时钟。/ Current pixel clock.
 int display_pclk_mhz(void);
-/// 出现供数不足就退回安全频率并整屏重刷，其它错误码原样忽略。
-/// On underrun, drop to the safe clock and full-refresh; other error bits are ignored.
+/// 欠载退回安全频率并重画；其它失败标记未知基准，下次先清白重画。
+/// Underrun drops the clock and redraws; other failures mark an unknown baseline for a clean retry.
 void guard_draw_result(EpdiyHighlevelState* hl, enum EpdDrawError result);
 
 #ifdef __cplusplus

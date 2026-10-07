@@ -96,7 +96,7 @@ def main():
         z.writestr('OPS/images/broken.png', b'broken')
         z.writestr('OPS/images/huge.png', png(1025, 1024))
     exe = work / 'test'
-    sources = ['tools/book_image_host_test.c', 'main/book/book_image.c', 'main/book/vendor/tjpgd.c', 'main/book/book_epub.c', 'main/book/html_text.c', 'main/book/zip_reader.c', 'main/book/book_source.c', 'main/book/book_txt.c', 'main/book/gbk.c']
+    sources = ['tools/book_image_host_test.c', 'main/book/book_image.c', 'main/book/vendor/tjpgd.c', 'main/book/book_epub.c', 'main/book/book_xpointer.c', 'main/book/html_text.c', 'main/book/zip_reader.c', 'main/book/book_source.c', 'main/book/book_txt.c', 'main/book/gbk.c']
     subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Werror', '-g', '-fsanitize=address,undefined', '-Itools/book_image_stubs', '-Itools/book_epub_stubs', '-Itools/zip_host_stubs', '-Imain/book', *sources, '-lz', '-o', str(exe)], cwd=ROOT, check=True)
     subprocess.run([str(exe), str(work / 'alpha.png'), str(work / 'gray.jpg'), str(book), *[str(work / (n + '.jpg')) for n in ['cover','tall','edge']]], check=True, env={**os.environ, 'UBSAN_OPTIONS':'halt_on_error=1'})
     for color in [0,2,3,4,6]:

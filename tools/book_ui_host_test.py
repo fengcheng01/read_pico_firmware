@@ -45,14 +45,14 @@ unit = r'''
 #include <unistd.h>
 #include <stdatomic.h>
 #define ESP_OK 0
-#define ESP_ERR_NO_MEM 1
+#define ESP_ERR_NO_MEM 7
 #define ESP_ERR_NOT_FOUND 2
 #define MALLOC_CAP_SPIRAM 1
 #define MALLOC_CAP_8BIT 2
 #define ESP_LOGI(...) ((void)0)
 typedef int esp_err_t;
 typedef struct {int leaf;bool request_menu;} app_ctx_t;
-typedef enum {APP_REDRAW_PAGE,APP_REDRAW_AREA,APP_REDRAW_NONE} app_redraw_t;
+typedef enum {APP_REDRAW_PAGE,APP_REDRAW_AREA,APP_REDRAW_NONE,APP_REDRAW_FULL} app_redraw_t;
 typedef struct {int x,y,width,height;} EpdRect;
 static EpdRect ui_bar_rect(int i,int count){int width=(508-(count-1)*12)/count;return(EpdRect){40+i*(width+12),1096,width,96};}
 static bool ui_rect_hit(EpdRect r,int x,int y){return x>=r.x&&x<r.x+r.width&&y>=r.y&&y<r.y+r.height;}
@@ -100,7 +100,6 @@ int book_store_read_roots(book_store_root_t out[2],int*n){*n=test_root_count;mem
 uint64_t book_store_free_bytes(const book_store_root_t* root){(void)root;return 1000000;}
 int book_store_roots(book_store_root_t out[2],int* n){*n=test_root_count;memcpy(out,test_roots,sizeof(test_roots));return 0;}
 bool book_progress_load(const char* p,uint32_t n,book_progress_t* out){(void)p;(void)n;*out=(book_progress_t){0};return false;}
-static void loading(app_ctx_t* ctx,const char* text){(void)ctx;(void)text;}
 typedef struct pending_progress {char path[288];book_progress_t value;bool dirty,progress_saved;book_progress_watch_t* watch;struct pending_progress* next;} pending_progress_t;
 static pending_progress_t* s_pending;
 typedef struct delete_retry {shelf_entry_t entry;struct delete_retry* next;} delete_retry_t;
@@ -147,6 +146,7 @@ static bool s_delete_confirm,s_file_removed,s_clear_confirm;
 static char s_manage_message[128];
 typedef enum {SHELF,READING,TOC,LAYOUT,TAP_ZONES,MANAGE,BULK,SEARCH} book_view_t;
 static book_view_t s_view,s_search_parent;
+static bool s_presented_valid,s_text_turn;
 #define UI_KEY_1 1
 #define UI_KEY_2 2
 #define UI_KEY_3 3
@@ -212,11 +212,16 @@ static void app_sleep_prepare_unregister(bool (*fn)(void)){(void)fn;}
 static void book_stats_flush(void){}
 '''
 unit += (source.parents[1] / "book/book_entry.h").read_text().replace('#include "book_store.h"', '').replace('#pragma once', '')
-unit += 'static book_entry_request_t s_entry;\nstatic bool s_entry_active;\n'
-for name in ("copy_text", "shelf_matches", "compare_books", "sort_shelf", "shelf_reserve", "delete_retry_find", "delete_retry_reserve", "delete_retry_discard", "scan_shelf",
+unit += 'static book_entry_request_t s_entry;\nstatic bool s_entry_active;\nstatic bool s_quote_selecting;\nstatic EpdRect quote_button(int i){return (EpdRect){40+i*310,944,294,70};}\nstatic bool choose_quote(int x,int y){(void)x;(void)y;return false;}\nstatic app_redraw_t quote_action(bool save){(void)save;s_quote_selecting=false;return APP_REDRAW_PAGE;}\n'
+unit += source.read_text()[source.read_text().index('static book_store_root_t s_scan_roots'):source.read_text().index('static void scan_close')]
+unit += 'static void book_cover_join(void) {}\nstatic unsigned book_progress_revision(void) { return 0; }\n'
+unit += '#include "os_catalog.h"\nstatic os_app_id_t ui_product_root_hit(int x,int y) {(void)x;(void)y;return OS_APP_NONE;}\nstatic bool ui_product_navigate(app_ctx_t* ctx,os_app_id_t id){(void)ctx;(void)id;return true;}\n'
+unit += 'static bool ui_product_root_press(app_ctx_t* ctx,const ui_gesture_event_t* ev){(void)ctx;(void)ev;return false;}\n'
+for name in ("copy_text", "shelf_matches", "compare_books", "sort_shelf", "shelf_reserve", "delete_retry_find", "delete_retry_reserve", "delete_retry_discard", "scan_close", "scan_shelf", "scan_shelf_step",
              "pending_find", "pending_reserve", "pending_restore", "pending_discard", "pending_mark_latest", "pending_drop_invalidated", "pending_flush", "save_progress", "retry_progress", "layout_name", "manage_panel", "manage_rect", "batch_rect", "view_rows", "leaves", "selected_count", "clear_selection", "toggle_selection", "select_page", "search_keys", "search_begin", "refresh_search_matches", "search_finish", "search_action", "refresh_capacity", "manage_apply", "manage_action", "batch_apply", "batch_action", "resume_choice", "free_image", "close_image", "open_image", "gesture_event", "on_key", "draw_wrapped_name", "on_enter", "book_on_exit"):
     unit += function(name) + "\n"
 unit += function("apply_entry") + "\n"
+unit += "static void scan_all(app_ctx_t* ctx) { scan_shelf(ctx); unsigned ticks=0; while(!scan_shelf_step(ctx)) assert(++ticks<10000); }\n"
 unit += r'''
 int main(void) {
     app_ctx_t image_ctx={0};
@@ -274,8 +279,11 @@ int main(void) {
     assert(book_entry_request(BOOK_ENTRY_SHELF,NULL));on_enter(&resume_ctx);
     apply_entry(&resume_ctx);assert(book_entry_status()==BOOK_ENTRY_SHELF_READY&&test_open_calls==before_open+2);
     book_on_exit(&resume_ctx);
+    // 书架进入请求在 on_enter 即完成，不再有可取消窗口。/ A shelf entry completes
+    // inside on_enter; the cancellable window is gone.
     assert(book_entry_request(BOOK_ENTRY_SHELF,NULL));on_enter(&resume_ctx);
-    book_on_exit(&resume_ctx);assert(book_entry_status()==BOOK_ENTRY_CANCELLED);
+    assert(book_entry_status()==BOOK_ENTRY_SHELF_READY);
+    book_on_exit(&resume_ctx);
     assert(book_entry_request(BOOK_ENTRY_OPEN,ep_large));test_open_success=false;
     on_enter(&resume_ctx);assert(book_entry_status()==BOOK_ENTRY_FAILED&&test_open_calls==before_open+3);
     test_open_success=true;book_on_exit(&resume_ctx);s_scan_pending=false;s_resume_pending=false;
@@ -291,6 +299,9 @@ int main(void) {
     assert(mkdir(test_roots[0].path,0700)==0);
     for(int i=0;i<65;i++){char path[340];snprintf(path,sizeof(path),"%s/book%03d.txt",test_roots[0].path,i);FILE* f=fopen(path,"w");assert(f);fputs("x",f);fclose(f);}
     app_ctx_t ctx={0};scan_shelf(&ctx);
+    assert(!scan_shelf_step(&ctx)&&s_scan_pending&&s_count<=4&&s_visible_count==0);
+    while(!scan_shelf_step(&ctx)) {}
+
     assert(s_count==65&&s_visible_count==65&&s_shelf_capacity>=65);
     s_view=SHELF;assert(view_rows()==3&&leaves()==22);
     s_view=BULK;assert(view_rows()==7&&leaves()==10);
@@ -299,9 +310,9 @@ int main(void) {
     EpdRect back=manage_rect(0,3);manage_action(&ctx,back.x+1,back.y+1);
     assert(s_view==SHELF&&ctx.leaf==3);
     assert(!strcmp(s_shelf[0].name,"book000.txt")&&!strcmp(s_shelf[64].name,"book064.txt"));
-    test_degraded=true;scan_shelf(&ctx);assert(s_count==65&&s_shelf_warning[0]);test_degraded=false;
-    test_root_count=2;strcpy(test_roots[1].path,"/nonexistent-book-root");scan_shelf(&ctx);assert(s_count==65&&s_shelf_warning[0]);test_root_count=1;
-    free(s_shelf);s_shelf=NULL;s_shelf_capacity=0;s_count=0;test_oom=true;scan_shelf(&ctx);assert(s_count==0&&s_shelf_warning[0]);test_oom=false;
+    test_degraded=true;scan_all(&ctx);assert(s_count==65&&s_shelf_warning[0]);test_degraded=false;
+    test_root_count=2;strcpy(test_roots[1].path,"/nonexistent-book-root");scan_all(&ctx);assert(s_count==65&&s_shelf_warning[0]);test_root_count=1;
+    free(s_shelf);s_shelf=NULL;s_shelf_capacity=0;s_count=0;test_oom=true;scan_all(&ctx);assert(s_count==0&&s_shelf_warning[0]);test_oom=false;
     strcpy(s_path,"/sdcard/books/a.txt");s_text="text";s_page=1;s_unsaved=8;
     assert(pending_reserve(s_path));pending_mark_latest(s_path);test_save_error=-1;save_progress();
     assert(s_unsaved==8&&s_save_failed&&pending_find(s_path)->dirty);
@@ -328,7 +339,7 @@ int main(void) {
     assert(draw_wrapped_name(NULL,long_name,176)+104<870);assert(!strcmp(test_wrapped,long_name));
     for(int i=0;i<80;i++){memcpy(long_name+i*3,"书",3);}long_name[240]=0;test_wrapped[0]=0;
     assert(draw_wrapped_name(NULL,long_name,176)+104<870);assert(!strcmp(test_wrapped,long_name));
-    scan_shelf(&ctx);s_view=BULK;toggle_selection(0);toggle_selection(14);assert(selected_count()==2);
+    scan_all(&ctx);s_view=BULK;toggle_selection(0);toggle_selection(14);assert(selected_count()==2);
     s_recent_sort=true;sort_shelf(&ctx);assert(selected_count()==2);select_page(1);assert(selected_count()==9);
     ctx.leaf=2;strcpy(s_query,"book");search_begin();strcpy(s_search_draft,"bad");search_finish(&ctx,false);
     assert(ctx.leaf==2&&!strcmp(s_query,"book")&&selected_count()==9);
@@ -340,7 +351,7 @@ int main(void) {
     s_batch_confirm=true;calls=test_delete_calls;EpdRect bc=ui_row_rect(0,2,620,UI_BTN_H);batch_action(&ctx,bc.x+1,bc.y+1);assert(!s_batch_confirm&&test_delete_calls==calls);
     s_batch_delete=true;test_removed=true;test_delete_error=-1;batch_apply(&ctx);assert(selected_count()==2);
     calls=test_delete_calls;test_forget_error=0;batch_apply(&ctx);assert(!selected_count()&&test_delete_calls==calls&&s_count==63);
-    scan_shelf(&ctx);clear_selection();toggle_selection(0);toggle_selection(1);test_mixed=true;
+    scan_all(&ctx);clear_selection();toggle_selection(0);toggle_selection(1);test_mixed=true;
     batch_apply(&ctx);assert(s_count==64&&selected_count()==1&&s_shelf[0].removed);
     calls=test_delete_calls;batch_apply(&ctx);assert(s_count==63&&!selected_count()&&test_delete_calls==calls);
     // 保存失败的 A 不应因无关 B 变动而丢失。/ An unrelated B change must retain A's failed save.
@@ -356,20 +367,20 @@ int main(void) {
     on_enter(&ctx);assert(!pending_find("/sdcard/books/a.txt"));test_save_error=0;
     calls=test_save_calls;retry_progress();assert(test_save_calls==calls);test_forget_error=0;
     // 文件删除后清理失败，切页回来仍可重试。/ Cleanup after deletion remains retryable across page exits.
-    scan_shelf(&ctx);s_managed=s_shelf[0];s_view=MANAGE;s_delete_confirm=true;s_file_removed=false;
+    scan_all(&ctx);s_managed=s_shelf[0];s_view=MANAGE;s_delete_confirm=true;s_file_removed=false;
     test_mixed=false;test_removed=true;test_delete_error=-1;manage_apply(&ctx);
     assert(s_file_removed);assert(unlink(s_managed.path)==0);
-    book_on_exit(&ctx);on_enter(&ctx);scan_shelf(&ctx);
+    book_on_exit(&ctx);on_enter(&ctx);scan_all(&ctx);
     bool found_retry=false;
     for(int i=0;i<s_count;i++)if(!strcmp(s_shelf[i].path,s_managed.path)){found_retry=s_shelf[i].removed;}
     assert(found_retry);
     s_view=MANAGE;calls=test_delete_calls;test_forget_error=0;manage_apply(&ctx);
     assert(s_view==SHELF&&test_delete_calls==calls);
     // 批量失败记录同样跨页存活，重试仅清元数据。/ Batch cleanup retries also survive exits without repeating unlink.
-    scan_shelf(&ctx);clear_selection();toggle_selection(0);toggle_selection(1);s_batch_delete=true;
+    scan_all(&ctx);clear_selection();toggle_selection(0);toggle_selection(1);s_batch_delete=true;
     batch_apply(&ctx);assert(selected_count()==2&&s_delete_retries);
     for(int i=0;i<s_count;i++)if(s_shelf[i].removed)assert(unlink(s_shelf[i].path)==0);
-    book_on_exit(&ctx);on_enter(&ctx);scan_shelf(&ctx);
+    book_on_exit(&ctx);on_enter(&ctx);scan_all(&ctx);
     int retry_count=0;
     for(int i=0;i<s_count;i++)if(s_shelf[i].removed){s_shelf[i].selected=true;++retry_count;}
     assert(retry_count==2);calls=test_delete_calls;batch_apply(&ctx);
@@ -394,6 +405,6 @@ with tempfile.TemporaryDirectory() as tmp:
         if sdk.exists():
             sdk_flags = ["-isysroot", str(sdk)]
     subprocess.run([os.environ.get("CC", "cc"), "-std=gnu11", "-Wall", "-Wextra", "-Werror", "-Wno-unused-variable", "-fsanitize=address,undefined", *sdk_flags,
-                    "-I" + str(root / "tools/book_storage_stubs"), "-I" + str(root / "main/book"),
+                    "-I" + str(root / "tools/book_storage_stubs"), "-I" + str(root / "main/book"), "-I" + str(root / "main/os"),
                     str(c), str(root / "main/book/book_entry.c"), "-o", str(exe)], check=True)
     subprocess.run([str(exe)], check=True)

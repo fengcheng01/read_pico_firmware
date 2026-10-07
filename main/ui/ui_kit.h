@@ -251,9 +251,12 @@ typedef struct {
 extern const ui_sample_line_t ui_sample_lines[];
 int ui_sample_line_count(void);
 
-/// 开机图 / 锁屏图：整屏 4bpp 位图，尺寸必须和 framebuffer 一致。
-/// Boot / lock image: full-screen 4bpp bitmap; size must match the framebuffer.
+/// 按当前屏幕逻辑方向绘制整屏4bpp位图；源资源必须独立于物理帧缓冲。
+/// Draw a full-screen 4bpp bitmap in the current logical orientation; its source must be separate from physical scan memory.
 void ui_draw_full_image(uint8_t* framebuffer, const uint8_t* image);
+/// 解包逻辑竖屏资源再旋转绘制；失败画白页，临时存储立即释放。
+/// Inflate a logical portrait asset then rotate it; paint white on failure and release temporary storage immediately.
+bool ui_draw_packed_full_image(uint8_t* framebuffer, const uint8_t* packed, size_t size);
 
 void ui_draw_no_font_page(
     uint8_t* framebuffer, bool card_present, bool format_confirm

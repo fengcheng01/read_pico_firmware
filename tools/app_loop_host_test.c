@@ -3,6 +3,7 @@
  * English: Run the real loop with deterministic touch and task-delay exit.
  */
 #include "app_loop.h"
+#include "app_touch_input.h"
 #include "ui_gesture.h"
 #include "ui_menu.h"
 #include <assert.h>
@@ -15,10 +16,11 @@ typedef struct { int x, y, count, error; } sample_t;
 static sample_t samples[32];
 static int sample_count, step, ticks, enters, exits, touch_calls, keys[3], events[8];
 static int menus, highlights, restores, fulls, mode, tick_consumed[32];
-static int long_keys;
+static int long_keys, input_resets;
 static app_redraw_t long_key(app_ctx_t* c, int k) { assert(k==UI_KEY_2); ++long_keys; c->request_menu=true; return APP_REDRAW_NONE; }
 static app_redraw_t response;
 static bool request_on_touch, request_on_tick, menu_on_tick, menu_on_touch, cancel_clobber;
+static bool rearm_on_touch;
 static bool home_on_touch, home_on_tick, home_on_key, start_second;
 static int home_enters, home_renders, last_menu_leaf, rendered_leaf;
 static const app_desc_t* menu_background;
@@ -29,13 +31,23 @@ static int du_areas, gl_areas;
 static bool media_test, sd_font, saved_sd_font;
 static bool mounted_steps[32];
 static int media_lost, builtin_opens, font_opens, probes, loss_step;
-int E0470_WAVEFORM;
+int E0470_WAVEFORM, E0470_NAVIGATION_WAVEFORM;
+static unsigned navigation_refreshes, navigation_entries;
+void display_request_navigation_settle(void) { ++navigation_entries; }
+static int menu_entries;
+static void menu_entry(app_ctx_t* c) { (void)c; ++menu_entries; }
 int cst836u_read(void* h, cst836u_touch_t* t) {
     (void)h;
     sample_t s = samples[step];
     *t = (cst836u_touch_t){ .touched=s.count>0, .count=s.count, .x=s.x, .y=s.y };
     t->points[0].active=s.count>0;
     return s.error;
+}
+void app_touch_input_init(cst836u_handle_t tp) {(void)tp;}
+void app_touch_input_enable(bool enabled) {(void)enabled;}
+void app_touch_input_reset(void) { ++input_resets; }
+esp_err_t app_touch_input_read(cst836u_handle_t tp, cst836u_touch_t* out, int64_t* ms) {
+    int err = cst836u_read(tp, out); *ms = esp_timer_get_time() / 1000; return err;
 }
 int cst836u_get_info(void* h,cst836u_info_t* i) {(void)h;(void)i;return 0;}
 const char* esp_err_to_name(int e) {(void)e;return "test";}
@@ -46,12 +58,14 @@ void guard_draw_result(EpdiyHighlevelState* h,enum EpdDrawError e) {(void)h;asse
 enum EpdDrawError update_display_area_with(EpdiyHighlevelState*h,const void*w,int m,EpdRect a) {(void)h;(void)w;(void)a;if(m==MODE_DU)du_areas++;else if(m==MODE_GL16)gl_areas++;return 0;}
 enum EpdDrawError update_display_full(EpdiyHighlevelState*h) {(void)h;fulls++;return 0;}
 enum EpdDrawError update_display_mode(EpdiyHighlevelState*h,int m) {(void)h;(void)m;mode++;return 0;}
+enum EpdDrawError update_display_with(EpdiyHighlevelState*h,const void*w,int m) {(void)h;assert(w==&E0470_NAVIGATION_WAVEFORM && m==MODE_GL16);navigation_refreshes++;return 0;}
 enum EpdDrawError update_display_white(EpdiyHighlevelState*h) {(void)h;return 0;}
 bool display_take_white_exit(void) {return false;}
 void rails_idle_check(int64_t n) {(void)n;}
 bool read_pico_pmu_ready(void) {return lock_due;}
 bool read_pico_pmu_take_key_short(void) {return true;}
 void enter_lock_and_sleep(EpdiyHighlevelState*h,int64_t*t,void*a,void*tp) {(void)h;(void)t;(void)a;(void)tp;lock_due=false;time_offset+=1000000;}
+void os_time_rtc_reanchor(void) {}
 const char* app_settings_font_path(void) {return "builtin";}
 uint8_t app_settings_idle_lock_min(void) {return 0;}
 bool ttf_font_path_is_builtin(const char*p) {(void)p;return !font_due&&!saved_sd_font;}
@@ -89,11 +103,12 @@ static app_redraw_t touch(app_ctx_t*c,const cst836u_touch_t*t) {
 static app_redraw_t gesture(app_ctx_t*c,const ui_gesture_event_t*e) {
     events[e->type]++;
     if(e->type==UI_GESTURE_CANCEL&&cancel_clobber) {c->request_app=NULL;c->request_menu=true;c->request_return=false;}
-    if(e->type==UI_GESTURE_PRESS&&request_on_touch)c->request_app=&second;
+    if(e->type==UI_GESTURE_PRESS&&request_on_touch){c->request_app=&second;c->request_app_rearm_touch=rearm_on_touch;}
     if(e->type==UI_GESTURE_PRESS&&home_on_touch)c->request_return=true;
     return response;
 }
 static app_redraw_t key(app_ctx_t*c,int k) {keys[k]++;if(home_on_key)c->request_return=true;return APP_REDRAW_NONE;}
+static app_redraw_t loading_tick(app_ctx_t*c) { return c->consumed ? APP_REDRAW_NONE : APP_REDRAW_PAGE; }
 static app_redraw_t tick(app_ctx_t*c) {
     ticks++;tick_consumed[step]=c->consumed;
     if(request_on_tick)c->request_app=&second;
@@ -104,13 +119,14 @@ static app_redraw_t tick(app_ctx_t*c) {
 static void reset(void) {
     media_test=sd_font=saved_sd_font=false;media_lost=builtin_opens=font_opens=probes=0;loss_step=-1;
     memset(mounted_steps,0,sizeof(mounted_steps));
-    long_keys=0;
+    long_keys=0; input_resets=0; navigation_refreshes=navigation_entries=0;
     home_on_touch=home_on_tick=home_on_key=start_second=false;
     home_enters=home_renders=0;rendered_leaf=-1;last_menu_leaf=-1;menu_background=NULL;
     full_tick=lock_due=font_due=false;time_offset=0;time_step=10000;du_areas=gl_areas=0;
     memset(samples,0,sizeof(samples));memset(keys,0,sizeof(keys));memset(events,0,sizeof(events));memset(tick_consumed,0,sizeof(tick_consumed));
     sample_count=step=ticks=enters=exits=touch_calls=menus=highlights=restores=fulls=mode=0;
     request_on_touch=request_on_tick=menu_on_tick=menu_on_touch=cancel_clobber=false;response=APP_REDRAW_NONE;
+    rearm_on_touch=false;
     first=(app_desc_t){.title="first",.render=render,.on_enter=enter,.on_exit=leave,.on_touch=touch,.on_tick=tick,.on_key=key};
     second=(app_desc_t){.title="second",.render=render,.on_enter=enter};
 }
@@ -125,23 +141,89 @@ static void home_case(void) {
     first.on_enter=home_enter;first.render=home_render;first.on_tick=NULL;first.on_touch=NULL;
 }
 int main(void) {
+    // 正文AREA保留连续输入，PAGE内部视图切换清除旧按钮输入。
+    // Body AREA turns retain input; PAGE internal-view transitions drop stale button input.
+    reset(); first.on_gesture=gesture; response=APP_REDRAW_AREA;
+    add(400,400,1,0); add(0,0,0,0); run();
+    assert(input_resets==0 && events[UI_GESTURE_TAP]==1);
+    reset(); first.on_gesture=gesture; response=APP_REDRAW_PAGE;
+    add(400,400,1,0); add(0,0,0,0); run();
+    assert(input_resets>=1 && events[UI_GESTURE_TAP]==0);
+
+    // 根页单遍 GL16 导航，局部区域不全刷。/ Root pages use one GL16 navigation pass; local areas never full-clean.
+    reset(); first.clean_page = true;
+    app_ctx_t present_ctx = {0};
+    app_present(&present_ctx, &first, APP_REDRAW_PAGE);
+    assert(navigation_refreshes == 1 && mode == 0 && fulls == 0);
+    app_present(&present_ctx, &first, APP_REDRAW_AREA);
+    assert(navigation_refreshes == 1 && gl_areas == 1);
+    app_present(&present_ctx, &first, APP_REDRAW_FULL);
+    assert(navigation_refreshes == 1 && fulls == 1);
+
+    // 阅读和书架共享描述符时，菜单重选仍退出并以明确入口重入，且仅推一页。
+    // When reader/shelf share a descriptor, menu reselect exits/reenters explicitly with only one page presentation.
+    reset(); menu_entries = 0; first.on_menu_select = menu_entry;
+    add(650,1150,1,0); add(0,0,0,0); add(100,120,1,0); add(0,0,0,0); run();
+    assert(menu_entries == 1 && exits == 1 && enters == 2 && mode == 1 && navigation_refreshes == 1 && fulls == 1);
+    reset(); menu_entries = 0; second.on_menu_select = menu_entry;
+    add(650,1150,1,0); add(0,0,0,0); add(100,220,1,0); add(0,0,0,0); run();
+    assert(menu_entries == 1 && exits == 1 && enters == 2);
+
+    // 根页切换只请求一次入口补偿；同页加载tick仍走普通导航。
+    // Root switches request entry compensation once; same-page loading ticks retain ordinary navigation.
+    reset();first.on_gesture=gesture;request_on_touch=true;second.clean_page=true;second.on_tick=loading_tick;
+    add(480,1140,1,0);add(0,0,0,0);add(0,0,0,0);run();
+    assert(navigation_entries==1&&navigation_refreshes>=1&&fulls==1);
+    reset();first.clean_page=true;first.on_tick=loading_tick;
+    add(0,0,0,0);add(0,0,0,0);run();assert(navigation_entries==0&&navigation_refreshes==2);
+    // 子页入口和返回来源也请求清理，普通加载重绘不重复。
+    // Child entries and origin returns also request cleanup without repeating on loading redraws.
+    reset();first.on_gesture=gesture;request_on_touch=true;
+    add(480,1140,1,0);add(0,0,0,0);run();
+    assert(!second.clean_page&&navigation_entries==1&&mode==1&&fulls==1);
+    reset();first.on_tick=origin_tick;second.on_tick=return_tick;request_on_tick=true;
+    add(0,0,0,0);add(0,0,0,0);run();
+    assert(navigation_entries==2&&mode==2&&fulls==1&&exits==1&&enters==3);
+    reset();first.on_tick=loading_tick;
+    add(0,0,0,0);add(0,0,0,0);run();
+    assert(navigation_entries==0&&mode==2&&fulls==1);
+    // 菜单触屏翻叶和退出到普通子页都请求一次边界清理。
+    // Touch menu-leaf changes and exits to ordinary children each request one boundary cleanup.
+    reset();add(650,1150,1,0);add(0,0,0,0);add(550,500,1,0);add(0,0,0,0);run();
+    assert(navigation_entries==2&&menus==2&&last_menu_leaf==1&&fulls==1);
+    reset();add(650,1150,1,0);add(0,0,0,0);add(650,1150,1,0);add(0,0,0,0);run();
+    assert(navigation_entries==2&&menus==1&&mode==1&&fulls==1);
+    reset();add(650,1150,1,0);add(0,0,0,0);add(100,120,1,0);add(0,0,0,0);run();
+    assert(navigation_entries==2&&menus==1&&mode==1&&fulls==1&&exits==0);
+    // 根页首帧 PRESS 请求当轮完成，单帧速点也无需第二次触摸。
+    // A root's first-sample PRESS request switches in the same tick, including one-sample taps.
+    reset();first.on_gesture=gesture;request_on_touch=true;first.on_tick=loading_tick;
+    add(480,1140,1,0);run();assert(enters==2 && exits==1 && events[UI_GESTURE_PRESS]==1);
+    // 刷屏期间错过前次抬起，下一次点按仍能派发；普通页面不启用重判沿。
+    // Even with the prior release missed during refresh, the next tap dispatches; ordinary pages do not rearm.
+    reset();first.on_gesture=second.on_gesture=gesture;request_on_touch=rearm_on_touch=true;
+    add(480,1140,1,0);add(350,1140,1,0);add(0,0,0,0);run();assert(events[UI_GESTURE_PRESS]==2 && enters==2);
+    // 加载 tick 不能在按下与松手之间刷页并取消导航手势。
+    // Loading ticks must not repaint and cancel navigation between press and release.
+    reset();first.on_gesture=gesture;first.on_tick=loading_tick;
+    add(100,400,1,0);add(100,400,1,0);add(0,0,0,0);run();
+    assert(events[UI_GESTURE_TAP]==1 && !events[UI_GESTURE_CANCEL]);
     reset();add(100,400,1,0);add(110,400,1,0);add(0,0,0,0);run();
     assert(touch_calls==1&&ticks==3&&!tick_consumed[0]);
     reset();response=APP_REDRAW_AREA;add(100,400,1,0);run();assert(touch_calls==1&&tick_consumed[0]);
-    reset();first.on_gesture=gesture;response=APP_REDRAW_AREA;add(100,400,1,0);add(0,0,0,0);run();
+    reset();first.on_gesture=gesture;response=APP_REDRAW_AREA;add(100,400,1,0);add(100,400,1,0);add(0,0,0,0);run();
     assert(!touch_calls&&events[UI_GESTURE_PRESS]==1&&events[UI_GESTURE_TAP]==1&&tick_consumed[0]);
-    reset();first.on_gesture=gesture;add(100,400,1,0);add(0,0,0,9);add(100,400,1,0);add(0,0,0,0);run();
+    reset();first.on_gesture=gesture;add(100,400,1,0);add(100,400,1,0);add(0,0,0,9);add(100,400,1,0);add(0,0,0,0);run();
     assert(events[UI_GESTURE_PRESS]==1&&events[UI_GESTURE_CANCEL]==1&&!events[UI_GESTURE_TAP]);
     reset();request_on_touch=true;menu_on_touch=true;add(100,400,1,0);run();assert(enters==2&&exits==1&&ticks==0&&!menus);
     reset();request_on_tick=true;menu_on_tick=true;add(0,0,0,0);run();assert(enters==2&&exits==1&&ticks==1&&!menus);
-    reset();first.on_gesture=gesture;request_on_touch=true;cancel_clobber=true;add(100,400,1,0);run();
+    reset();first.on_gesture=gesture;request_on_touch=true;cancel_clobber=true;add(100,400,1,0);add(100,400,1,0);run();
     assert(enters==2&&events[UI_GESTURE_CANCEL]==1&&!menus);
     reset();menu_on_tick=true;add(0,0,0,0);add(0,0,0,0);run();assert(menus==1&&ticks==1);
     reset();first.owns_keys=true;for(int k=0;k<3;k++){add(k*160+80,1500,1,0);add(0,0,0,0);}run();
-    // 呈现不再走 update_display_full；整页与菜单均经 update_display_mode(GL16)。
-    // Presents no longer use update_display_full; pages and menus go through update_display_mode(GL16).
-    assert(keys[0]==1&&keys[1]==1&&keys[2]==1&&!menus&&!fulls&&mode==1);
-    reset();add(240,1500,1,0);add(0,0,0,0);add(400,1500,1,0);run();assert(!keys[1]&&!keys[2]&&menus==1&&!fulls&&mode==3);
+    // 首帧走 update_display_full(GC16) 深度清屏；无按键绑定的 KEY1/KEY2/KEY3 正常派发。
+    assert(keys[0]==1&&keys[1]==1&&keys[2]==1&&!menus&&fulls==1&&mode==0);
+    reset();add(240,1500,1,0);add(0,0,0,0);add(400,1500,1,0);run();assert(!keys[1]&&!keys[2]&&menus==1&&fulls==2&&mode==0&&navigation_refreshes==1);
     reset();add(650,1150,1,0);add(0,0,0,0);add(100,220,1,0);add(0,0,0,0);run();
     assert(highlights==1&&restores==1&&enters==2&&exits==1);
     reset();add(650,1150,1,0);add(0,0,0,0);add(100,220,1,0);add(550,220,1,0);add(100,220,1,0);add(0,0,0,0);run();
@@ -152,7 +234,7 @@ int main(void) {
     reset();first.on_gesture=gesture;font_due=true;time_offset=4000000;add(100,400,1,0);add(0,0,0,0);run();
     assert(events[UI_GESTURE_CANCEL]==1&&!events[UI_GESTURE_TAP]&&tick_consumed[0]);
     reset();first.owns_keys=true;add(650,1150,1,0);add(0,0,0,0);add(240,1500,1,0);add(0,0,0,0);add(400,1500,1,0);run();
-    assert(!keys[1]&&!keys[2]&&!fulls&&mode==4&&menus==2);
+    assert(!keys[1]&&!keys[2]&&fulls==2&&mode==1&&navigation_refreshes==1&&menus==2);
     reset();add(650,1150,1,0);add(0,0,0,0);
     for(int i=0;i<3;i++){add(100,220,1,0);add(550,220,1,0);add(0,0,0,0);}run();
     assert(!du_areas&&gl_areas==7);
@@ -174,12 +256,12 @@ int main(void) {
     add(0,0,0,0);add(240,1500,1,0);add(240,1500,1,0);add(240,1500,1,0);add(0,0,0,0);run();assert(!lock_due&&!long_keys);
     home_case();home_on_tick=true;add(0,0,0,0);add(0,0,0,0);run();
     assert(exits==0&&home_enters==0&&menus==1&&last_menu_leaf==1&&menu_background==&second);
-    assert(home_renders==0&&ticks==1&&!fulls&&mode==2);
+    assert(home_renders==0&&ticks==1&&fulls==1&&mode==0&&navigation_refreshes==1);
     home_case();home_on_tick=true;add(0,0,0,0);add(400,1500,1,0);add(0,0,0,0);run();
     assert(exits==0&&home_enters==0&&menus==1&&home_renders==0);
     home_case();home_on_touch=true;request_on_touch=true;menu_on_touch=true;add(100,400,1,0);run();
     assert(exits==0&&home_enters==0&&menus==1&&home_renders==0&&ticks==0);
-    home_case();second.on_gesture=gesture;home_on_touch=true;cancel_clobber=true;response=APP_REDRAW_PAGE;add(100,400,1,0);run();
+    home_case();second.on_gesture=gesture;home_on_touch=true;cancel_clobber=true;response=APP_REDRAW_PAGE;add(100,400,1,0);add(100,400,1,0);run();
     assert(exits==0&&home_enters==0&&menus==1&&events[UI_GESTURE_CANCEL]==1&&home_renders==0);
     home_case();second.owns_keys=true;second.on_key_long=long_key;home_on_key=true;time_step=300000;
     add(240,1500,1,0);add(240,1500,1,0);add(240,1500,1,0);add(240,1500,1,0);run();
@@ -210,7 +292,7 @@ int main(void) {
     // Removal closes consumers before fallback, drops the current key and notifies only once.
     reset();media_test=sd_font=true;mounted_steps[0]=true;time_step=600000;first.on_media_lost=lost;
     add(0,0,0,0);add(80,1500,1,0);add(0,0,0,0);run();
-    assert(media_lost==1&&loss_step==1&&builtin_opens==1&&!keys[0]&&!fulls&&mode==2);
+    assert(media_lost==1&&loss_step==1&&builtin_opens==1&&!keys[0]&&fulls==2&&mode==0);
     // 后台页即使被菜单遮盖也释放资源，仍保留菜单视图。
     // A menu-covered page still releases resources and retains the menu view.
     reset();media_test=sd_font=true;mounted_steps[0]=true;time_step=600000;first.on_media_lost=lost;
@@ -237,6 +319,9 @@ int main(void) {
     reset();media_test=sd_font=saved_sd_font=true;mounted_steps[0]=mounted_steps[2]=true;time_step=4000000;first.on_media_lost=lost;
     add(0,0,0,0);add(0,0,0,0);add(0,0,0,0);add(0,0,0,0);run();
     assert(media_lost==2&&builtin_opens==2&&!probes&&font_opens==2);
-    puts("app_loop: 42 scheduler scenarios passed");
+    puts("app_loop: 58 scheduler scenarios passed");
     return 0;
 }
+
+// 媒体丢失时封面任务汇合替身。/ Cover join boundary on media loss.
+void book_cover_join(void) {}

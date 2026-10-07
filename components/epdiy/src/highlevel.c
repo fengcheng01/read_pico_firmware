@@ -84,21 +84,68 @@ enum EpdDrawError epd_hl_update_screen(EpdiyHighlevelState* state, enum EpdDrawM
     return epd_hl_update_area(state, mode, temperature, epd_full_screen());
 }
 
-enum EpdDrawError epd_hl_update_screen_full(
-    EpdiyHighlevelState* state, enum EpdDrawMode mode, int temperature
+// 在源帧还在缓存时构造动作码，避免写出PSRAM差分图后再读回修改。
+// Build selectors while source frames are cached, avoiding a PSRAM diff write/read/modify pass.
+#if defined(__GNUC__) && !defined(__clang__)
+__attribute__((optimize("O3")))
+#endif
+static void hl_prepare_selective(EpdiyHighlevelState* state, const uint8_t* white_mask) {
+    size_t pixels = (size_t)epd_width() * epd_height();
+    uint8_t present[256] = {0};
+    uint32_t previous = 0;
+    bool have_previous = false;
+    static const uint32_t white_codes[16] = {
+        0,0x11,0x1100,0x1111,0x110000,0x110011,0x111100,0x111111,
+        0x11000000,0x11000011,0x11001100,0x11001111,0x11110000,0x11110011,0x11111100,0x11111111
+    };
+    size_t i = 0;
+    for (; i + 4 <= pixels; i += 4) {
+        unsigned a = state->front_fb[i / 2], b = state->front_fb[i / 2 + 1];
+        unsigned c = state->back_fb[i / 2], d = state->back_fb[i / 2 + 1];
+        unsigned mask = white_mask ? (white_mask[i / 8] >> (i % 8)) & 15 : 0;
+        uint32_t codes;
+        // 产品不补擦时，整组相同的字、细线和白底都直接保持。
+        // Without product cleanup, identical glyph/guide/white groups all take the hold fast path.
+        if (a == c && b == d && mask == 0) codes = 0xeeeeeeeeu;
+        else if (a == 255 && b == 255 && c == 255 && d == 255) codes = 0xeeeeeeeeu | white_codes[mask];
+        else {
+            codes = 0;
+            unsigned to = a | b << 8, from = c | d << 8;
+            for (int j = 0; j < 4; ++j) {
+                unsigned goal = to >> (j * 4) & 15, prior = from >> (j * 4) & 15;
+                unsigned code = goal == prior ? (goal == 15 && (mask & (1u << j)) ? 255 : 0xee) : goal << 4 | prior;
+                codes |= code << (j * 8);
+            }
+        }
+        memcpy(state->difference_fb + i, &codes, 4);
+        if (!have_previous || codes != previous) {
+            for (int j = 0; j < 4; ++j) present[codes >> (j * 8) & 255] = 1;
+            previous = codes; have_previous = true;
+        }
+    }
+    for (; i < pixels; ++i) {
+        unsigned goal = state->front_fb[i / 2] >> ((i % 2) * 4) & 15;
+        unsigned prior = state->back_fb[i / 2] >> ((i % 2) * 4) & 15;
+        bool erase = goal == 15 && white_mask && (white_mask[i / 8] & (1u << (i % 8)));
+        unsigned code = goal == prior ? (erase ? 255 : 0xee) : goal << 4 | prior;
+        state->difference_fb[i] = code; present[code] = 1;
+    }
+    epd_leading_skip_set_present(state->difference_fb, present);
+}
+
+static enum EpdDrawError hl_update_screen_full(
+    EpdiyHighlevelState* state, enum EpdDrawMode mode, int temperature,
+    bool selective, const uint8_t* white_mask
 ) {
     assert(state != NULL);
 
     EpdRect area = epd_full_screen();
     uint32_t ts = esp_timer_get_time() / 1000;
 
-    epd_difference_image_cropped(
-        state->front_fb,
-        state->back_fb,
-        area,
-        state->difference_fb,
-        state->dirty_lines,
-        state->dirty_columns
+    if (selective) hl_prepare_selective(state, white_mask);
+    else epd_difference_image_cropped(
+        state->front_fb, state->back_fb, area, state->difference_fb,
+        state->dirty_lines, state->dirty_columns
     );
 
     int fb_height = epd_height();
@@ -124,7 +171,9 @@ enum EpdDrawError epd_hl_update_screen_full(
 
     uint32_t t2 = esp_timer_get_time() / 1000;
 
-    memcpy(state->back_fb, state->front_fb, (size_t)col_bytes * fb_height);
+    // 失败帧不是显示参考帧，保留成功的旧画面供上层恢复。/ Failed frames are not display baselines; retain the successful old frame for recovery.
+    if (err == EPD_DRAW_SUCCESS)
+        memcpy(state->back_fb, state->front_fb, (size_t)col_bytes * fb_height);
 
     uint32_t t3 = esp_timer_get_time() / 1000;
     hl_record_timing(t1 - ts, t2 - t1, t3 - t2);
@@ -137,6 +186,18 @@ enum EpdDrawError epd_hl_update_screen_full(
         t3 - ts
     );
     return err;
+}
+
+enum EpdDrawError epd_hl_update_screen_full(
+    EpdiyHighlevelState* state, enum EpdDrawMode mode, int temperature
+) {
+    return hl_update_screen_full(state, mode, temperature, false, NULL);
+}
+
+enum EpdDrawError epd_hl_update_screen_selective(
+    EpdiyHighlevelState* state, enum EpdDrawMode mode, int temperature, const uint8_t* white_mask
+) {
+    return hl_update_screen_full(state, mode, temperature, true, white_mask);
 }
 
 enum EpdDrawError epd_hl_update_screen_from_white(
@@ -245,6 +306,12 @@ static enum EpdDrawError hl_update_area(
     );
 
     uint32_t t2 = esp_timer_get_time() / 1000;
+
+    // 失败时不回写参考帧。/ Do not advance the baseline after a failed draw.
+    if (err != EPD_DRAW_SUCCESS) {
+        hl_record_timing(t1 - ts, t2 - t1, 0);
+        return err;
+    }
 
     // 回写范围和差分实际算过的列段一致：段外的像素没被驱动，back_fb 不能跟着改。
     int x_start, x_stop;

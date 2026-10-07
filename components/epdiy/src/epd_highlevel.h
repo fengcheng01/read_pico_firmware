@@ -172,6 +172,14 @@ void epd_fullclear(EpdiyHighlevelState* state, int temperature);
  */
 void epd_hl_waveform(EpdiyHighlevelState* state, const EpdWaveform* waveform);
 
+/// 页专用：真实变化保留，未变像素用中性EE码；1bit白选择图低位先行，NULL不补擦。
+/// Page-only: retain real changes, use neutral EE for unchanged pixels; low-bit-first white selectors, NULL omits cleanup.
+/// 必须配套EE保持；非NULL实验选择图还要求FF定向擦白。产品页传NULL；成功才提交真实目标。
+/// Requires neutral EE; non-NULL experimental selectors also require selective FF erasure. Product pages pass NULL; commit real targets only on success.
+enum EpdDrawError epd_hl_update_screen_selective(
+    EpdiyHighlevelState* state, enum EpdDrawMode mode, int temperature, const uint8_t* white_mask
+);
+
 #ifdef __cplusplus
 }
 #endif

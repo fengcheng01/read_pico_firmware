@@ -6,6 +6,7 @@
  * 冻结：只用于宿主测试。/ Frozen: Host testing only.
  */
 #include <assert.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -15,9 +16,15 @@ static char drawn[20000];
 static size_t measured_codepoints;
 static size_t measure_calls;
 static int first_draw_px, last_draw_px;
+static int first_draw_y, last_draw_y;
 static size_t image_pixels;
+static EpdRect filled[1024];
+static uint8_t fill_colors[1024];
+static size_t fill_count;
 void epd_fill_rect(EpdRect rect, uint8_t color, uint8_t* fb) {
-    (void)rect; (void)fb; assert(color <= 15);
+    (void)fb; assert(color <= 15 || color == 0xB0 || color == 0x50 || color == 0xF0);
+    assert(fill_count < sizeof(filled) / sizeof(filled[0]));
+    filled[fill_count] = rect; fill_colors[fill_count++] = color;
 }
 void epd_draw_pixel(int x, int y, uint8_t color, uint8_t* fb) {
     (void)color; (void)fb;
@@ -39,8 +46,9 @@ void ttf_draw_text_px(uint8_t* fb, int x, int y, int px, const char* text,
                       enum EpdFontFlags align, uint8_t fg, uint8_t bg) {
     (void)fb; (void)x; (void)y; (void)px; (void)align;
     assert(fg <= 15 && bg <= 15);
-    if (!drawn[0]) first_draw_px = px;
+    if (!drawn[0]) { first_draw_px = px; first_draw_y = y; }
     last_draw_px = px;
+    last_draw_y = y;
     assert(strlen(drawn) + strlen(text) < sizeof(drawn));
     strcat(drawn, text);
 }
@@ -206,6 +214,84 @@ int main(void) {
     drawn[0]=0;book_layout_draw_page(&fb,0,r,48);
     assert(strstr(drawn,"标题图") && !strstr(drawn,"重复") && !strstr(drawn,"第 8 节"));
     assert(book_layout_page_count()==before_pages && book_layout_page_start_offset(0)==before_offset);
+    // 字符命中与实际对齐一致；空白、行距和图片不选成文字。/ Glyph hits follow alignment; whitespace, leading and images never select text.
+    assert(book_layout_text_at(0,r,342,150)==SIZE_MAX);
+    book_layout_set_indent(false);book_layout_set_leading(0);book_layout_set_align(0);
+    r=(EpdRect){40,24,80,100};
+    assert(book_layout_build("ab cd\nEF",8,r,10));
+    assert(book_layout_text_at(0,r,44,25)==0 && book_layout_text_at(0,r,60,25)==SIZE_MAX);
+    assert(book_layout_text_at(0,r,44,35)==SIZE_MAX && book_layout_text_at(0,r,44,46)==6);
+    book_layout_set_align(1);
+    assert(book_layout_text_at(0,r,55,25)==0 && book_layout_text_at(0,r,44,25)==SIZE_MAX);
+    book_layout_set_align(2);r.width=85;
+    assert(book_layout_build("WiWiWiWiWiWi",12,r,10));
+    assert(book_layout_text_at(0,r,55,25)==SIZE_MAX && book_layout_text_at(0,r,56,25)==1);
+    assert(book_layout_text_at(0,(EpdRect){INT_MAX,24,85,100},INT_MAX,25)==SIZE_MAX);
+    // 辅助线开关改变分页；稳定网格的段距、标题与命中共用相同位置。
+    // Guide activation repaginates; grid paragraph gaps, headings and hits share positions.
+    book_layout_set_align(0); book_layout_set_guide_origin(24); book_layout_set_paragraph(0);
+    r=(EpdRect){40,24,200,240};
+    const char rows[]="a\nb\nc\nd";
+    assert(book_layout_build(rows,strlen(rows),r,36));
+    assert(book_layout_page_count()==2 && book_layout_page_start_offset(1)==6);
+    drawn[0]=0; book_layout_draw_page(&fb,0,r,36);
+    assert(first_draw_y==60 && last_draw_y==204);
+    book_layout_set_guide(1);
+    assert(book_layout_build(rows,strlen(rows),r,36));
+    assert(book_layout_page_count()==1 && book_layout_page_for_offset(6)==0);
+    drawn[0]=0; fill_count=0; book_layout_draw_page(&fb,0,r,36);
+    assert(first_draw_y==60 && last_draw_y==222 && fill_count==4);
+    for(size_t i=0;i<4;++i) assert(filled[i].y==75+(int)i*54 && filled[i].height==2 && fill_colors[i]==0xB0);
+    assert(book_layout_text_at(0,r,44,25)==0 && book_layout_text_at(0,r,44,79)==2);
+    assert(book_layout_text_at(0,r,44,75)==SIZE_MAX);
+    book_layout_set_paragraph(1);
+    assert(book_layout_build(rows,strlen(rows),r,36));
+    assert(book_layout_page_count()==2 && book_layout_page_start_offset(1)==4);
+    drawn[0]=0; fill_count=0; book_layout_draw_page(&fb,0,r,36);
+    assert(first_draw_y==60 && last_draw_y==168 && fill_count==2);
+    const char title[]="T\nb";
+    blk_t titled[]={{.offset=0,.len=1,.heading=true},{.offset=2,.len=1}};
+    book_layout_set_paragraph(0);
+    assert(book_layout_build_blocks(title,strlen(title),titled,2,r,36));
+    drawn[0]=0; fill_count=0; book_layout_draw_page(&fb,0,r,36);
+    assert(first_draw_px==44 && first_draw_y==68 && last_draw_y==168);
+    assert(filled[0].y==75 && filled[1].y==183);
+    // 缺字提示提高正文顶部，但保留24px原点，跨章规则相位一致。
+    // A font notice raises the body top while the 24px origin retains cross-chapter rule phase.
+    r=(EpdRect){40,88,200,176};
+    assert(book_layout_build(rows,strlen(rows),r,36));
+    drawn[0]=0; fill_count=0; book_layout_draw_page(&fb,0,r,36);
+    assert(first_draw_y==168 && last_draw_y==222 && filled[0].y==183 && filled[1].y==237);
+    assert(book_layout_text_at(0,r,44,100)==SIZE_MAX && book_layout_text_at(0,r,44,133)==0);
+    assert(book_layout_text_at(0,r,44,187)==2 && book_layout_text_at(0,r,44,183)==SIZE_MAX);
+    assert(book_layout_page_for_offset(6)==1 && book_layout_page_start_offset(1)==4);
+    size_t grid_pages=book_layout_page_count(), grid_offset=book_layout_page_start_offset(1);
+    book_layout_set_guide(2); book_layout_set_guide_contrast(true);
+    drawn[0]=0; fill_count=0; book_layout_draw_page(&fb,0,r,36);
+    assert(book_layout_page_count()==grid_pages && book_layout_page_start_offset(1)==grid_offset);
+    assert(fill_count && fill_colors[0]==0 && filled[0].y==183);
+    book_layout_set_night(true); drawn[0]=0; fill_count=0; book_layout_draw_page(&fb,1,r,36);
+    assert(fill_count>1 && fill_colors[0]==0 && filled[0].height==r.height);
+    for(size_t i=1;i<fill_count;++i) assert(fill_colors[i]==0xF0 && filled[i].height==2);
+    book_layout_set_night(false); book_layout_set_guide_contrast(false); book_layout_set_guide(0);
+    drawn[0]=0; book_layout_draw_page(&fb,0,r,36);
+    assert(!drawn[0]);
+    assert(book_layout_build(rows,strlen(rows),r,36));
+    drawn[0]=0; book_layout_draw_page(&fb,0,r,36);
+    assert(first_draw_y==124 && last_draw_y==196);
+    // 含图章节无网格化：开线前后图片与文字位置一致，命中仍按实际占位。
+    // Illustration chapters retain positions across guide activation and hits follow actual placeholders.
+    r=(EpdRect){40,24,200,240}; illustrated[1].image=pixels; illustrated[1].image_src=NULL;
+    assert(book_layout_build_blocks("a\nimg\nb",7,illustrated,3,r,36));
+    drawn[0]=0; book_layout_draw_page(&fb,0,r,36); int image_last=last_draw_y;
+    book_layout_set_guide(1);
+    assert(book_layout_build_blocks("a\nimg\nb",7,illustrated,3,r,36));
+    drawn[0]=0; fill_count=0; book_layout_draw_page(&fb,0,r,36);
+    assert(last_draw_y==image_last && filled[0].y==68);
+    assert(!book_layout_build("a",1,(EpdRect){40,88,200,54},36));
+    // 上一夹具含图，纯文字网格不可放进不足一槽的顶部余量。
+    // The previous fixture had images; a text grid cannot fit an incomplete slot after top padding.
+    book_layout_set_guide(0);
     book_layout_free();
     puts("book_layout_host_test: PASS");
 }

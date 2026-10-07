@@ -5,6 +5,8 @@
  * English: Group existing features under Settings, separating diagnostics from everyday navigation.
  * 冻结：不写电源或 VCOM；设置项委托已有页面，render 只绘图。
  * Frozen: No power or VCOM writes; delegate settings to existing pages; render only paints.
+ * 冻结：用户拒绝Tab黑闪；根页保留厂家GL16迁移，布局入口补偿一次白底，不强制GC16进页。
+ * Frozen: User rejects flashing Tabs; roots retain vendor GL16 migrations with one white entry compensation and no forced GC16 entries.
  */
 #include "app.h"
 #include "app_registry.h"
@@ -30,18 +32,17 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
     ui_product_header(fb, "设置", "按需连接，其余时间安心阅读");
     for (unsigned i = 0; i < sizeof(items) / sizeof(items[0]); ++i) {
         EpdRect r = row_rect(i);
-        ui_text(fb, r.x, r.y + 10, 44, items[i].title, EPD_DRAW_ALIGN_LEFT, false);
+        EpdRect card = {r.x, r.y, r.width, r.height - 14};
+        ui_draw_round_rect(fb, card, UI_CHIP_RADIUS, UI_GRAY_BLACK);
+        ui_text(fb, card.x + 20, card.y + 16, 38, items[i].title, EPD_DRAW_ALIGN_LEFT, false);
         bool disabled = items[i].id == OS_APP_TRANSFER && os_device()->transfer != OS_CAP_PRESENT;
-        ui_text(fb, r.x, r.y + 64, 30, disabled ? "此设备暂不支持连接与传书" : items[i].detail, EPD_DRAW_ALIGN_LEFT, false);
-        ui_text_vc(fb, r.x + r.width - 8, r.y + 36, 44, "›", EPD_DRAW_ALIGN_RIGHT, false);
-        ui_hairline(fb, r.y + r.height, r.x, r.width, UI_GRAY_LIGHT);
+        ui_text(fb, card.x + 20, card.y + 68, 24, disabled ? "此设备暂不支持连接与传书" : items[i].detail, EPD_DRAW_ALIGN_LEFT, false);
+        ui_text_vc(fb, card.x + card.width - 24, card.y + card.height / 2, 38, "›", EPD_DRAW_ALIGN_RIGHT, false);
     }
     // 版本行：产品版本 + 编译日期，方便检查固件。/ Version line for firmware checks.
     char version[96];
     snprintf(version, sizeof(version), "固件 %s", firmware_version());
-    ui_text(fb, UI_MARGIN, 1046, 28, version, EPD_DRAW_ALIGN_LEFT, false);
-    snprintf(version, sizeof(version), "构建 %s UTC", firmware_build_time());
-    ui_text(fb, UI_MARGIN, 1080, 22, version, EPD_DRAW_ALIGN_LEFT, false);
+    ui_text(fb, UI_MARGIN, 1056, 22, version, EPD_DRAW_ALIGN_LEFT, false);
     ui_product_root_bar(fb, OS_APP_SETTINGS);
 }
 static int hit(uint16_t x, uint16_t y) {
@@ -49,6 +50,7 @@ static int hit(uint16_t x, uint16_t y) {
     return -1;
 }
 static app_redraw_t gesture(app_ctx_t* ctx, const ui_gesture_event_t* ev) {
+    if (ui_product_root_press(ctx, ev)) return APP_REDRAW_NONE;
     if (ev->type != UI_GESTURE_TAP) return APP_REDRAW_NONE;
     os_app_id_t id = ui_product_root_hit(ev->x0, ev->y0);
     if (id != OS_APP_NONE && id != OS_APP_SETTINGS && id == ui_product_root_hit(ev->x, ev->y)) {
@@ -63,6 +65,6 @@ static app_redraw_t gesture(app_ctx_t* ctx, const ui_gesture_event_t* ev) {
     return APP_REDRAW_NONE;
 }
 const app_desc_t app_os_settings = {
-    .title = "设置", .detail = "阅读 · 连接 · 存储 · 诊断", .enter_full = true,
+    .title = "设置", .detail = "阅读 · 连接 · 存储 · 诊断", .enter_full = false, .clean_page = true,
     .render = render, .on_gesture = gesture,
 };

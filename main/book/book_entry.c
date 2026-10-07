@@ -34,7 +34,9 @@ static bool valid_path(const char* path) {
     return ext && (!strcasecmp(ext, ".txt") || !strcasecmp(ext, ".epub"));
 }
 bool book_entry_request(book_entry_kind_t kind, const char* path) {
-    if (s_status == BOOK_ENTRY_QUEUED || s_status == BOOK_ENTRY_LOADING) return false;
+    // 排队中的旧请求直接被新请求覆盖：导航入口永不因排队而拒绝。
+    // A queued request is simply overwritten: navigation never bounces on a pending slot.
+    if (s_status == BOOK_ENTRY_LOADING) return false;
     if (kind != BOOK_ENTRY_SHELF && kind != BOOK_ENTRY_OPEN) return false;
     if (kind == BOOK_ENTRY_OPEN && !valid_path(path)) return false;
     s_request = (book_entry_request_t){.kind = kind};
@@ -55,3 +57,11 @@ void book_entry_finish(book_entry_status_t status) {
     s_status = status;
 }
 book_entry_status_t book_entry_status(void) { return s_status; }
+
+bool book_entry_request_position(const char* path, uint16_t chapter, uint32_t byte_off) {
+    if (!book_entry_request(BOOK_ENTRY_OPEN, path)) return false;
+    s_request.has_position = true;
+    s_request.chapter = chapter;
+    s_request.byte_off = byte_off;
+    return true;
+}

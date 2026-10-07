@@ -98,6 +98,11 @@ void epd_leading_skip_discard(void) {
     s_present_for = NULL;
 }
 
+void epd_leading_skip_set_present(const uint8_t* data, const uint8_t present[256]) {
+    memcpy(s_present, present, sizeof(s_present));
+    s_present_for = data;
+}
+
 int epd_last_leading_skip(void) {
     return s_last_leading_skip;
 }

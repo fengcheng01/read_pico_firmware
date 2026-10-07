@@ -22,7 +22,8 @@ LineQueue_t lq_init(int queue_len, int element_size) {
 
     int elem_buf_size = ceil_div(element_size, 16) * 16;
 
-    queue.bufs = calloc(queue.size, elem_buf_size);
+    // 指针表按指针宽度分配，行数据仍分别对齐分配。/ Size the pointer table by pointer width; row storage remains individually aligned.
+    queue.bufs = calloc(queue.size, sizeof(*queue.bufs));
     assert(queue.bufs != NULL);
 
     for (int i = 0; i < queue.size; i++) {

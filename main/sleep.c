@@ -5,13 +5,20 @@
  * 锁屏、浅睡等待、软睡/关机下电、锁屏密码。
  *
  * Lock, light-sleep wait, soft-sleep / power-off, and the lock PIN.
+ *
+ * 冻结：动态锁屏在浅睡中按本地分钟定时更新；深睡设置对动态锁屏使用浅睡，关机仍断电。
+ * 原因：用户反馈 PMU 闹钟断电开机无法可靠走时；保留帧缓冲与单调钟避免重复冷启动。
+ * Frozen: Dynamic faces use minute-timed light sleep, including when deep sleep is selected;
+ * explicit power-off still powers down. Hardware feedback requires retaining the framebuffer
+ * and monotonic clock rather than repeatedly cold-booting through the PMU alarm.
+ * 修订：用户要求修复长期慢钟；启用自动校时后，分钟唤醒可短暂连接已保存WiFi，电源键取消。
+ * Revision: User-requested drift repair permits brief saved-WiFi sessions on minute wakes when enabled; the power key cancels them.
  */
 
 #include "sleep.h"
 
 #include "app.h"
 #include "app_sleep_hooks.h"
-#include "asset_pack.h"
 #include "display.h"
 #include "driver/gpio.h"
 #include "esp_log.h"
@@ -37,8 +44,8 @@ extern const uint8_t lock_4bpp_pack_start[] asm("_binary_lock_4bpp_pack_start");
 extern const uint8_t lock_4bpp_pack_end[] asm("_binary_lock_4bpp_pack_end");
 
 static void draw_static_lock(uint8_t* fb) {
-    if (!asset_pack_unpack(lock_4bpp_pack_start, (size_t)(lock_4bpp_pack_end - lock_4bpp_pack_start),
-                           fb, (size_t)UI_LOCK_WIDTH * UI_LOCK_HEIGHT / 2)) ui_clear_page(fb);
+    ui_draw_packed_full_image(fb, lock_4bpp_pack_start,
+                             (size_t)(lock_4bpp_pack_end - lock_4bpp_pack_start));
 }
 
 static void lock_arm_ioe_wakeup(void) {
@@ -112,6 +119,30 @@ static bool pickup_wait_quiet(sc7a20h_handle_t acc, int quiet_ms, int timeout_ms
     return false;
 }
 
+// 分钟期限也用于浅睡失败/中断线常低时退回有延时的等待，不能陷入忙循环。
+// The minute deadline also bounds delayed polling when sleep fails or an interrupt stays low.
+static int64_t s_minute_deadline_ms;
+
+static void arm_minute_wake(void) {
+    os_time_poll(esp_timer_get_time() / 1000);
+    uint32_t seconds = os_time_info()->state == OS_TIME_VALID
+        ? 60 - os_time_info()->unix_utc % 60 : 60;
+    s_minute_deadline_ms = esp_timer_get_time() / 1000 + (int64_t)seconds * 1000;
+    esp_sleep_enable_timer_wakeup((uint64_t)seconds * 1000000);
+}
+
+void app_sleep_disarm_minute_wake(void) {
+    esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_TIMER);
+    s_minute_deadline_ms = 0;
+}
+
+void app_sleep_alarm_clock(bool on) {
+    if (!read_pico_pmu_ready()) return;
+    uint8_t payload[5] = {on ? (uint8_t)2 : (uint8_t)0, 60, 0, 0, 0};
+    if (read_pico_pmu_cmd(PMU_CMD_ALARM_SET, payload, sizeof(payload)) != ESP_OK)
+        ESP_LOGW(TAG, "alarm %s failed", on ? "on" : "off");
+}
+
 app_wake_source_t app_light_sleep_wait(sc7a20h_handle_t acc) {
     bool pickup = acc != NULL && app_settings_pickup_wake();
     bool acc_armed = false;
@@ -154,45 +185,53 @@ app_wake_source_t app_light_sleep_wait(sc7a20h_handle_t acc) {
     }
 
     app_wake_source_t wake = APP_WAKE_NONE;
-    bool slept = false;
     for (;;) {
+        // 先收事件再清 IOE；包括睡前到达的按键，不能被 drain 吞掉。
+        // Collect events before clearing IOE, including keys arriving before the first sleep.
+        uint8_t ev = read_pico_pmu_take_wake_events();
+        if (ev & READ_PICO_PMU_WAKE_KEY) { wake = APP_WAKE_KEY; break; }
+        if (s_minute_deadline_ms && esp_timer_get_time() / 1000 >= s_minute_deadline_ms) {
+            wake = APP_WAKE_TIMER;
+            break;
+        }
         read_pico_clear_ioe_int();
-        if (!slept && gpio_get_level((gpio_num_t)READ_PICO_IOE_INT_GPIO) == 0) {
-            read_pico_pmu_drain_events();
-            read_pico_clear_ioe_int();
+        if (gpio_get_level((gpio_num_t)READ_PICO_IOE_INT_GPIO) == 0) {
             vTaskDelay(pdMS_TO_TICKS(20));
             continue;
         }
-        if (!slept && pickup && sc7a20h_int1_level(acc) > 0) {
-            pickup_ack(acc);
-            vTaskDelay(pdMS_TO_TICKS(20));
-            continue;
-        }
-        if (slept && gpio_get_level((gpio_num_t)READ_PICO_IOE_INT_GPIO) == 0) {
-            if (read_pico_pmu_take_key_wakeup()) {
-                wake = APP_WAKE_KEY;
-                break;
-            }
-            read_pico_clear_ioe_int();
-            continue;
-        }
-        if (slept && pickup && sc7a20h_int1_level(acc) > 0 && pickup_ia(acc)) {
+        if (pickup && sc7a20h_int1_level(acc) > 0 && pickup_ia(acc)) {
             wake = APP_WAKE_PICKUP;
             ESP_LOGI(TAG, "pickup wake");
             break;
         }
-        if (slept && pickup && sc7a20h_int1_level(acc) > 0) {
+        if (pickup && sc7a20h_int1_level(acc) > 0) {
             pickup_ack(acc);
             pickup_wait_quiet(acc, 400, 1500);
             continue;
         }
         int64_t t0 = esp_timer_get_time();
-        esp_light_sleep_start();
-        slept = true;
-        int64_t dt_ms = (esp_timer_get_time() - t0) / 1000;
-        read_pico_clear_ioe_int();
-        if (read_pico_pmu_take_key_wakeup()) {
+        if (s_minute_deadline_ms) {
+            int64_t remaining_us = s_minute_deadline_ms * 1000 - t0;
+            if (remaining_us <= 0) { wake = APP_WAKE_TIMER; break; }
+            esp_sleep_enable_timer_wakeup((uint64_t)remaining_us);
+        }
+        esp_err_t sleep_err = esp_light_sleep_start();
+        if (sleep_err != ESP_OK) {
+            vTaskDelay(pdMS_TO_TICKS(20));
+            continue;
+        }
+        int64_t duration_us = esp_timer_get_time() - t0;
+        os_time_record_sleep(duration_us);
+        int64_t dt_ms = duration_us / 1000;
+        ev = read_pico_pmu_take_wake_events();
+        if (ev & READ_PICO_PMU_WAKE_KEY) {
             wake = APP_WAKE_KEY;
+            break;
+        }
+        if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_TIMER) {
+            app_sleep_disarm_minute_wake();
+            wake = APP_WAKE_TIMER;
+            ESP_LOGI(TAG, "minute wake");
             break;
         }
         if (pickup && sc7a20h_int1_level(acc) > 0 && pickup_ia(acc)) {
@@ -213,6 +252,7 @@ app_wake_source_t app_light_sleep_wait(sc7a20h_handle_t acc) {
     }
 
     gpio_wakeup_disable((gpio_num_t)READ_PICO_IOE_INT_GPIO);
+    app_sleep_disarm_minute_wake();
     if (acc_armed) {
         gpio_wakeup_disable(sc7a20h_int1_gpio(acc));
         sc7a20h_events_t ev;
@@ -225,6 +265,9 @@ app_wake_source_t app_light_sleep_wait(sc7a20h_handle_t acc) {
 }
 
 void app_enter_host_sleep(app_sleep_mode_t mode) {
+    // 先放掉可能保活的高压轨再交给 PMU 下电，避免停留在 HALT 循环时轨道常开。
+    // Release any held HV rails before handing off to the PMU so they never stay on through the halt loop.
+    epd_poweroff();
     pmu_selftest_prepare_powerdown();
     if (mode == APP_SLEEP_OFF) {
         ESP_LOGI(TAG, "power off %s", esp_err_to_name(read_pico_pmu_power_off()));
@@ -323,24 +366,47 @@ bool app_lock_pin_challenge(EpdiyHighlevelState* hl, cst836u_handle_t tp) {
     char message[64] = {0};
     unsigned count = 0;
     uint8_t* fb = epd_hl_get_framebuffer(hl);
+    ui_product_lock_keypad(fb, "输入锁屏密码", message, count, false);
+    // 唤醒首帧用真实旧帧进行 GC16 清理，避免丢失锁屏参考。
+    // Clean the first wake frame with GC16 against the real previous lock image.
+    guard_draw_result(hl, update_display_full(hl));
+
+    // 键位高亮与圆点走跟手 DU（反馈即时且轨道保活），累计后用 GL16 定稿。
+    // Key highlights and dots use follow DU (instant, rails stay hot); GL16 settles the buildup.
+    unsigned quick = 0;
     for (;;) {
-        ui_product_lock_keypad(fb, "输入锁屏密码", message, count, false);
-        guard_draw_result(hl, update_display_mode(hl, MODE_GL16));
         int key = -1;
         for (;;) {
             vTaskDelay(pdMS_TO_TICKS(20));
+            rails_idle_check(esp_timer_get_time() / 1000);
             read_pico_pmu_drain_events();
             cst836u_touch_t touch;
             if (cst836u_read(tp, &touch) != ESP_OK || !touch.touched || touch.count != 1) continue;
-            key = ui_product_lock_keypad_hit(touch.x, touch.y);
-            if (key < 0) continue;
+            int held = ui_product_lock_keypad_hit(touch.x, touch.y);
+            if (held < 0) continue;
+            // 按下立即高亮，不再等抬起才给反馈。/ Highlight on press; feedback no longer waits for release.
+            ui_product_lock_key(fb, held, true);
+            guard_draw_result(hl, update_display_area_with(
+                hl, &E0470_FOLLOW_WAVEFORM, MODE_DU, ui_product_lock_key_rect(held)));
+            ++quick;
             // 同键抬起才算一次输入；滑离键位的取消。/ Count on release over the same key; sliding off cancels.
-            while (cst836u_read(tp, &touch) == ESP_OK && touch.touched && touch.count == 1) {
+            key = held;
+            for (;;) {
+                esp_err_t err = cst836u_read(tp, &touch);
+                if (err != ESP_OK || touch.count > 1) { key = -1; break; }
+                if (!touch.touched) break;
                 if (ui_product_lock_keypad_hit(touch.x, touch.y) != key) key = -1;
+                rails_idle_check(esp_timer_get_time() / 1000);
                 vTaskDelay(pdMS_TO_TICKS(20));
             }
             if (key >= 0) break;
+            // 滑离取消：恢复常态键位。/ Slide-off cancel: restore the key.
+            ui_product_lock_key(fb, held, false);
+            guard_draw_result(hl, update_display_area_with(
+                hl, &E0470_FOLLOW_WAVEFORM, MODE_DU, ui_product_lock_key_rect(held)));
+            ++quick;
         }
+        bool clear_message = message[0] != 0;
         message[0] = 0;
         if (key == 10) count = 0;
         else if (key == 11) {
@@ -355,6 +421,34 @@ bool app_lock_pin_challenge(EpdiyHighlevelState* hl, cst836u_handle_t tp) {
             }
             snprintf(message, sizeof(message), "密码错误，请重试");
             count = 0;
+            ui_product_lock_keypad(fb, "输入锁屏密码", message, count, false);
+            guard_draw_result(hl, update_display_mode(hl, MODE_GL16));
+            quick = 0;
+            continue;
+        }
+        // 高层接口接收逻辑区域；整键盘重绘后只推圆点带与键位的并集。
+        // High-level updates take logical coordinates; repaint the keypad and push the dots/key union only.
+        ui_product_lock_keypad(fb, "输入锁屏密码", message, count, false);
+        if (clear_message || quick >= UI_SETTLE_DU_MAX) {
+            guard_draw_result(hl, update_display_mode(hl, MODE_GL16));
+            quick = 0;
+        } else {
+            EpdRect dots = {(UI_LOCK_WIDTH - 336) / 2 - 10, 216, 360, 56};
+            EpdRect pressed = ui_product_lock_key_rect(key);
+            EpdRect both = {
+                .x = dots.x < pressed.x ? dots.x : pressed.x,
+                .y = dots.y < pressed.y ? dots.y : pressed.y,
+                .width = 0,
+                .height = 0,
+            };
+            int right = dots.x + dots.width, bottom = dots.y + dots.height;
+            if (pressed.x + pressed.width > right) right = pressed.x + pressed.width;
+            if (pressed.y + pressed.height > bottom) bottom = pressed.y + pressed.height;
+            both.width = right - both.x;
+            both.height = bottom - both.y;
+            guard_draw_result(hl, update_display_area_with(
+                hl, &E0470_FOLLOW_WAVEFORM, MODE_DU, both));
+            ++quick;
         }
     }
 }
@@ -368,10 +462,13 @@ void enter_lock_and_sleep(
     app_sleep_prepare_run();
     uint8_t* framebuffer = epd_hl_get_framebuffer(hl);
     draw_lock_face(framebuffer);
-    guard_draw_result(hl, update_display_mode(hl, MODE_GL16));
-
+    guard_draw_result(hl, update_display_full(hl));
     app_lock_wait_key_idle(800);
     app_sleep_mode_t mode = app_settings_sleep_mode();
+    // 动态锁屏保留本地钟与帧缓冲；显式关机仍服从用户选择。
+    // Dynamic faces retain the local clock and framebuffer; explicit power-off keeps its meaning.
+    if (mode == APP_SLEEP_DEEP && app_settings_lock_style() != 0) mode = APP_SLEEP_LIGHT;
+    app_sleep_alarm_clock(false);
     ESP_LOGI(TAG, "lock %s", app_sleep_mode_name(mode));
 
     switch (mode) {
@@ -380,16 +477,52 @@ void enter_lock_and_sleep(
             app_enter_host_sleep(mode);
             break;
         case APP_SLEEP_LIGHT:
-        default:
-            epd_poweroff();
-            app_light_sleep_wait(acc);
+        default: {
+            // 分钟更新不离开锁屏；只按键/拿起返回页面。/ Minute updates stay locked; only keys/pickup return to the page.
+            unsigned prev_day = os_time_info()->day;
+            unsigned minutes = 0;
+            for (;;) {
+                epd_poweroff();
+                if (app_settings_lock_style() != 0) arm_minute_wake();
+                app_wake_source_t wake = app_light_sleep_wait(acc);
+                if (wake != APP_WAKE_TIMER) break;
+                // 定时维护在浅睡之外进行，电源键可中止；不会把联网计入睡眠补偿。
+                // Maintain time outside sleep, allowing power-key cancellation without charging network time as sleep.
+                while (os_time_lock_sync_tick(esp_timer_get_time() / 1000)) {
+                    if (read_pico_pmu_take_wake_events() & READ_PICO_PMU_WAKE_KEY) { wake = APP_WAKE_KEY; break; }
+                    vTaskDelay(pdMS_TO_TICKS(50));
+                }
+                os_time_lock_sync_cancel();
+                if (wake != APP_WAKE_TIMER) break;
+                os_time_poll(esp_timer_get_time() / 1000);
+                draw_lock_face(framebuffer);
+                const os_time_info_t* info = os_time_info();
+                uint8_t style = app_settings_lock_style();
+                // 时钟在 y=300 绘制；区域必须覆盖整字高及旧笔画，不能截在 y=360。
+                // The clock starts at y=300; cover the entire glyph and previous ink, never cut at y=360.
+                EpdRect band = style == 1 ? (EpdRect){0, 260, UI_LOCK_WIDTH, 380}
+                    : style == 2 ? (EpdRect){0, 980, UI_LOCK_WIDTH, 90}
+                    : (EpdRect){0, 780, UI_LOCK_WIDTH, 120};
+                if (info->state != OS_TIME_VALID || info->day != prev_day || ++minutes >= 15) {
+                    guard_draw_result(hl, update_display_area_quiet(hl,
+                        (EpdRect){0, 0, UI_LOCK_WIDTH, UI_LOCK_HEIGHT}));
+                    minutes = 0;
+                    prev_day = info->day;
+                } else {
+                    guard_draw_result(hl, update_display_area_quiet(hl, band));
+                }
+            }
+            app_sleep_alarm_clock(false);
+            app_sleep_disarm_minute_wake();
             break;
+        }
     }
 
-    // 保留真实锁屏参考帧；首次推屏先擦旧墨再绘 PIN，禁止伪造全白参考帧。
-    // Keep the real lock reference; erase old ink before PIN and never fabricate a white baseline.
+    // 浅睡唤醒首刷保持原路径（实测浅睡不花屏）；花屏出在深睡后的冷启动，见 app_main 的双清。
+    // Light-sleep wake keeps the original first-push path (no garble in testing);
+    // the garble lives in the post-deep-sleep cold boot, handled by app_main's double clear.
     read_pico_pmu_drain_events();
-    if (tp) app_lock_pin_challenge(hl, tp);
+    if (tp && app_settings_lock_pin_wake()) app_lock_pin_challenge(hl, tp);
     read_pico_pmu_drain_events();
     if (ignore_until_ms) {
         *ignore_until_ms = esp_timer_get_time() / 1000 + APP_LOCK_IGNORE_BOOT_MS;

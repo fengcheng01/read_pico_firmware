@@ -5,6 +5,11 @@
  * 板级 I2C、FCA9555、SY7636A 与 EPD 电源轨。
  *
  * Board I2C, FCA9555, SY7636A, and EPD rails.
+ *
+ * 冻结：MODE/XOE 只由板级上下电持有；通用扫描模式回调不切换它们。
+ * 实机灰底反馈后消除扫描末尾 MODE 低脉冲；保持本板 MODE=1 下电顺序。
+ * Frozen: Board power sequencing alone owns MODE/XOE; generic scan mode callbacks never switch them.
+ * Device gray-background feedback requires removing the scan-end MODE low pulse while retaining this board's MODE=1 shutdown order.
  */
 
 #include <stdbool.h>
@@ -354,27 +359,23 @@ static int board_sy_pgood(void) {
     return (in0 & IOE_SY_PGOOD) ? 1 : 0;
 }
 
+static esp_err_t board_apply_power_ctrl(epd_ctrl_state_t* state) {
+    if (state->ep_mode) ioe_output |= IOE_MODE;
+    else ioe_output &= (uint8_t)~IOE_MODE;
+    if (state->ep_output_enable) ioe_output |= IOE_XOE;
+    else ioe_output &= (uint8_t)~IOE_XOE;
+    // I2C 故障返回给上下电流程，不 abort 或误报已就绪。
+    // Return I2C faults to power sequencing without aborting or falsely reporting ready.
+    esp_err_t err = ioe_commit();
+    if (err != ESP_OK) ESP_LOGE(TAG, "ioe_commit %s", esp_err_to_name(err));
+    return err;
+}
+
+// 本板没有通用控制寄存器；MODE/XOE 必须在高压上下电序列内保持。
+// This board has no generic control register; MODE/XOE must remain owned by the high-voltage power sequence.
 static void board_set_ctrl(epd_ctrl_state_t* state, const epd_ctrl_state_t* const mask) {
-    bool changed = false;
-    if (mask->ep_mode) {
-        if (state->ep_mode) ioe_output |= IOE_MODE;
-        else ioe_output &= (uint8_t)~IOE_MODE;
-        changed = true;
-    }
-    if (mask->ep_output_enable) {
-        if (state->ep_output_enable) ioe_output |= IOE_XOE;
-        else ioe_output &= (uint8_t)~IOE_XOE;
-        changed = true;
-    }
-    if (changed) {
-        // I2C 挂了不能 abort，否则自检中断后刷屏会把整机打回主界面。
-        // / Do not abort on a dead I2C; a self-test interrupt mid-refresh would
-        // bounce the device back to home.
-        esp_err_t err = ioe_commit();
-        if (err != ESP_OK) {
-            ESP_LOGE(TAG, "ioe_commit %s", esp_err_to_name(err));
-        }
-    }
+    (void)state;
+    (void)mask;
 }
 
 static void board_init(uint32_t epd_row_width) {
@@ -439,16 +440,17 @@ static void board_poweron(epd_ctrl_state_t* state) {
 
     state->ep_output_enable = false;
     state->ep_mode = true;
-    epd_ctrl_state_t ctrl_mask = {
-        .ep_output_enable = true,
-        .ep_mode = true,
-    };
-    board_set_ctrl(state, &ctrl_mask);
+    if (board_apply_power_ctrl(state) != ESP_OK) return;
 
     if (sy7636a_power_on(s_sy) != ESP_OK) return;
 
     state->ep_output_enable = true;
-    board_set_ctrl(state, &ctrl_mask);
+    if (board_apply_power_ctrl(state) != ESP_OK) {
+        state->ep_output_enable = false;
+        (void)board_apply_power_ctrl(state);
+        (void)sy7636a_power_off(s_sy);
+        return;
+    }
     rails_on = true;
 
     sy7636a_status_t st;
@@ -461,13 +463,10 @@ static void board_poweron(epd_ctrl_state_t* state) {
 }
 
 static void board_poweroff(epd_ctrl_state_t* state) {
+    if (!rails_on) return;
     state->ep_output_enable = false;
     state->ep_mode = true;
-    epd_ctrl_state_t ctrl_mask = {
-        .ep_output_enable = true,
-        .ep_mode = true,
-    };
-    board_set_ctrl(state, &ctrl_mask);
+    (void)board_apply_power_ctrl(state);
 
     vTaskDelay(pdMS_TO_TICKS(1));
     (void)sy7636a_power_off(s_sy);

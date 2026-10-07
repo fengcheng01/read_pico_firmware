@@ -151,6 +151,11 @@ def build(sanitize=False):
     if os.uname().sysname != "Darwin":
         assets += ['.section .note.GNU-stack,"",@progbits']
     (OUT / "assets.S").write_text("\n".join(assets) + "\n")
+    # 锁屏时钟使用真实绘制函数，预览只替换时间与硬件。/ Use the real lock-clock painter; only time and hardware are substituted.
+    sleep = (ROOT / "main/sleep.c").read_text()
+    clock = sleep[sleep.index("static void draw_lock_clock("):sleep.index("// 当月日历锁屏")]
+    clock = clock.replace("static void draw_lock_clock(", "void preview_draw_lock_clock(")
+    (OUT / "lock_clock.c").write_text('#include "preview_host.h"\n#include "ui_kit.h"\n#include "ttf_font.h"\n#include "os_time.h"\n' + clock)
     command = [os.environ.get("CC", "cc"), "-std=gnu11", "-O1" if sanitize else "-O2", "-g",
                '-DTTF_SD_ROOT="build-host/desktop-preview/sd"',
                "-Wall", "-Wextra", "-Wno-sign-compare", "-Wno-unused-variable", "-Wno-unused-function", "-Wno-unused-parameter",
@@ -165,14 +170,14 @@ def build(sanitize=False):
         command += ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
     command += ["tools/preview/native.c", "tools/preview/esp_host.c",
                 "tools/preview/today_port.c", "tools/preview/transfer_port.c", "tools/preview/device_port.c", "tools/preview/miniz_host.c",
-                "main/asset_pack.c", "main/settings.c", "main/book/book_progress.c", "main/book/book_stats.c", "main/book/book_stats_store.c",
-                "main/book/book_entry.c", "main/book/book_layout.c", "main/book/book_source.c", "main/book/book_home.c", "main/book/book_cover.c", "main/book/book_marks.c",
+                "main/asset_pack.c", "main/display_pixels.c", "main/settings.c", "main/book/book_progress.c", "main/book/book_stats.c", "main/book/book_stats_store.c",
+                "main/book/book_entry.c", "main/book/book_layout.c", "main/book/book_source.c", "main/book/book_home.c", "main/book/book_cover.c", "main/book/book_cover_job.c", "main/book/book_marks.c", "main/book/book_quotes.c",
                 "main/book/book_txt.c", "main/book/gbk.c", "main/book/book_epub.c", "main/book/zip_reader.c",
-                "main/book/html_text.c", "main/book/book_image.c", "main/book/vendor/tjpgd.c",
+                "main/book/html_text.c", "main/book/book_xpointer.c", "main/book/book_image.c", "main/book/vendor/tjpgd.c",
                 "components/read_pico_search/read_pico_search.c", "main/os/os_time.c", "main/os/os_device_pico.c", "main/os/os_sync.c", "main/os/os_sync_http.c", "managed_components/espressif__cjson/cJSON/cJSON.c", "main/os/os_lunar.c", "main/os/os_crash.c",
                 "main/app/app_sleep_hooks.c",
-                "main/ui/product/ui_product.c", str(OUT / "graphics.c"), str(OUT / "unavailable.c"),
-                str(OUT / "assets.S"), "main/ui/ui_kit.c", "main/ui/ui_gesture.c", "main/ui/ui_menu.c", "main/ui/datamatrix.c",
+                "main/ui/product/ui_product.c", str(OUT / "graphics.c"), str(OUT / "unavailable.c"), str(OUT / "lock_clock.c"),
+                str(OUT / "assets.S"), "main/ui/ui_kit.c", "main/ui/ui_assets.c", "main/ui/ui_gesture.c", "main/ui/ui_menu.c", "main/ui/datamatrix.c",
                 "main/font/ttf_font.c", "main/app/app_registry.c",
                 *[item["source"] for item in items if item["supported"]], "-lz", "-lm"]
     # 编译成功才替换程序，避免影响仍在运行的预览。/ Replace only after success; preserve running previews.

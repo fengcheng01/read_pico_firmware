@@ -57,13 +57,32 @@ int main(int argc, char** argv) {
     file(s_roots[1].path, "too-large.txt", BOOK_STORE_FLASH_FILE_MAX + 1);
     file(s_roots[1].path, "small.txt", 1);
     book_home_begin(); unsigned initial_loads = s_loads;
-    assert(!book_home_step() && !book_home_snapshot()->complete && s_loads - initial_loads <= 16);
+    assert(!book_home_step() && !book_home_snapshot()->complete && s_loads - initial_loads <= 4);
+    unsigned partial_loads = s_loads;
+    book_home_begin();
+    assert(!book_home_step() && s_loads >= partial_loads);
+    // 根页切换可继续同一次扫描；再次 begin 不应归零已发现数量。
+    // Root tab switches resume the scan; another begin must not reset discovered entries.
+    unsigned partial_books = book_home_snapshot()->book_count;
+    book_home_begin();
+    assert(book_home_snapshot()->book_count == partial_books);
     book_home_cancel(); unsigned cancelled_loads = s_loads;
     assert(book_home_step() && s_loads == cancelled_loads);
     const book_home_snapshot_t* data = scan();
     assert(data->book_count == 67 && !data->degraded && data->recent_count == 3);
     assert(strstr(data->current.path, "book065.txt") && data->current.percent == 100);
     assert(strstr(data->recent[0].path, "book064.txt") && strstr(data->recent[2].path, "book062.txt"));
+    assert(data->history_count == 65 && data->recent_more && !data->recent_page);
+    unsigned visited=1;
+    do {
+        visited += data->recent_count;
+        if (!data->recent_more) break;
+        assert(book_home_recent_move(1)); while(!book_home_step()){}
+        data=book_home_snapshot();
+    } while(true);
+    assert(visited==65 && !book_home_recent_move(1));
+    while(data->recent_page){assert(book_home_recent_move(-1));while(!book_home_step()){} data=book_home_snapshot();}
+    assert(strstr(data->recent[0].path,"book064.txt") && !book_home_recent_move(-1));
     unsigned cached_loads = s_loads;
     book_home_cancel(); book_home_begin();
     assert(book_home_cached() && book_home_step() && s_loads == cached_loads);
@@ -95,12 +114,14 @@ int main(int argc, char** argv) {
     char path[BOOK_STORE_PATH_MAX];
     snprintf(path, sizeof(path), "%s/中文.epub", root_sd);
     assert(book_entry_request(BOOK_ENTRY_OPEN, path)); memset(path, 'x', sizeof(path));
-    assert(!book_entry_request(BOOK_ENTRY_SHELF, NULL));
     book_entry_request_t request;
     assert(!book_entry_take(NULL) && book_entry_take(&request));
     book_entry_finish(BOOK_ENTRY_IDLE); assert(book_entry_status() == BOOK_ENTRY_LOADING);
     book_entry_finish(BOOK_ENTRY_OPENED); assert(book_entry_status() == BOOK_ENTRY_OPENED);
-    assert(book_entry_request(BOOK_ENTRY_SHELF, NULL) && book_entry_take(&request) && !request.path[0]);
+    // 排队中的请求被新请求覆盖，导航入口永不拒绝。/ A queued request is overwritten
+    // by a new one; navigation entries never bounce.
+    assert(book_entry_request(BOOK_ENTRY_SHELF, NULL) && book_entry_request(BOOK_ENTRY_SHELF, NULL));
+    assert(book_entry_take(&request) && !request.path[0]);
     book_entry_finish(BOOK_ENTRY_SHELF_READY);
     puts("os_home: bounded scan, real progress, fallbacks, cancellation and typed entry passed");
     return 0;

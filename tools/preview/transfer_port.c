@@ -101,9 +101,15 @@ void os_sync_set_password(const char* plain) {
     app_settings_set_sync_key("preview00000000000000000000000000");
 }
 static bool s_sync_preview;
+static unsigned s_sync_starts;
+static int s_sync_job = -1;
+unsigned preview_sync_starts(void) { return s_sync_starts; }
+int preview_sync_job(void) { return s_sync_job; }
 bool os_sync_job_start(os_sync_job_t job, char* note, size_t cap) {
     (void)job;
     if (s_sync_preview) return false;
+    s_sync_starts++;
+    s_sync_job = job;
     s_sync_preview = true;
     snprintf(note, cap, "正在同步，可返回或停止…");
     return true;
@@ -124,6 +130,7 @@ void read_pico_transfer_release_sync(void) {}
 
 int os_time_battery_permille(void) { return 780; }
 bool os_time_recently_synced(void) { return false; }
+void os_time_clock_status(char* out, size_t cap) { snprintf(out, cap, "预览不测量走时 · 请在真机测试"); }
 
 bool os_crash_summary(char* out, size_t cap) {
     // 预览读不到复位寄存器；返回空让存储页显示“暂无记录”。
@@ -135,4 +142,11 @@ bool os_crash_summary(char* out, size_t cap) {
 os_crash_summary_state_t os_crash_summary_read(char* out, size_t cap) {
     if (out && cap) out[0] = 0;
     return OS_CRASH_SUMMARY_EMPTY;
+}
+
+// 时间页网络边界只模拟连接，不模拟 NTP 成功。/ Time-page network fixtures connect without pretending NTP succeeds.
+esp_err_t read_pico_transfer_start_saved_network(void) {
+    if (!s_wifi_configured) return ESP_ERR_INVALID_STATE;
+    read_pico_transfer_cfg_t cfg = {.mode = READ_PICO_TRANSFER_MODE_STA, .network_only = true};
+    return read_pico_transfer_start(&cfg);
 }

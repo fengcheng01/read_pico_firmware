@@ -21,10 +21,13 @@ with tempfile.TemporaryDirectory(prefix="rp-os.", dir="/tmp") as folder:
                           ("device", ["tools/os_device_host_test.c", "main/os/os_device_pico.c"]),
                           ("product", ["tools/ui_product_host_test.c", "main/ui/product/ui_product.c", "main/book/book_entry.c"]),
                           ("time", ["tools/os_time_host_test.c", "main/os/os_time.c"]),
+                          ("xpointer", ["tools/book_xpointer_host_test.c", "main/book/book_xpointer.c", "main/book/html_text.c"]),
+                          ("records", ["tools/book_records_host_test.c", "main/book/book_stats.c", "main/book/book_stats_store.c", "main/book/book_quotes.c"]),
                           ("stats", ["tools/book_stats_host_test.c", "main/book/book_stats.c"]),
                           ("sleep", ["tools/app_sleep_hooks_host_test.c", "main/app/app_sleep_hooks.c"]),
                           ("sync", ["tools/os_sync_host_test.c", "main/os/os_sync.c", "managed_components/espressif__cjson/cJSON/cJSON.c"]),
                           ("cover", ["tools/book_cover_host_test.c", "main/book/book_cover.c"]),
+                          ("cover_job", ["tools/book_cover_job_host_test.c", "main/book/book_cover_job.c", "main/app/app_sleep_hooks.c"]),
                           ("sync_device", ["tools/os_sync_device_host_test.c", "main/os/os_sync_pico.c", "main/os/os_sync.c", "main/os/os_sync_http.c", "managed_components/espressif__cjson/cJSON/cJSON.c"]),
                           ("usb_disk", ["tools/usb_disk_host_test.c"]),
                           ("sync_http", ["tools/os_sync_http_host_test.c", "main/os/os_sync_http.c"]),
@@ -36,9 +39,14 @@ with tempfile.TemporaryDirectory(prefix="rp-os.", dir="/tmp") as folder:
         target_flags = flags
         if name in ("sync", "sync_device") and os.uname().sysname == "Darwin":
             target_flags = flags + ["-Wno-deprecated-declarations"]
-        if name == "usb_disk":
+        if name == "xpointer":
+            target_includes = ["-Itools/book_epub_stubs", "-Imain/book"]
+        elif name == "usb_disk":
             target_includes = ["-Itools/usb_disk_stubs", "-Imain/os"]
             target_flags = flags + ["-Wno-unused-function"]
+        elif name == "cover_job":
+            target_includes = ["-Itools/os_sync_device_stubs", *includes]
+            target_flags = flags + ["-pthread"]
         elif name == "sync_device":
             target_includes = ["-Itools/os_sync_device_stubs", "-Icomponents/read_pico_transfer/include", *includes]
             target_flags = target_flags + ["-Wno-unused-variable", "-pthread"]

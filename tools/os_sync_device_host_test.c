@@ -23,10 +23,25 @@ static pthread_t ui, worker;
 static char path[288];
 static book_progress_t progress={.file_size=100,.chapter=1,.byte_off=20,.px=48,.pct=20,.last_open_s=1};
 static unsigned saves;
+static bool paragraph_mapping;
+static const char* paragraph_path="/body/DocFragment[3]/body/div[1]/section[1]/div[2]/p[19]/text()[2].137";
+bool book_epub_sync_encode(const char* name,uint16_t ch,uint32_t off,char* out,size_t cap) {
+    (void)name;(void)ch;(void)off;
+    assert(!pthread_equal(ui,pthread_self()));
+    if(!paragraph_mapping)return false;
+    snprintf(out,cap,"%s",paragraph_path);return true;
+}
+bool book_epub_sync_decode(const char* name,const char* p,uint16_t* ch,uint32_t* off) {
+    (void)name;assert(!pthread_equal(ui,pthread_self()));
+    if(!paragraph_mapping||strcmp(p,paragraph_path))return false;
+    *ch=2;*off=37;return true;
+}
 static atomic_bool pause_read, link_ready;
 static unsigned network_polls, http_calls;
 static const char* response;
 static size_t received;
+static char request_body[4096];
+static size_t sent;
 struct test_sem {pthread_mutex_t lock;pthread_cond_t changed;bool ready;};
 SemaphoreHandle_t xSemaphoreCreateBinary(void) {SemaphoreHandle_t s=calloc(1,sizeof(*s));pthread_mutex_init(&s->lock,NULL);pthread_cond_init(&s->changed,NULL);return s;}
 int xSemaphoreGive(SemaphoreHandle_t s) {pthread_mutex_lock(&s->lock);s->ready=true;pthread_cond_signal(&s->changed);pthread_mutex_unlock(&s->lock);return 1;}
@@ -43,8 +58,8 @@ esp_err_t esp_http_client_get_and_clear_last_tls_error(esp_http_client_handle_t 
 void esp_crt_bundle_attach(void) {}
 esp_http_client_handle_t esp_http_client_init(const esp_http_client_config_t* cfg) {assert(!pthread_equal(ui,pthread_self()));assert(cfg->timeout_ms==15000 && atomic_load(&link_ready));++http_calls;received=0;return (void*)1;}
 esp_err_t esp_http_client_set_header(esp_http_client_handle_t c,const char* a,const char* b) {(void)c;(void)a;(void)b;return ESP_OK;}
-esp_err_t esp_http_client_open(esp_http_client_handle_t c,int size) {(void)c;(void)size;return ESP_OK;}
-int esp_http_client_write(esp_http_client_handle_t c,const char* text,int size) {(void)c;(void)text;return size>3?3:size;}
+esp_err_t esp_http_client_open(esp_http_client_handle_t c,int size) {(void)c;assert(size<(int)sizeof(request_body));sent=0;request_body[0]=0;return ESP_OK;}
+int esp_http_client_write(esp_http_client_handle_t c,const char* text,int size) {(void)c;int n=size>3?3:size;assert(sent+n<sizeof(request_body));memcpy(request_body+sent,text,n);sent+=n;request_body[sent]=0;return n;}
 int esp_http_client_read(esp_http_client_handle_t c,char* text,int cap) {(void)c;if(atomic_load(&pause_read)){usleep(2000);return -1;}size_t n=strlen(response)-received;if(n>5)n=5;if(n>(size_t)cap)n=cap;memcpy(text,response+received,n);received+=n;return (int)n;}
 int esp_http_client_fetch_headers(esp_http_client_handle_t c) {(void)c;return 0;}
 int esp_http_client_get_status_code(esp_http_client_handle_t c) {(void)c;return 200;}
@@ -105,5 +120,16 @@ int main(void) {
     assert(os_sync_job_start(OS_SYNC_JOB_AUTH,note,sizeof(note)));
     os_sync_job_cancel();pthread_join(worker,NULL);
     assert(http_calls==calls_before && !claimed && net.state==READ_PICO_TRANSFER_STOPPED);
-    unlink(path);puts("os_sync_device: worker-only HTTP, UI-only NVS, staged pulls, cancel, reuse and conflicts passed");
+    char epub_path[288];snprintf(epub_path,sizeof(epub_path),"/tmp/pico-sync-%ld.epub",(long)getpid());
+    assert(rename(path,epub_path)==0);snprintf(path,sizeof(path),"%s",epub_path);
+    paragraph_mapping=true;progress.approximate=false;
+    response="{\"progress\":\"/body/DocFragment[3]/body/div[1]/section[1]/div[2]/p[19]/text()[2].137\",\"percentage\":0.81}";
+    assert(os_sync_job_start(OS_SYNC_JOB_PUSH,note,sizeof(note)));finish(note);
+    assert(strstr(request_body,paragraph_path));
+    assert(os_sync_job_start(OS_SYNC_JOB_PULL,note,sizeof(note)));finish(note);
+    unsigned saves_before=saves;
+    assert(strstr(note,"文本位置")&&saves==saves_before);
+    assert(os_sync_pull_confirm(true,note,sizeof(note))&&saves==saves_before+1);
+    assert(progress.chapter==2&&progress.byte_off==37&&!progress.approximate);
+    unlink(path);puts("os_sync_device: worker-only HTTP/EPUB mapping, UI-only NVS, staged paragraph/rp1 pulls, cancel, reuse and conflicts passed");
 }

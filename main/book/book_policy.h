@@ -52,3 +52,23 @@ static inline int book_tap_action(unsigned layout, int x, int y, int width, int 
     if (layout == 1) return x < width / 4 ? -1 : 1;
     return x >= width * 3 / 4 ? -1 : 1;
 }
+
+/// 九宫格分区索引：将 (x,y) 映射到 0..8 分区号，非法坐标返回 -1。
+/// Grid zone index: map (x,y) into 0..8 zone, returning -1 for invalid coords.
+static inline int book_tap_grid_zone(int x, int y, int width, int height) {
+    if (width <= 0 || height <= 0 || x < 0 || y < 0 || x >= width || y >= height) return -1;
+    int col = x * 3 / width;
+    if (col > 2) col = 2;
+    int row = y * 3 / height;
+    if (row > 2) row = 2;
+    return row * 3 + col;
+}
+
+/// 九宫格动作码转操作：1=上一页(-1), 2=下一页(1), 3=菜单(0), 其它=无操作(-2)。
+/// Map tap zone action: 1=prev(-1), 2=next(1), 3=menu(0), else=none(-2).
+static inline int book_tap_zone_action(uint8_t act) {
+    if (act == 1) return -1; // 上一页 / Previous page
+    if (act == 2) return 1;  // 下一页 / Next page
+    if (act == 3) return 0;  // 菜单 / Menu toolbar
+    return -2;               // 无操作 / None
+}

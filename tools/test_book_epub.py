@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 import zipfile
 import sys
+import os
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -39,10 +40,13 @@ def main():
     with tempfile.TemporaryDirectory(prefix='book-epub-') as temp:
         work = Path(temp)
         exe = work / 'test'
-        subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Werror', '-g', '-fsanitize=address,undefined', '-DBOOK_HEAP_TRACK', '-Wl,--wrap=free',
+        platform_flags = ['-Wl,--wrap=free']
+        if os.uname().sysname == 'Darwin':
+            platform_flags = ['-DBOOK_HEAP_DIRECT_FREE', '-isysroot', os.environ.get('PREVIEW_MACOS_SDK', '/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk')]
+        subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Werror', '-g', '-fsanitize=address,undefined', '-DBOOK_HEAP_TRACK', *platform_flags,
                         '-I' + str(ROOT / 'tools/book_epub_stubs'), '-I' + str(ROOT / 'tools/zip_host_stubs'),
                         '-I' + str(ROOT / 'main/book'), str(ROOT / 'tools/book_epub_host_test.c'),
-                        str(ROOT / 'main/book/book_epub.c'), str(ROOT / 'main/book/zip_reader.c'),
+                        str(ROOT / 'main/book/book_epub.c'), str(ROOT / 'main/book/book_xpointer.c'), str(ROOT / 'main/book/zip_reader.c'),
                         str(ROOT / 'main/book/html_text.c'), str(ROOT / 'main/book/book_image.c'), str(ROOT / 'main/book/vendor/tjpgd.c'), str(ROOT / 'tools/book_heap_track.c'), '-lz', '-o', str(exe)], check=True)
         cases = []
 

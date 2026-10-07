@@ -68,9 +68,10 @@ static bool decode(const uint8_t* data, size_t len, const char* path,
                    book_mark_t out[], size_t cap, size_t* count) {
     if (len < MAGIC_SIZE + 2 + 2 || memcmp(data, "RPM", 3) != 0 || data[3] != 1) return false;
     size_t n = data[4];
+    if (n > BOOK_MARKS_MAX || len < MAGIC_SIZE + n * ENTRY_SIZE + 3) return false;
     size_t path_len = (size_t)data[MAGIC_SIZE + n * ENTRY_SIZE] |
                       ((size_t)data[MAGIC_SIZE + n * ENTRY_SIZE + 1] << 8);
-    if (n > BOOK_MARKS_MAX || len != MAGIC_SIZE + n * ENTRY_SIZE + 2 + path_len) return false;
+    if (path_len < 2 || path_len > PATH_CAP || len != MAGIC_SIZE + n * ENTRY_SIZE + 2 + path_len) return false;
     const char* stored = (const char*)data + MAGIC_SIZE + n * ENTRY_SIZE + 2;
     if (strnlen(stored, path_len) != path_len - 1 || strcmp(stored, path) != 0) return false;
     if (count) *count = n;

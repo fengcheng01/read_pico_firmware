@@ -15,11 +15,12 @@
 #include <sys/stat.h>
 
 static book_home_snapshot_t s_snapshot;
-static bool s_valid;
+static bool s_valid, s_scanning;
 static uint32_t s_store_revision, s_progress_revision;
 bool book_home_cached(void) {
-    return s_valid && s_store_revision == book_store_revision() &&
-           s_progress_revision == book_progress_revision();
+    if (!s_valid || s_store_revision != book_store_revision()) return false;
+    if (s_progress_revision != book_progress_revision()) return false;
+    return true;
 }
 void book_home_invalidate(void) { s_valid = false; }
 static book_store_root_t s_roots[2];
@@ -28,23 +29,32 @@ static DIR* s_dir;
 static char s_last[BOOK_STORE_PATH_MAX];
 static book_home_item_t s_candidates[BOOK_HOME_RECENT_MAX + 1];
 static unsigned s_candidates_count;
+static book_home_item_t s_cursor;
+static int s_direction;
+static unsigned s_recent_page;
+static bool s_move;
 
 void book_home_cancel(void) {
+    s_scanning = false;
     if (s_dir) { closedir(s_dir); s_dir = NULL; }
     if (!s_snapshot.complete) s_valid = false;
     s_snapshot.complete = true;
 }
 void book_home_begin(void) {
-    if (book_home_cached()) return;
+    if (book_home_cached() || (s_scanning && s_store_revision == book_store_revision() &&
+        s_progress_revision == book_progress_revision())) return;
     book_home_cancel();
     s_valid = false;
+    s_scanning = true;
     s_store_revision = book_store_revision();
     s_progress_revision = book_progress_revision();
+    if (!s_move) { s_cursor = (book_home_item_t){0}; s_direction = 0; s_recent_page = 0; }
+    s_move = false;
     memset(&s_snapshot, 0, sizeof(s_snapshot));
     memset(s_candidates, 0, sizeof(s_candidates));
     s_candidates_count = 0;
     s_root = s_root_count = 0;
-    book_progress_last_path(s_last, sizeof(s_last));
+    if (!s_cursor.path[0]) book_progress_last_path(s_last, sizeof(s_last));
     esp_err_t err = book_store_read_roots(s_roots, &s_root_count);
     s_snapshot.degraded = err != ESP_OK || book_store_roots_degraded();
 }
@@ -52,24 +62,45 @@ static bool before(const book_home_item_t* a, const book_home_item_t* b) {
     return a->sequence != b->sequence ? a->sequence > b->sequence : strcmp(a->path, b->path) < 0;
 }
 static void consider(const book_home_item_t* item) {
+    if (!strcmp(item->path, s_last)) return;
+    if (s_cursor.path[0] && (s_direction > 0 ? !before(&s_cursor, item) : !before(item, &s_cursor))) return;
     unsigned at = 0;
-    while (at < s_candidates_count && !before(item, &s_candidates[at])) ++at;
+    while (at < s_candidates_count && (s_direction < 0 ? !before(&s_candidates[at], item) : !before(item, &s_candidates[at]))) ++at;
     if (at >= BOOK_HOME_RECENT_MAX + 1) return;
     if (s_candidates_count < BOOK_HOME_RECENT_MAX + 1) ++s_candidates_count;
     for (unsigned i = s_candidates_count - 1; i > at; --i) s_candidates[i] = s_candidates[i - 1];
     s_candidates[at] = *item;
 }
 static void finish(void) {
-    if (!s_snapshot.current.path[0] && s_candidates_count) s_snapshot.current = s_candidates[0];
-    for (unsigned i = 0; i < s_candidates_count && s_snapshot.recent_count < BOOK_HOME_RECENT_MAX; ++i)
-        if (strcmp(s_candidates[i].path, s_snapshot.current.path))
-            s_snapshot.recent[s_snapshot.recent_count++] = s_candidates[i];
+    if (!s_snapshot.current.path[0] && s_candidates_count && !s_recent_page) {
+        s_snapshot.current = s_candidates[0];
+        memmove(s_candidates, s_candidates + 1, --s_candidates_count * sizeof(*s_candidates));
+    }
+    unsigned n = s_candidates_count > BOOK_HOME_RECENT_MAX ? BOOK_HOME_RECENT_MAX : s_candidates_count;
+    for (unsigned i = 0; i < n; ++i)
+        s_snapshot.recent[s_snapshot.recent_count++] = s_candidates[s_direction < 0 ? n - i - 1 : i];
+    s_snapshot.recent_page = s_recent_page;
+    s_snapshot.recent_more = s_snapshot.history_count - (s_snapshot.current.has_progress ? 1u : 0u) >
+        (s_recent_page + 1) * BOOK_HOME_RECENT_MAX;
     s_snapshot.complete = true;
     s_valid = true;
+    s_scanning = false;
+}
+bool book_home_recent_move(int direction) {
+    if (!book_home_cached() || !s_snapshot.complete || !s_snapshot.recent_count ||
+        (direction > 0 ? !s_snapshot.recent_more : direction < 0 ? !s_recent_page : true)) return false;
+    snprintf(s_last, sizeof(s_last), "%s", s_snapshot.current.path);
+    s_cursor = s_snapshot.recent[direction > 0 ? s_snapshot.recent_count - 1 : 0];
+    s_direction = direction;
+    s_recent_page = direction > 0 ? s_recent_page + 1 : s_recent_page - 1;
+    s_valid = false;
+    s_move = true;
+    book_home_begin();
+    return true;
 }
 bool book_home_step(void) {
     if (s_snapshot.complete) return true;
-    for (unsigned budget = 0; budget < 16; ++budget) {
+    for (unsigned budget = 0; budget < 4; ++budget) {
         if (!s_dir) {
             if (s_root >= s_root_count) { finish(); return true; }
             s_dir = opendir(s_roots[s_root].path);
@@ -100,6 +131,7 @@ bool book_home_step(void) {
         book_progress_t progress;
         item.has_progress = book_progress_load(item.path, (uint32_t)st.st_size, &progress);
         if (item.has_progress) {
+            ++s_snapshot.history_count;
             item.sequence = progress.last_open_s;
             item.percent = progress.pct > 100 ? 100 : progress.pct;
             consider(&item);

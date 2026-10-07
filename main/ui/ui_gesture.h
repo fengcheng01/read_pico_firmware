@@ -31,6 +31,7 @@ typedef struct ui_gesture_event_s {
 
 typedef struct {
     bool active; ///< 正在跟踪 / Tracking a contact
+    bool press_sent; ///< 第二帧已稳定锚点，PRESS 在首帧发出 / Anchor stabilized on second sample; PRESS emits on first
     uint16_t x0, y0; ///< 起点 / Origin
     uint16_t x, y; ///< 最近有效坐标 / Last valid coordinates
     int64_t t0_ms; ///< 起始时刻 / Start time

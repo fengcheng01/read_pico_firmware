@@ -61,3 +61,7 @@ CONFIG_TINYUSB_DESC_MANUFACTURER_STRING="mindreset"
 # 同步 TLS 握手使用 PSRAM，避免显示 DMA 常驻后内部连续堆不足。
 # TLS handshake allocations use PSRAM to avoid internal-heap pressure from display DMA.
 CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
+
+# 锁屏浅睡使用较稳定的分频快 RC，避免低频 RC 随温度走快。/ Use divided fast RC for steadier lock sleep timing.
+CONFIG_RTC_CLK_SRC_INT_8MD256=y
+CONFIG_RTC_CLK_CAL_CYCLES=3000

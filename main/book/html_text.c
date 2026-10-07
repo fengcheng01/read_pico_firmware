@@ -15,11 +15,17 @@
 #include "esp_heap_caps.h"
 
 #define PSRAM_CAPS (MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
+typedef struct {
+    size_t target, limit, result;
+    bool to_visible, found, invalid;
+} mapping_t;
 
 typedef struct {
     html_text_t text;
     size_t text_cap, block_cap, start;
     bool active, heading, block_heading, space;
+    mapping_t* mapping;
+    size_t source;
 } writer_t;
 
 static unsigned char lower(unsigned char c) {
@@ -114,6 +120,17 @@ static esp_err_t emit(writer_t* w, uint32_t cp) {
         w->block_heading = w->heading;
     } else if (w->space) w->text.utf8[w->text.len++] = ' ';
     w->space = false;
+    if (w->mapping && !w->mapping->found && !w->mapping->invalid) {
+        mapping_t* m = w->mapping;
+        if (w->source == SIZE_MAX) {
+            // 图片占位没有真实文本节点，不能错指后续段落。/ Image labels have no real text node and must not target the following paragraph.
+            if (!m->to_visible && m->target < w->text.len + n) m->invalid = true;
+        } else if ((m->to_visible && w->source >= m->target && w->source < m->limit) ||
+            (!m->to_visible && m->target < w->text.len + n)) {
+            m->result = m->to_visible ? w->text.len : w->source;
+            m->found = true;
+        }
+    }
     memcpy(w->text.utf8 + w->text.len, bytes, n);
     w->text.len += n;
     return ESP_OK;
@@ -225,12 +242,13 @@ static char* image_source(const char* attrs, size_t len) {
     return NULL;
 }
 
-esp_err_t html_to_blocks(const char* html, size_t len, html_text_t* out) {
+static esp_err_t convert(const char* html, size_t len, html_text_t* out, mapping_t* mapping) {
     if (!out) return ESP_ERR_INVALID_ARG;
     *out = (html_text_t){0};
     if (!html && len) return ESP_ERR_INVALID_ARG;
     if (len > HTML_TEXT_MAX_BYTES) return ESP_ERR_INVALID_SIZE;
     writer_t w = {0};
+    w.mapping = mapping; w.source = SIZE_MAX;
     esp_err_t err = ESP_OK;
     char skip[16] = "";
     bool resume_head = false;
@@ -289,6 +307,7 @@ esp_err_t html_to_blocks(const char* html, size_t len, html_text_t* out) {
                     bool heading = w.heading;
                     w.heading = false;
                     const char* label = "[图片]";
+                    w.source = SIZE_MAX;
                     for (size_t i = 0; label[i];) {
                         uint32_t cp;
                         size_t n = utf8(label + i, strlen(label + i), &cp);
@@ -313,6 +332,7 @@ esp_err_t html_to_blocks(const char* html, size_t len, html_text_t* out) {
         size_t n = html[pos] == '&' ? entity(html + pos, len - pos, &cp) : 0;
         if (!n) n = utf8(html + pos, len - pos, &cp);
         if (!n) { err = ESP_ERR_INVALID_RESPONSE; goto fail; }
+        w.source = pos;
         err = emit(&w, cp);
         if (err != ESP_OK) goto fail;
         pos += n;
@@ -326,4 +346,21 @@ esp_err_t html_to_blocks(const char* html, size_t len, html_text_t* out) {
 fail:
     html_text_free(&w.text);
     return err;
+}
+esp_err_t html_to_blocks(const char* html, size_t len, html_text_t* out) { return convert(html, len, out, NULL); }
+static bool map(const char* html, size_t len, mapping_t* query, size_t* result) {
+    if (!result) return false;
+    html_text_t text = {0};
+    bool ok = convert(html, len, &text, query) == ESP_OK && query->found;
+    html_text_free(&text);
+    if (ok) *result = query->result;
+    return ok;
+}
+bool html_text_source_byte(const char* html, size_t len, size_t text_byte, size_t* source_byte) {
+    mapping_t query = {.target = text_byte};
+    return map(html, len, &query, source_byte);
+}
+bool html_text_visible_byte(const char* html, size_t len, size_t begin, size_t end, size_t* text_byte) {
+    mapping_t query = {.target = begin, .limit = end, .to_visible = true};
+    return begin < end && end <= len && map(html, len, &query, text_byte);
 }

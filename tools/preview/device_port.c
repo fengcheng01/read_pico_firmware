@@ -12,6 +12,7 @@
  */
 #include "book_store.h"
 #include "book_progress.h"
+#include "book_stats.h"
 #include "os_crash.h"
 #include "read_pico_sd.h"
 #include <sys/stat.h>
@@ -89,8 +90,26 @@ static void seed_progress(const char* name, uint8_t pct, uint32_t sequence) {
         (void)book_progress_set_last_path(path);
 }
 
+static void seed_stats(void) {
+    uint32_t days[] = {20260924, 20260925, 20260926, 20260927, 20260928, 20260929, 20260930};
+    uint16_t mins[] = {30, 45, 25, 50, 35, 40, 48};
+    for (int i = 0; i < 7; ++i) {
+        book_stats_store_put(days[i], mins[i]);
+    }
+}
+
 void preview_home_fixture(int value) {
-    preview_fixture(value);
+    preview_fixture(value == 3 ? 1 : value);
+    if (value == 3) {
+        seed_progress("短篇.txt", 12, 1);
+        seed_progress("城市漫步.txt", 34, 3);
+        seed_progress("日常阅读.txt", 38, 100);
+        seed_progress("纸上的时间.txt", 48, 200);
+        seed_progress("阅读记录.txt", 58, 300);
+        seed_progress("封面之书.epub", 68, 400);
+        seed_stats();
+        return;
+    }
     seed_progress("日常阅读.txt", 38, 300);
     seed_progress("纸上的时间.txt", 48, 200);
     seed_progress("阅读记录.txt", 58, 100);

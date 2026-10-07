@@ -18,7 +18,9 @@
 #include "epd_highlevel.h"
 #include "epdiy.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "os_crash.h"
+#include "os_time.h"
 #include "os_usb_disk.h"
 #include "usb_disk.h"
 #include "pmu_selftest.h"
@@ -86,6 +88,10 @@ void app_main(void) {
     pmu_selftest_bind(hw.sensor);
     const bool st_resume = pmu_selftest_boot_resume();
 
+    // 升级时清掉旧固件循环闹钟；动态锁屏现由 ESP 浅睡定时更新。
+    // Clear legacy repeat alarms on upgrade; dynamic lock faces now use ESP light-sleep timers.
+    app_sleep_alarm_clock(false);
+
     if (!images_match_panel()) return;
 
     EpdiyHighlevelState hl = hw.hl;
@@ -95,13 +101,23 @@ void app_main(void) {
     if (usb_requested) ttf_font_open_builtin();
     else ttf_font_init();
     guard_draw_result(&hl, display_boot_white(&hl));
+    // 冷启动（含深睡断电后）面板可能带着半驱动残荷：再物理清一遍才铺开机图；
+    // 异常复位同理。参考固件对未知面板状态一律加强清屏。
+    // A cold boot (including after deep-sleep power loss) may face half-driven
+    // charge on the panel: clear once more before the splash; same for abnormal
+    // resets. The reference firmware strengthens clears on unknown panel state.
+    if (os_crash_boot_abnormal()) guard_draw_result(&hl, display_boot_white(&hl));
+    guard_draw_result(&hl, display_boot_white(&hl));
     // 开机图无条件展示（含设密码用户）：锁屏挑战前就能核对固件版本。
     // Always show the splash (PIN users too): the version is checkable before the lock challenge.
-    if (!asset_pack_unpack(loading_4bpp_pack_start, (size_t)(loading_4bpp_pack_end - loading_4bpp_pack_start),
-                           framebuffer, (size_t)epd_width() * epd_height() / 2)) ui_clear_page(framebuffer);
+    ui_draw_packed_full_image(framebuffer, loading_4bpp_pack_start,
+                             (size_t)(loading_4bpp_pack_end - loading_4bpp_pack_start));
     ui_clear_rect_fast(framebuffer, (EpdRect){0, 1080, UI_LOCK_WIDTH, 80});
     ui_text(framebuffer, UI_LOCK_WIDTH / 2, 1100, 28, firmware_version(), EPD_DRAW_ALIGN_CENTER, false);
-    guard_draw_result(&hl, update_display_mode(&hl, MODE_GL16));
+    // 开机图必须绝对刷：异常状态后的首帧差分盖不住旧墨（跨面板通用结论）。
+    // The splash must be absolute: a first differential frame cannot clear old
+    // ink after an abnormal state (cross-panel rule).
+    guard_draw_result(&hl, update_display_full(&hl));
 
     if (!hw.touch_ready) {
         ESP_LOGE(TAG, "No touch controller, UI cannot run");

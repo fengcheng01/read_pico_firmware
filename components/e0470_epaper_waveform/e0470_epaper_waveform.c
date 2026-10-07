@@ -2,19 +2,28 @@
  * SPDX-FileCopyrightText: 2026 mindreset
  * SPDX-License-Identifier: Apache-2.0
  *
- * E0470A01 波形装配：裁剪默认表、8 灰阶、跟随 DU。
+ * E0470A01 波形装配：厂家完整默认表、8 灰阶、跟随 DU。
  * 自行调整屏幕波形会使设备失去保修。
  *
- * E0470A01 waveform assembly: trimmed default, 8-gray, follow DU.
+ * E0470A01 waveform assembly: complete vendor default, 8-gray, follow DU.
  * Changing panel waveforms voids the warranty.
+ *
+ * 冻结：0.5.19单向灰阶估算、18相统一擦白和三相入口推白已被实机退化否定，保留厂家灰阶路径；单相入口表仅留诊断对照。
+ * Frozen: Device regression rejects 0.5.19 estimated monotonic gray, uniform 18-tick whitening and three entry ticks; retain vendor gray paths, with the single-tick entry table for diagnostics only.
+ * 修订：端点预算差不能建立校准灰阶；未经面板实测，不再把任意单向灰阶或额外白推动交付为修复。
+ * Revision: Endpoint-budget differences cannot establish calibrated gray transitions; do not ship arbitrary monotonic gray or added white drive as a fix without panel measurements.
+ * 冻结：正文及普通重绘白白保持，不按历史字形补擦，不触发正文周期GC16。
+ * Frozen: Body turns and ordinary redraws hold white without historical glyph cleanup or scheduled body GC16.
+ * 修订：0.5.20标准正文实机黑芯发白；日间恢复厂家黑/灰对角线并用真实整页差分，夜间保留原选择性保持，避免0→0定稿使黑底整屏亮闪。
+ * Revision: Standard body black cores fade on 0.5.20 hardware; day retains vendor black/gray diagonals with actual full-page differences, while night retains prior selective holds to avoid a whole-screen light flash from black-background 0→0 settling.
+ * 冻结：用户本次明确优先无闪速度，直刷改用厂家黑白DU；目标仅0/15，旧灰码与20相动作顺序不得量化或重排。
+ * Frozen: The user now prioritizes flicker-free speed, choosing vendor black/white DU for direct turns; targets are only 0/15, without quantizing old gray codes or reordering the 20 source phases.
  */
 
 #include "e0470_epaper_waveform.h"
 
-#include <assert.h>
 #include <string.h>
 
-#include "e0470_waveform_trim.h"
 #include "du.h"
 #include "gc16.h"
 #include "gl16.h"
@@ -31,6 +40,11 @@ static const EpdWaveformTempInterval e0470_intervals[] = {
 // / Write one 2-bit (from, to) action into the epdiy table: data[frame][to][from/4], MSB is from0.
 static inline void lut_or(uint8_t (*data)[16][4], int f, int to, int from, int action) {
     data[f][to][from / 4] |= (uint8_t)(action << (6 - 2 * (from % 4)));
+}
+
+static inline void lut_set(uint8_t (*data)[16][4], int f, int to, int from, int action) {
+    unsigned shift = 6 - 2 * (from % 4);
+    data[f][to][from / 4] = (uint8_t)((data[f][to][from / 4] & ~(3u << shift)) | action << shift);
 }
 
 static inline int lut_get(const uint8_t (*data)[16][4], int f, int to, int from) {
@@ -115,65 +129,125 @@ static void e0470_complete_du_build(void) {
     }
 }
 
-// 白底 15→15 源表全保持。挂在已经「往白推」的那一相上再推 1 帧，不增加相数。
-// 差分会跳过未变白像素，GL16 必须走全像素这帧才打到白底。
-// / Source 15→15 is all-hold. Hang one extra white push on an already-white
-// phase without adding phases. Diff skips unchanged white; GL16 must be
-// full-pixel for this tick to hit the white background.
-static void e0470_gl16_white_tick(uint8_t (*data)[16][4], int frames) {
-    int tick = -1;
-    for (int f = frames - 1; f >= 0; f--) {
-        for (int from = 0; from < 15; from++) {
-            if (lut_get(data, f, 15, from) == 2) {
-                tick = f;
-                break;
-            }
-        }
-        if (tick >= 0) break;
-    }
-    if (tick < 0) tick = frames > 2 ? frames - 3 : 0;
-    lut_or(data, tick, 15, 15, 2);
-}
-
-// 单相 tick 擦不动残留墨迹（真机验证：底灰逐页累积）。把厂家 (15,0) 黑→白的
-// 整段白推序列克隆给 (15,15)：白基准刷新时每个背景像素都带完整擦白相。
-// / A single-phase tick cannot erase leftover ink (proven on hardware: the
-// gray floor accumulates page over page). Clone the vendor's full (15,0)
-// black-to-white push sequence into (15,15) so every white-baseline refresh
-// carries the complete whitening phases for each background pixel.
-static void e0470_gl16_white_row_clone(uint8_t (*data)[16][4], int frames) {
-    for (int f = 0; f < frames; ++f) {
-        int action = lut_get(data, f, 15, 0);
-        if (action) lut_or(data, f, 15, 15, action);
-    }
-}
-
-/* ---- 完整表 / Full tables ---- */
-// DU 20 相，GC16 48 相；GL16 用 RAM 副本以便白底补 1 帧。
-// / DU 20, GC16 48; GL16 uses a RAM copy so the white-bg tick can be added.
-static uint8_t e0470_full_gl16_live[E0470_FULL_GL16_FRAMES][16][4];
-static const EpdWaveformPhases e0470_full_gl16_live_phases = {
-    .phases = E0470_FULL_GL16_FRAMES,
-    .phase_times = NULL,
-    .luts = (const uint8_t*)&e0470_full_gl16_live[0],
-};
-static const EpdWaveformPhases* e0470_full_gl16_live_ranges[] = {
-    &e0470_full_gl16_live_phases,
-};
-static const EpdWaveformMode e0470_full_gl16_live_mode = {
-    .type = 5, .temp_ranges = 1, .range_data = &e0470_full_gl16_live_ranges[0],
-};
+/* ---- 完整厂家表 / Complete vendor tables ---- */
+// 实机持续灰底：保留全部擦除/饱和相与对角线，不额外推白或重排时序。
+// Persistent device gray backgrounds require every erase/saturation phase and diagonal, without extra white drive or reordered timing.
 static const EpdWaveformMode* e0470_full_modes[] = {
     &e0470_full_du_mode,
     &e0470_full_gc16_mode,
-    &e0470_full_gl16_live_mode,
+    &e0470_full_gl16_mode,
+};
+const EpdWaveform E0470_FULL_WAVEFORM = {
+    .num_modes = 3, .num_temp_ranges = 1,
+    .mode_data = e0470_full_modes, .temp_intervals = e0470_intervals,
 };
 
-const EpdWaveform E0470_FULL_WAVEFORM = {
-    .num_modes = 3,
-    .num_temp_ranges = 1,
-    .mode_data = e0470_full_modes,
-    .temp_intervals = e0470_intervals,
+// GL16源表尾部两相保持；补一相中性扫描增加下电前收尾余量，不增加黑白推动。
+// GL16 ends in two neutral holds; one more neutral scan adds settling margin before power-off without extra black/white drive.
+static uint8_t e0470_settled_gl16_data[E0470_GL16_FRAMES][16][4];
+static const EpdWaveformPhases e0470_settled_gl16_phases = {
+    .phases = E0470_GL16_FRAMES, .phase_times = NULL,
+    .luts = (const uint8_t*)e0470_settled_gl16_data,
+};
+static const EpdWaveformPhases* e0470_settled_gl16_ranges[] = { &e0470_settled_gl16_phases };
+static const EpdWaveformMode e0470_settled_gl16_mode = {
+    .type = 5, .temp_ranges = 1, .range_data = e0470_settled_gl16_ranges,
+};
+
+// 夜间标准变化保留厂家迁移，未变像素保持，避免整片黑底参与0→0擦除/重写。
+// Standard night changes retain vendor transitions and hold unchanged pixels so the whole black background never enters 0→0 erase/rewrite.
+static uint8_t e0470_page_gl16_data[E0470_PAGE_GL16_FRAMES][16][4];
+static const EpdWaveformPhases e0470_page_gl16_phases = {
+    .phases = E0470_PAGE_GL16_FRAMES, .phase_times = NULL,
+    .luts = (const uint8_t*)e0470_page_gl16_data,
+};
+static const EpdWaveformPhases* e0470_page_gl16_ranges[] = { &e0470_page_gl16_phases };
+static const EpdWaveformMode e0470_page_gl16_mode = {
+    .type = 5, .temp_ranges = 1, .range_data = e0470_page_gl16_ranges,
+};
+static const EpdWaveformMode* e0470_page_modes[] = { &e0470_page_gl16_mode };
+// 日间标准复用完整厂家表；与夜间同相数，且不增加LUT内存。
+// Standard day reuses the complete vendor table with the same phase count as night and no extra LUT memory.
+static const EpdWaveformMode* e0470_text_modes[] = { &e0470_settled_gl16_mode };
+const EpdWaveform E0470_TEXTTURN_WAVEFORM = {
+    .num_modes = 1, .num_temp_ranges = 1,
+    .mode_data = e0470_text_modes, .temp_intervals = e0470_intervals,
+};
+const EpdWaveform E0470_TEXTTURN_NIGHT_WAVEFORM = {
+    .num_modes = 1, .num_temp_ranges = 1,
+    .mode_data = e0470_page_modes, .temp_intervals = e0470_intervals,
+};
+// 普通导航重绘保留完整厂家GL16；白白保持，无新增推动。
+// Ordinary navigation redraws retain full vendor GL16 with held white and no added drive.
+static const EpdWaveformMode* e0470_navigation_modes[] = { &e0470_settled_gl16_mode };
+const EpdWaveform E0470_NAVIGATION_WAVEFORM = {
+    .num_modes = 1, .num_temp_ranges = 1,
+    .mode_data = e0470_navigation_modes, .temp_intervals = e0470_intervals,
+};
+
+// 诊断边界表仅为真实白白追加一次白动作，保留厂家迁移及三相中性尾；产品布局入口不调用。
+// The diagnostic boundary table adds one white action to actual white-to-white pixels, retaining vendor transitions and three neutral tails; product layout entries do not use it.
+static uint8_t e0470_navigation_entry_data[E0470_GL16_FRAMES][16][4];
+static const EpdWaveformPhases e0470_navigation_entry_phases = {
+    .phases = E0470_GL16_FRAMES, .phase_times = NULL,
+    .luts = (const uint8_t*)e0470_navigation_entry_data,
+};
+static const EpdWaveformPhases* e0470_navigation_entry_ranges[] = { &e0470_navigation_entry_phases };
+static const EpdWaveformMode e0470_navigation_entry_mode = {
+    .type = 5, .temp_ranges = 1, .range_data = e0470_navigation_entry_ranges,
+};
+static const EpdWaveformMode* e0470_navigation_entry_modes[] = { &e0470_navigation_entry_mode };
+const EpdWaveform E0470_NAVIGATION_ENTRY_WAVEFORM = {
+    .num_modes = 1, .num_temp_ranges = 1,
+    .mode_data = e0470_navigation_entry_modes, .temp_intervals = e0470_intervals,
+};
+
+static void e0470_navigation_entry_build(void) {
+    memcpy(e0470_navigation_entry_data, e0470_settled_gl16_data, sizeof(e0470_navigation_entry_data));
+    // 合并到厂家最后白饱和相，不向中性尾追加推动；找不到动作时保持原表。
+    // Merge into the last vendor white saturation phase without driving the neutral tail; retain the source if none exists.
+    for (int f = E0470_FULL_GL16_FRAMES - 1; f >= 0; --f) {
+        for (int from = 0; from < 15; ++from) {
+            if (lut_get(e0470_full_gl16_data, f, 15, from) != 2) continue;
+            lut_set(e0470_navigation_entry_data, f, 15, 15, 2);
+            return;
+        }
+    }
+}
+
+/* ---- 黑白直刷 / Black-white direct ---- */
+// 用户选择黑白目标换取无反向迁移；厂家DU20相完整复制，只补一相中性，不再混合灰阶路径。
+// The user chooses black/white targets for transitions without reverse drive; copy all 20 vendor DU phases and append one neutral phase without mixed gray paths.
+static uint8_t e0470_direct_data[E0470_DIRECT_FRAMES][16][4];
+static const EpdWaveformPhases e0470_direct_phases = {
+    .phases = E0470_DIRECT_FRAMES, .phase_times = NULL,
+    .luts = (const uint8_t*)e0470_direct_data,
+};
+static const EpdWaveformPhases* e0470_direct_ranges[] = { &e0470_direct_phases };
+static const EpdWaveformMode e0470_direct_mode = {
+    .type = 5, .temp_ranges = 1, .range_data = e0470_direct_ranges,
+};
+static const EpdWaveformMode* e0470_direct_modes[] = { &e0470_direct_mode };
+const EpdWaveform E0470_DIRECT_WAVEFORM = {
+    .num_modes = 1, .num_temp_ranges = 1,
+    .mode_data = e0470_direct_modes, .temp_intervals = e0470_intervals,
+};
+
+// FF选择三相原厂擦白尾段，00和其他动作码保持；不会压黑任何像素。
+// FF selects three vendor erase-tail phases; 00 and other action codes hold, never darkening pixels.
+static uint8_t e0470_white_cleanup_data[E0470_WHITE_CLEANUP_FRAMES][16][4];
+static const EpdWaveformPhases e0470_white_cleanup_phases = {
+    .phases = E0470_WHITE_CLEANUP_FRAMES, .phase_times = NULL,
+    .luts = (const uint8_t*)e0470_white_cleanup_data,
+};
+static const EpdWaveformPhases* e0470_white_cleanup_ranges[] = { &e0470_white_cleanup_phases };
+static const EpdWaveformMode e0470_white_cleanup_mode = {
+    .type = 1, .temp_ranges = 1, .range_data = e0470_white_cleanup_ranges,
+};
+static const EpdWaveformMode* e0470_white_cleanup_modes[] = { &e0470_white_cleanup_mode };
+const EpdWaveform E0470_WHITE_CLEANUP_WAVEFORM = {
+    .num_modes = 1, .num_temp_ranges = 1,
+    .mode_data = e0470_white_cleanup_modes, .temp_intervals = e0470_intervals,
 };
 
 /* ---- 8 灰阶表 / 8-gray tables ---- */
@@ -193,39 +267,16 @@ const EpdWaveform E0470_GRAY8_WAVEFORM = {
 };
 
 /* ---- 默认表 / Default tables ---- */
-// 完整灰阶表裁掉余量，开机算进 RAM。
-// / Trim slack from the full gray tables into RAM at boot.
-static uint8_t e0470_gc16_data[E0470_FULL_GC16_FRAMES][16][4];
-static uint8_t e0470_gl16_data[E0470_FULL_GL16_FRAMES][16][4];
-static const EpdWaveformPhases e0470_gc16_phases = {
-    .phases = E0470_GC16_FRAMES,
-    .phase_times = NULL,
-    .luts = (const uint8_t*)&e0470_gc16_data[0],
-};
-static const EpdWaveformPhases e0470_gl16_phases = {
-    .phases = E0470_GL16_FRAMES,
-    .phase_times = NULL,
-    .luts = (const uint8_t*)&e0470_gl16_data[0],
-};
-static const EpdWaveformPhases* e0470_gc16_ranges[] = { &e0470_gc16_phases };
-static const EpdWaveformPhases* e0470_gl16_ranges[] = { &e0470_gl16_phases };
-static const EpdWaveformMode e0470_gc16_mode = {
-    .type = 2, .temp_ranges = 1, .range_data = &e0470_gc16_ranges[0],
-};
-static const EpdWaveformMode e0470_gl16_mode = {
-    .type = 5, .temp_ranges = 1, .range_data = &e0470_gl16_ranges[0],
-};
+// 默认GL16保留48相厂家动作并补中性收尾；阈值 DU 仅用于动态控件。
+// Default GL16 retains 48 vendor phases plus neutral settling; threshold DU is for dynamic controls only.
 static const EpdWaveformMode* e0470_modes[] = {
     &e0470_complete_du_mode,
-    &e0470_gc16_mode,
-    &e0470_gl16_mode,
+    &e0470_full_gc16_mode,
+    &e0470_settled_gl16_mode,
 };
-
 const EpdWaveform E0470_WAVEFORM = {
-    .num_modes = 3,
-    .num_temp_ranges = 1,
-    .mode_data = e0470_modes,
-    .temp_intervals = e0470_intervals,
+    .num_modes = 3, .num_temp_ranges = 1,
+    .mode_data = e0470_modes, .temp_intervals = e0470_intervals,
 };
 
 const EpdWaveformPhases* e0470_waveform_phases(const EpdWaveform* waveform, int mode) {
@@ -248,22 +299,25 @@ int e0470_phase_action(const EpdWaveformPhases* phases, int phase, int to, int f
 void e0470_waveform_init(void) {
     e0470_follow_lut_build(E0470_FOLLOW_FRAMES, e0470_follow_data);
     e0470_complete_du_build();
-
-    const e0470_trim_t trim = {
-        .erase_max = E0470_TRIM_ERASE_MAX,
-        .sat_cut = E0470_TRIM_SAT_CUT,
-        .white_sat_cut = E0470_TRIM_WHITE_SAT_CUT,
-        .hold = E0470_TRIM_HOLD,
-    };
-    const int gc = e0470_waveform_trim(&e0470_full_gc16_phases, &trim, e0470_gc16_data);
-    const int gl = e0470_waveform_trim(&e0470_full_gl16_phases, &trim, e0470_gl16_data);
-    assert(gc == E0470_GC16_FRAMES);
-    assert(gl == E0470_GL16_FRAMES);
-
-    memcpy(e0470_full_gl16_live, e0470_full_gl16_data, sizeof(e0470_full_gl16_live));
-    // 整页白基准走完整表：背景像素必须带足白推相，否则残影逐页累积。
-    // / Page white-baseline updates use the full table: background pixels need
-    // the complete white-push phases or ghosting accumulates page over page.
-    e0470_gl16_white_row_clone(e0470_full_gl16_live, E0470_FULL_GL16_FRAMES);
-    e0470_gl16_white_tick(e0470_gl16_data, E0470_GL16_FRAMES);
+    memset(e0470_settled_gl16_data, 0, sizeof(e0470_settled_gl16_data));
+    memcpy(e0470_settled_gl16_data, e0470_full_gl16_data, sizeof(e0470_full_gl16_data));
+    e0470_navigation_entry_build();
+    memset(e0470_page_gl16_data, 0, sizeof(e0470_page_gl16_data));
+    memcpy(e0470_page_gl16_data, e0470_full_gl16_data, sizeof(e0470_full_gl16_data));
+    memset(e0470_direct_data, 0, sizeof(e0470_direct_data));
+    // 中间目标全中性，使EE选择码保持；真实旧灰仍沿用厂家到0/15的每一相动作。
+    // Intermediate targets stay neutral for held EE selectors; every actual old gray retains each vendor phase toward 0/15.
+    for (int to = 0; to <= 15; to += 15) for (int from = 0; from < 16; ++from)
+        for (int f = 0; f < E0470_FULL_DU_FRAMES; ++f)
+            lut_set(e0470_direct_data, f, to, from, lut_get(e0470_full_du_data, f, to, from));
+    // 夜间与黑白直刷使用EE选择性保持；日间直接复用厂家全部对角线，白白原表仍保持。
+    // Night and black/white direct use selective EE holds; day directly reuses every vendor diagonal, with held vendor white-to-white.
+    for (int f = 0; f < E0470_PAGE_GL16_FRAMES; ++f)
+        for (int gray = 0; gray < 16; ++gray) lut_set(e0470_page_gl16_data, f, gray, gray, 0);
+    for (int f = 0; f < E0470_DIRECT_FRAMES; ++f)
+        for (int gray = 0; gray < 16; ++gray) lut_set(e0470_direct_data, f, gray, gray, 0);
+    memset(e0470_white_cleanup_data, 0, sizeof(e0470_white_cleanup_data));
+    for (int f = 0; f < 3; ++f)
+        lut_set(e0470_white_cleanup_data, f, 15, 15,
+                (e0470_full_du_data[15 + f][15][0] >> 6) & 3);
 }

@@ -163,6 +163,9 @@ enum EpdDrawError {
     ///
     /// Reduce the display clock speed.
     EPD_DRAW_EMPTY_LINE_QUEUE = 0x400,
+
+    /// 面板电源未就绪，未扫描也未提交参考帧。/ Panel power is not ready; no scan or baseline commit occurred.
+    EPD_DRAW_POWER_NOT_READY = 0x800,
 };
 
 /// The default draw mode (non-flashy refresh, whith previously white screen).
@@ -555,6 +558,11 @@ int epd_lcd_prefill_lines(void);
 /** 作废上一次差分顺手做的 (from, to) 统计。算了差分却没接着扫描时调，免得被后面
  *  别的绘制误用；`epd_draw_base` 自己用完也会作废。 */
 void epd_leading_skip_discard(void);
+
+/// 设置已构造动作码的出现表；避免旧差分直方图或再次遍历PSRAM。
+/// Supply presence for prepared selectors, avoiding stale diff histograms or another PSRAM traversal.
+void epd_leading_skip_set_present(const uint8_t* data, const uint8_t present[256]);
+
 
 /**
  * 差分实际计算的列范围：crop_to 的列区间向外对齐到 32 像素。`epd_difference_image_cropped`
