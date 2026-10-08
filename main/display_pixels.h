@@ -19,6 +19,9 @@ void display_invert_frame(uint8_t* fb, int width, int height);
 /// 按低于8为黑、其余为白转为0/15；扫描与提交同帧，日夜不翻转。/ Threshold below 8 to black and all others to white at 0/15; scan and commit the same frame without day/night inversion.
 void display_prepare_direct_frame(uint8_t* fb, int width, int height, bool white_on_black);
 
+/// 仅量化裁剪后的物理矩形为0/15；低半字节对应偶数列，奇边保留区外像素，调用方负责旋转。/ Quantize only the clipped physical rectangle to 0/15; low nibbles hold even columns, odd edges preserve outside pixels, and the caller owns rotation.
+void display_prepare_direct_area(uint8_t* fb, int width, int height, int x, int y, int w, int h);
+
 /// 诊断实验的墨迹预算，每像素2bit；产品已停用以避免白字累积。/ Diagnostic ink budgets, two bits per pixel; disabled in the product to avoid accumulating white glyphs.
 typedef struct {
     uint8_t* ages; ///< 调用方提供的零初始化存储。/ Caller-provided zeroed storage.

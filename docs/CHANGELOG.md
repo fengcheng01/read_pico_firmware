@@ -3,6 +3,13 @@
 按日期和作者简述对用户可见的功能变化；详细实现历史见 Git。使用方法见 [README](../README.zh-CN.md)。
 User-visible changes by date and author; Git retains implementation history. See [README](../README.md) for usage.
 
+## 0.5.23 · 2026-10-08
+
+- 夜间手动清残影、实际返回正文布局及周期到期时，先物理清白再用厂家GC16呈现保留的正文，针对设置轮廓残留；一次操作可能多次闪动且更慢，实际残影仍需真机复测。普通夜间翻页、日间、字体网格和触摸队列保持。
+  Night manual cleaning, actual layout returns and due intervals physically clear white before vendor GC16 presents the retained body, addressing setting outlines. One operation can flash several times and take longer; actual ghosts still need device comparison. Ordinary night turns, day behavior, font grids and the touch queue remain.
+- 书架搜索与键盘取消按下刷屏，完整轻点仅直刷输入栏；连续输入不穿插定稿，呈现结束后停输两秒局部恢复灰阶，失败两秒后重试。取消、应用、64字符限制及匹配算法保持。
+  Library Search and its keyboard omit pressed scans; complete taps directly update only the input. Continuous typing avoids settling scans, with local gray restoration after two idle seconds following presentation and a two-second retry on failure. Cancel, Apply, the 64-character limit and matching remain.
+
 ## 0.5.22 · 2026-10-08
 
 - 夜间阅读统一暗色正文、边距、页脚、工具条与阅读覆盖层/图片预览；目录、阅读设置等其它页面保留原配色。分页和辅助线网格不变，标准抗锯齿与直刷实际黑白目标保留。

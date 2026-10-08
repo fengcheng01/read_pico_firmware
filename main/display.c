@@ -6,14 +6,14 @@
  *
  * Present path: power down after normal updates, idle timeout for tracking, and pclk underrun recovery.
  *
- * 冻结：用户确认日间0.5.21效果并要求夜间优先无闪、按设置周期清理；日间不计周期，夜间两效果共计成功正文翻页，第N页一次厂家GC16，0关闭。
- * Frozen: The user accepts 0.5.21 daytime behavior and requests flash-free night turns with scheduled cleaning; day stays outside counting, both night effects share successful body turns, using vendor GC16 on turn N and disabling it at 0.
+ * 冻结：用户确认日间0.5.21效果并要求夜间优先无闪、按设置周期清理；实机GC残留设置框，夜间清理先物理清白再厂家GC16，日间不计周期，0关闭。
+ * Frozen: The user accepts 0.5.21 daytime behavior and flash-free night turns with scheduled cleaning; hardware GC leaves setting outlines, so night cleaning physically clears before vendor GC16, with day excluded and 0 disabling the interval.
  * 冻结：用户实测否定0.5.19并明确优先无闪速度；直刷使用厂家黑白DU及真实二值目标，标准模式保留灰阶。
  * Frozen: Device feedback rejects 0.5.19 and the user explicitly prioritizes flash-free speed; direct uses vendor black/white DU with actual binary targets, while standard retains gray.
  * 冻结：旧参考保留实际灰码，不能伪造白基准；正文和普通导航白白保持，不恢复历史字形补擦。
  * Frozen: Prior references retain actual gray codes without fictional white baselines; body and ordinary navigation hold white without historical glyph cleanup.
- * 冻结：标准正文恢复厂家黑/灰对角线定稿，白白保持；布局入口GC16一次，按钮和页脚不清理；成功的布局/手动/开机/故障清理重置夜间计数。
- * Frozen: Standard body restores vendor black/gray diagonal settling and held white; layout entries use one GC16 without control/footer cleaning, and successful layout/manual/boot/fault cleaning resets night counts.
+ * 冻结：标准正文恢复厂家黑/灰对角线定稿，白白保持；日间布局入口GC16一次，夜间入口先物理清白，按钮和页脚不清理；成功清理重置夜间计数。
+ * Frozen: Standard body restores vendor black/gray diagonal settling and held white; day layout entries use one GC16 while night entries physically clear first, controls/footer never clean, and successful cleaning resets night counts.
  * 冻结：普通夜间保持未变背景，只在用户设置周期到期清理；失败不累计，不伪造黑基准或交换厂家动作。
  * Frozen: Ordinary night turns hold unchanged backgrounds and clean only at the user-selected interval; failures never count, without fabricated black baselines or swapped vendor actions.
  */
@@ -123,7 +123,7 @@ static bool changed_page(const EpdiyHighlevelState* hl) {
 // 跟随 DU 专用于跟手，不参与页级清理计数。/ FOLLOW DU is for live tracking and excluded from page cleanup counting.
 static enum EpdDrawError hl_update(
     EpdiyHighlevelState* hl, const EpdWaveform* waveform, enum EpdDrawMode mode, bool full,
-    const EpdRect* area, bool night_body_turn
+    const EpdRect* area, bool night_body_turn, bool physical_clean
 ) {
     const bool is_full_screen = area == NULL ||
         (area->x == 0 && area->y == 0 && area->width >= epd_width() && area->height >= epd_height());
@@ -135,10 +135,8 @@ static enum EpdDrawError hl_update(
     full = full || (mode & 0xF) == MODE_GC16 || waveform == &E0470_NAVIGATION_WAVEFORM || waveform == &E0470_NAVIGATION_ENTRY_WAVEFORM ||
            body_profile;
     bool promoted = false;
-    // 失败后的面板状态未知，下一次先物理清白并完整重画。/ After a failed draw the panel is unknown; physically clear before the next complete redraw.
-    if (s_baseline_unknown) {
-        epd_clear();
-        memset(hl->back_fb, 255, (size_t)epd_width() * epd_height() / 2);
+    physical_clean = physical_clean || s_baseline_unknown;
+    if (physical_clean) {
         mode = (enum EpdDrawMode)((mode & ~0xF) | MODE_GC16);
         epd_hl_waveform(hl, &E0470_FULL_WAVEFORM);
         use_scan_for(&E0470_FULL_WAVEFORM, mode);
@@ -152,6 +150,13 @@ static enum EpdDrawError hl_update(
         use_scan_for(&E0470_FULL_WAVEFORM, mode);
         promoted = full = true;
         area = NULL;
+        physical_clean = true;
+    }
+    // 光学残影超出旧灰码参考；只有实际清白后才可建立白基准，正文目标始终保留。
+    // Optical ghosts exceed the prior gray-code reference; establish white only after an actual clear, retaining the body target throughout.
+    if (physical_clean) {
+        epd_clear();
+        memset(hl->back_fb, 255, (size_t)epd_width() * epd_height() / 2);
     }
     const bool page_update = is_full_screen &&
         (area != NULL || (mode & 0xF) == MODE_GC16 || body_profile || changed_page(hl));
@@ -202,7 +207,7 @@ enum EpdDrawError update_display_mode(
         return update_display_with(hl, s_navigation_entry ? &E0470_NAVIGATION_WAVEFORM : &E0470_WAVEFORM, mode);
     use_scan_for(&E0470_WAVEFORM, mode);
     if (!power_ready()) return EPD_DRAW_POWER_NOT_READY;
-    enum EpdDrawError result = hl_update(hl, &E0470_WAVEFORM, mode, false, NULL, false);
+    enum EpdDrawError result = hl_update(hl, &E0470_WAVEFORM, mode, false, NULL, false, false);
     finish_update(&E0470_WAVEFORM);
     return result;
 }
@@ -274,20 +279,22 @@ enum EpdDrawError update_display_full(EpdiyHighlevelState* hl) {
 // 指定波形整屏刷一次，刷完把默认波形装回去。用来 A/B 两条灰阶表。
 // Present the whole screen with a given waveform, then restore the default. Used to A/B two gray tables.
 static enum EpdDrawError update_display_with_profile(
-    EpdiyHighlevelState* hl, const EpdWaveform* waveform, enum EpdDrawMode mode, bool night_body_turn
+    EpdiyHighlevelState* hl, const EpdWaveform* waveform, enum EpdDrawMode mode, bool night_body_turn, bool physical_clean
 ) {
-    // 布局入口一次厂家清理；保留真实旧帧，不再追加未校准白推动。
-    // Layout entries use one vendor cleaning update from the actual prior frame, without uncalibrated added white drive.
+    // 日间入口保留真实旧帧；夜间入口清白后统一重画，避免设置框旧灰码留下轮廓。
+    // Day entries retain actual prior frames; night entries clear before a uniform redraw so old setting gray codes cannot retain outlines.
     const bool clean_entry = (waveform == &E0470_NAVIGATION_WAVEFORM ||
         waveform == &E0470_TEXTTURN_WAVEFORM || waveform == &E0470_TEXTTURN_NIGHT_WAVEFORM ||
         waveform == &E0470_DIRECT_WAVEFORM) &&
         (mode & 0xF) == MODE_GL16 && s_navigation_entry;
     const EpdWaveform* applied = clean_entry ? &E0470_FULL_WAVEFORM : waveform;
     if (clean_entry) mode = (enum EpdDrawMode)((mode & ~0xF) | MODE_GC16);
+    physical_clean = physical_clean || (clean_entry &&
+        (waveform == &E0470_TEXTTURN_NIGHT_WAVEFORM || night_body_turn));
     use_scan_for(applied, mode);
     if (!power_ready()) return EPD_DRAW_POWER_NOT_READY;
     epd_hl_waveform(hl, applied);
-    enum EpdDrawError result = hl_update(hl, applied, mode, false, NULL, night_body_turn);
+    enum EpdDrawError result = hl_update(hl, applied, mode, false, NULL, night_body_turn, physical_clean);
     epd_hl_waveform(hl, &E0470_WAVEFORM);
     finish_update(applied);
     return result;
@@ -296,20 +303,24 @@ static enum EpdDrawError update_display_with_profile(
 enum EpdDrawError update_display_with(
     EpdiyHighlevelState* hl, const EpdWaveform* waveform, enum EpdDrawMode mode
 ) {
-    return update_display_with_profile(hl, waveform, mode, false);
+    return update_display_with_profile(hl, waveform, mode, false, false);
+}
+
+enum EpdDrawError update_display_clean(EpdiyHighlevelState* hl) {
+    return update_display_with_profile(hl, &E0470_FULL_WAVEFORM, MODE_GC16, false, true);
 }
 
 // 日间厂家GL16定稿，夜间普通保持并与直刷共用用户清理周期。
 // Day uses vendor GL16 settling; night ordinarily holds and shares the user cleanup interval with direct.
 enum EpdDrawError update_display_text_turn(EpdiyHighlevelState* hl, bool white_on_black) {
-    return update_display_with_profile(hl, white_on_black ? &E0470_TEXTTURN_NIGHT_WAVEFORM : &E0470_TEXTTURN_WAVEFORM, MODE_GL16, white_on_black);
+    return update_display_with_profile(hl, white_on_black ? &E0470_TEXTTURN_NIGHT_WAVEFORM : &E0470_TEXTTURN_WAVEFORM, MODE_GL16, white_on_black, false);
 }
 
 enum EpdDrawError update_display_text_direct(EpdiyHighlevelState* hl, bool white_on_black) {
     // 按用户速度取舍提交真实黑白目标；厂家DU仍读取实际旧灰帧。
     // Commit actual black/white targets per the user's speed preference; vendor DU still reads the real prior gray frame.
     display_prepare_direct_frame(hl->front_fb, epd_width(), epd_height(), white_on_black);
-    return update_display_with_profile(hl, &E0470_DIRECT_WAVEFORM, MODE_GL16, white_on_black);
+    return update_display_with_profile(hl, &E0470_DIRECT_WAVEFORM, MODE_GL16, white_on_black, false);
 }
 
 // 分钟字带用产品GL16局推，保持灰阶且不计入整屏清理周期。
@@ -319,7 +330,7 @@ enum EpdDrawError update_display_area_quiet(EpdiyHighlevelState* hl, EpdRect are
     if (!power_ready()) return EPD_DRAW_POWER_NOT_READY;
     epd_hl_waveform(hl, &E0470_WAVEFORM);
     enum EpdDrawError result;
-    if (s_baseline_unknown) result = hl_update(hl, &E0470_WAVEFORM, MODE_GL16, true, &area, false);
+    if (s_baseline_unknown) result = hl_update(hl, &E0470_WAVEFORM, MODE_GL16, true, &area, false, false);
     else result = epd_hl_update_area_full(hl, MODE_GL16, 25, area);
     s_baseline_unknown = result != EPD_DRAW_SUCCESS;
     epd_hl_waveform(hl, &E0470_WAVEFORM);
@@ -334,7 +345,7 @@ enum EpdDrawError update_display_area_with(
     use_scan_for(waveform, mode);
     if (!power_ready()) return EPD_DRAW_POWER_NOT_READY;
     epd_hl_waveform(hl, waveform);
-    enum EpdDrawError result = hl_update(hl, waveform, mode, false, &area, false);
+    enum EpdDrawError result = hl_update(hl, waveform, mode, false, &area, false, false);
     epd_hl_waveform(hl, &E0470_WAVEFORM);
     finish_update(waveform);
     return result;

@@ -41,6 +41,8 @@ static bool s_navigation_entry;
 static bool menu_open = true, white_exit;
 static int menu_leaf, unsupported = -1, asset = -1, refresh_mode, presents, gc_presents;
 static unsigned s_night_body_turns, body_presents, quiet_presents, night_area_presents;
+static unsigned physical_clears;
+static EpdRect refresh_area;
 static int refresh_wave;
 static char font_path[TTF_FONT_PATH_MAX];
 void preview_home_fixture(int value);
@@ -55,13 +57,14 @@ const EpdWaveform E0470_FOLLOW_WAVEFORM = {3};
 const EpdWaveform E0470_NAVIGATION_WAVEFORM = {4};
 const EpdWaveform E0470_TEXTTURN_NIGHT_WAVEFORM = {5};
 const EpdWaveform E0470_TEXTTURN_WAVEFORM = {7};
+const EpdWaveform E0470_DIRECT_WAVEFORM = {6};
+static int64_t s_time_bias_ms;
 
 int64_t esp_timer_get_time(void) {
     struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t);
-    return (int64_t)t.tv_sec * 1000000 + t.tv_nsec / 1000;
+    return (int64_t)t.tv_sec * 1000000 + t.tv_nsec / 1000 + s_time_bias_ms * 1000;
 }
-static int64_t s_time_bias_ms;
-static int64_t preview_now_ms(void) { return esp_timer_get_time() / 1000 + s_time_bias_ms; }
+static int64_t preview_now_ms(void) { return esp_timer_get_time() / 1000; }
 
 const char* esp_err_to_name(esp_err_t err) { return err == ESP_OK ? "ESP_OK" : "HOST_ERROR"; }
 // 卡状态夹具仅验证 UI，不挂载真实卡。/ Card-state fixture verifies UI without real card mounting.
@@ -88,6 +91,7 @@ void display_request_navigation_settle(void) { s_navigation_entry = true; }
 enum EpdDrawError update_display_with(EpdiyHighlevelState* state, const EpdWaveform* wave, enum EpdDrawMode mode) {
     (void)state;
     refresh_wave = wave->unused;
+    refresh_area = (EpdRect){0, 0, 684, 1216};
     // 入口标志只在导航整页提交时提升一次；宿主记录模式，不模拟光学效果。
     // Promote a navigation page once per entry marker; the host records modes without modeling optics.
     if (s_navigation_entry &&
@@ -96,6 +100,7 @@ enum EpdDrawError update_display_with(EpdiyHighlevelState* state, const EpdWavef
         (mode & 0xF) == MODE_GL16) {
         mode = (enum EpdDrawMode)((mode & ~0xF) | MODE_GC16);
         refresh_wave = E0470_FULL_WAVEFORM.unused;
+        if (wave == &E0470_TEXTTURN_NIGHT_WAVEFORM) physical_clears++;
     }
     enum EpdDrawError result = record_refresh(mode);
     if (result == EPD_DRAW_SUCCESS &&
@@ -108,6 +113,10 @@ enum EpdDrawError update_display_with(EpdiyHighlevelState* state, const EpdWavef
 enum EpdDrawError update_display_full(EpdiyHighlevelState* state) {
     return update_display_with(state, &E0470_FULL_WAVEFORM, MODE_GC16);
 }
+enum EpdDrawError update_display_clean(EpdiyHighlevelState* state) {
+    physical_clears++;
+    return update_display_full(state);
+}
 enum EpdDrawError update_display_white(EpdiyHighlevelState* state) {
     memset(state->front_fb, 0xff, sizeof(fb)); return update_display_full(state);
 }
@@ -118,13 +127,13 @@ enum EpdDrawError update_display_from_white_with(EpdiyHighlevelState* state, con
     return result;
 }
 enum EpdDrawError update_display_area_with(EpdiyHighlevelState* state, const EpdWaveform* wave, enum EpdDrawMode mode, EpdRect area) {
-    (void)state; (void)area; refresh_wave = wave->unused;
+    (void)state; refresh_area = area; refresh_wave = wave->unused;
     if (wave == &E0470_TEXTTURN_NIGHT_WAVEFORM) night_area_presents++;
     return record_refresh(mode);
 }
 // 静默局推按 GL16 记账；验证时钟字带不触发全清与 DU。/ Quiet band push records GL16; clock bands stay off full cleans and DU.
 enum EpdDrawError update_display_area_quiet(EpdiyHighlevelState* state, EpdRect area) {
-    (void)state; (void)area; quiet_presents++; refresh_wave = -1; return record_refresh(MODE_GL16);
+    (void)state; refresh_area = area; quiet_presents++; refresh_wave = -1; return record_refresh(MODE_GL16);
 }
 
 // 只记录成功正文出口和周期选择，不模拟厂家扫描或真实残影。
@@ -132,6 +141,8 @@ enum EpdDrawError update_display_area_quiet(EpdiyHighlevelState* state, EpdRect 
 static enum EpdDrawError record_body(bool night, bool direct) {
     unsigned every = night ? app_settings_gc_every() : 0;
     bool clean = s_navigation_entry || (night && every && s_night_body_turns + 1 >= every);
+    if (clean && night) physical_clears++;
+    refresh_area = (EpdRect){0, 0, 684, 1216};
     refresh_wave = clean ? E0470_FULL_WAVEFORM.unused : direct ? 6 : night ? E0470_TEXTTURN_NIGHT_WAVEFORM.unused : 7;
     enum EpdDrawError result = record_refresh(clean ? MODE_GC16 : MODE_GL16);
     if (result == EPD_DRAW_SUCCESS) {
@@ -322,15 +333,17 @@ int main(int argc, char** argv) {
         if (!export_frame(argv[1])) { perror("frame export"); return 1; }
         static book_quote_t quote_snapshot[BOOK_QUOTES_MAX];
         size_t quote_count = book_quotes_list(quote_snapshot, BOOK_QUOTES_MAX);
-        printf("{\"page\":%d,\"menu\":%s,\"menu_leaf\":%d,\"leaf\":%d,\"asset\":%d,\"unsupported\":%d,\"refresh_mode\":%d,\"presents\":%d,\"gc_presents\":%d,\"refresh_wave\":%d,\"night_turns\":%u,\"body_presents\":%u,\"quiet_presents\":%u,\"night_area_presents\":%u,\"reading\":%s,\"sync_starts\":%u,\"sync_job\":%d,\"quote_count\":%u,\"history_page\":%u,\"history_count\":%u}\n",
+        printf("{\"page\":%d,\"menu\":%s,\"menu_leaf\":%d,\"leaf\":%d,\"asset\":%d,\"unsupported\":%d,\"refresh_mode\":%d,\"presents\":%d,\"gc_presents\":%d,\"refresh_wave\":%d,\"night_turns\":%u,\"body_presents\":%u,\"quiet_presents\":%u,\"night_area_presents\":%u,\"reading\":%s,\"sync_starts\":%u,\"sync_job\":%d,\"quote_count\":%u,\"history_page\":%u,\"history_count\":%u,\"physical_clears\":%u,\"refresh_area\":[%d,%d,%d,%d]}\n",
                app_index_of(current), menu_open ? "true" : "false", menu_leaf, ctx.leaf, asset, unsupported, refresh_mode, presents, gc_presents, refresh_wave, s_night_body_turns, body_presents, quiet_presents, night_area_presents,
                current == app_by_id(OS_APP_LIBRARY) && book_chapter_count() > 0 ? "true" : "false",
-               preview_sync_starts(), preview_sync_job(), (unsigned)quote_count, book_home_snapshot()->recent_page, book_home_snapshot()->history_count);
+               preview_sync_starts(), preview_sync_job(), (unsigned)quote_count, book_home_snapshot()->recent_page, book_home_snapshot()->history_count,
+               physical_clears, refresh_area.x, refresh_area.y, refresh_area.width, refresh_area.height);
         fflush(stdout);
         if (!fgets(command, sizeof(command), stdin)) break;
         int value, x, y, x1, y1;
         if (sscanf(command, "time_step %d", &value) == 1) {
             preview_time_step(value);
+            s_time_bias_ms += (int64_t)value * 1000;
             ctx.now_ms = preview_now_ms();
             if (current && current->on_tick) present(current->on_tick(&ctx));
             continue;

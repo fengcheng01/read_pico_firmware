@@ -2,8 +2,8 @@
  * SPDX-FileCopyrightText: 2026 mindreset
  * SPDX-License-Identifier: Apache-2.0
  *
- * 中文：阅读完整帧反色和直刷真实黑白转换；历史掩码保留作诊断对照，产品不再调用。
- * English: Whole-reader frame inversion and actual binary direct conversion; history masks remain a diagnostic reference, outside product updates.
+ * 中文：阅读完整帧反色和整帧/物理区域直刷真实黑白转换；历史掩码保留作诊断对照，产品不再调用。
+ * English: Whole-reader frame inversion and actual binary direct conversion of frames/physical areas; history masks remain a diagnostic reference, outside product updates.
  *
  * 冻结：用户本次明确优先无闪速度，直刷阈值量化为0/15而不保留灰阶抗锯齿；只改目标帧，不访问旧参考或硬件。
  * Frozen: The user now prioritizes flicker-free speed, thresholding direct targets to 0/15 without gray antialiasing; modify only the target frame, without accessing prior references or hardware.
@@ -27,6 +27,31 @@ void display_prepare_direct_frame(uint8_t* fb, int width, int height, bool white
         uint8_t* p = fb + (size_t)y * (width / 2) + x / 2;
         unsigned lo = (*p & 15) < 8 ? 0 : 15, hi = (*p >> 4) < 8 ? 0 : 15;
         *p = (uint8_t)(lo | hi << 4);
+    }
+}
+
+void display_prepare_direct_area(uint8_t* fb, int width, int height, int x, int y, int w, int h) {
+    if (!fb || width <= 0 || height <= 0 || (width & 1) || w <= 0 || h <= 0 ||
+        (size_t)width > SIZE_MAX / (size_t)height) return;
+    // 先用宽整数求矩形终点再裁剪，输入坐标与尺寸相加不得溢出。
+    // Compute rectangle ends in wide integers before clipping so input coordinate/size sums cannot overflow.
+    int64_t right = (int64_t)x + w, bottom = (int64_t)y + h;
+    int x0 = x > 0 ? x : 0, y0 = y > 0 ? y : 0;
+    int x1 = right < width ? (int)right : width, y1 = bottom < height ? (int)bottom : height;
+    if (x0 >= x1 || y0 >= y1) return;
+    const size_t stride = (size_t)width / 2;
+    for (int row = y0; row < y1; ++row) {
+        int col = x0;
+        uint8_t* at = fb + (size_t)row * stride + (size_t)col / 2;
+        // 区域奇边只改命中的半字节，不能把邻像素也纳入DU目标。
+        // Odd area edges change only the covered nibble; never add neighboring pixels to a DU target.
+        if (col & 1) {
+            *at = (uint8_t)((*at & 15) | ((*at & 128) ? 240 : 0));
+            ++at; ++col;
+        }
+        for (; col + 1 < x1; col += 2, ++at)
+            *at = (uint8_t)(((*at & 8) ? 15 : 0) | ((*at & 128) ? 240 : 0));
+        if (col < x1) *at = (uint8_t)((*at & 240) | ((*at & 8) ? 15 : 0));
     }
 }
 

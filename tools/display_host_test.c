@@ -21,6 +21,9 @@ const EpdWaveform E0470_DIRECT_WAVEFORM = {5}, E0470_WHITE_CLEANUP_WAVEFORM = {6
 static uint8_t target[FB_BYTES], presented[FB_BYTES];
 static uint8_t expected_old[FB_BYTES];
 static bool check_old_at_draw;
+static EpdiyHighlevelState* clear_hl;
+static uint8_t clear_target[FB_BYTES], clear_prior[FB_BYTES];
+static bool check_clean_at_clear;
 static int clocks, powerons, clears, draws, full_draws, safe_clock, prefill, poweroffs;
 static bool white_baseline, correct_target_at_draw, fail_power, fail_draw;
 static bool hv_on;
@@ -38,7 +41,14 @@ void read_pico_epd_use_scan(read_pico_epd_scan_t scan) { assert(scan == READ_PIC
 void epd_lcd_set_prefill_lines(int lines) { prefill = lines; }
 void epd_poweron(void) { ++powerons; hv_on = !fail_power; }
 void epd_poweroff(void) { ++poweroffs; hv_on = false; }
-void epd_clear(void) { assert(powerons > 0); ++clears; }
+void epd_clear(void) {
+    assert(hv_on && !fail_power && prefill == 127);
+    if (check_clean_at_clear) {
+        assert(clear_hl && !memcmp(clear_hl->front_fb, clear_target, FB_BYTES));
+        assert(!memcmp(clear_hl->back_fb, clear_prior, FB_BYTES));
+    }
+    ++clears;
+}
 int64_t esp_timer_get_time(void) { return 1000000; }
 
 // 与 highlevel.c:307 相同：该 API 清前缓冲，而不是参考后缓冲。
@@ -138,13 +148,19 @@ static void assert_night_scan(EpdiyHighlevelState* hl, bool direct, bool clean) 
     int drawn_before = draws, on_before = powerons, off_before = poweroffs, clears_before = clears;
     unsigned selected_before = mask_draws;
     memcpy(expected_old, hl->back_fb, FB_BYTES);
+    memcpy(clear_prior, hl->back_fb, FB_BYTES);
+    memcpy(clear_target, hl->front_fb, FB_BYTES);
+    if (direct) display_prepare_direct_frame(clear_target, epd_width(), epd_height(), true);
+    if (clean) memset(expected_old, 255, FB_BYTES);
+    check_clean_at_clear = clean;
     check_old_at_draw = true;
     assert(night_turn(hl, direct) == EPD_DRAW_SUCCESS);
     check_old_at_draw = false;
+    check_clean_at_clear = false;
     assert(draws == drawn_before + 1 && powerons == on_before + 1 && poweroffs == off_before + 1);
     assert(last_mode == (clean ? MODE_GC16 : MODE_GL16));
     assert(last_waveform == (clean ? &E0470_FULL_WAVEFORM : direct ? &E0470_DIRECT_WAVEFORM : &E0470_TEXTTURN_NIGHT_WAVEFORM));
-    assert(mask_draws == selected_before + (clean ? 0 : 1) && clears == clears_before);
+    assert(mask_draws == selected_before + (clean ? 0 : 1) && clears == clears_before + clean);
     assert(!memcmp(hl->front_fb, hl->back_fb, FB_BYTES) && hl->waveform == &E0470_WAVEFORM);
 }
 
@@ -152,6 +168,77 @@ static void assert_fresh_night_cycle(EpdiyHighlevelState* hl) {
     assert_night_scan(hl, false, false);
     assert_night_scan(hl, true, false);
     assert_night_scan(hl, false, true);
+}
+
+static enum EpdDrawError explicit_cleanup(EpdiyHighlevelState* hl, int kind) {
+    if (!kind) return update_display_clean(hl);
+    if (kind == 1) return update_display_with(hl, &E0470_TEXTTURN_NIGHT_WAVEFORM, MODE_GL16);
+    return night_turn(hl, kind == 3);
+}
+
+static void expect_clean(EpdiyHighlevelState* hl, bool direct) {
+    memcpy(clear_prior, hl->back_fb, FB_BYTES);
+    memcpy(clear_target, hl->front_fb, FB_BYTES);
+    if (direct) display_prepare_direct_frame(clear_target, epd_width(), epd_height(), true);
+    memset(expected_old, 255, FB_BYTES);
+    check_clean_at_clear = check_old_at_draw = true;
+}
+
+static void check_physical_cleanup(EpdiyHighlevelState* hl) {
+    cleanup_every = 3;
+    // 手动和夜间入口都先实际清白，目标不动，白参考仅在清白之后建立，随后一次GC提交。
+    // Manual and night entries physically clear first without altering targets, establish white afterward, then commit one GC draw.
+    for (int kind = 0; kind < 4; ++kind) {
+        assert(update_display_full(hl) == EPD_DRAW_SUCCESS);
+        assert_night_scan(hl, false, false);
+        assert_night_scan(hl, true, false);
+        memset(hl->front_fb, kind == 3 ? 0x78 : 0x37, FB_BYTES);
+        memset(hl->back_fb, 0x66, FB_BYTES);
+        display_request_navigation_settle();
+        int before_clears = clears, before_draws = draws, before_full = full_draws;
+        unsigned before_selected = mask_draws;
+        expect_clean(hl, kind == 3);
+        assert(explicit_cleanup(hl, kind) == EPD_DRAW_SUCCESS);
+        check_clean_at_clear = check_old_at_draw = false;
+        assert(clears == before_clears + 1 && draws == before_draws + 1 && full_draws == before_full + 1);
+        assert(mask_draws == before_selected && last_mode == MODE_GC16 && last_waveform == &E0470_FULL_WAVEFORM && !last_area);
+        assert(!memcmp(hl->front_fb, clear_target, FB_BYTES) && !memcmp(hl->back_fb, clear_target, FB_BYTES));
+        assert(hl->waveform == &E0470_WAVEFORM);
+        before_clears = clears;
+        assert(update_display_with(hl, &E0470_TEXTTURN_NIGHT_WAVEFORM, MODE_GL16) == EPD_DRAW_SUCCESS);
+        assert(clears == before_clears && last_mode == MODE_GL16);
+        assert_fresh_night_cycle(hl);
+    }
+
+    // 清白之后画失败只能保留真实白参考及未知状态；上电失败不清白、不改参考，重试只清一次。
+    // A draw failure after clearing retains the real white reference and unknown state; power failure changes neither, and retries clear only once.
+    for (int kind = 0; kind < 4; ++kind) for (int power_failure = 0; power_failure < 2; ++power_failure) {
+        assert(update_display_full(hl) == EPD_DRAW_SUCCESS);
+        memset(hl->front_fb, 0xf0, FB_BYTES);
+        memset(hl->back_fb, 0x66, FB_BYTES);
+        display_request_navigation_settle();
+        int before_clears = clears, before_draws = draws;
+        fail_power = power_failure != 0;
+        fail_draw = !power_failure;
+        if (!power_failure) expect_clean(hl, kind == 3);
+        assert(explicit_cleanup(hl, kind) != EPD_DRAW_SUCCESS);
+        check_clean_at_clear = check_old_at_draw = false;
+        assert(clears == before_clears + !power_failure && draws == before_draws + !power_failure);
+        for (size_t b = 0; b < FB_BYTES; ++b) assert(hl->back_fb[b] == (power_failure ? 0x66 : 255));
+        for (size_t b = 0; b < FB_BYTES; ++b) assert(hl->front_fb[b] == 0xf0);
+        fail_power = fail_draw = false;
+        before_clears = clears; before_draws = draws;
+        expect_clean(hl, kind == 3);
+        assert(explicit_cleanup(hl, kind) == EPD_DRAW_SUCCESS);
+        check_clean_at_clear = check_old_at_draw = false;
+        assert(clears == before_clears + 1 && draws == before_draws + 1 && last_mode == MODE_GC16);
+        before_clears = clears;
+        assert(update_display_with(hl, &E0470_TEXTTURN_NIGHT_WAVEFORM, MODE_GL16) == EPD_DRAW_SUCCESS);
+        assert(last_mode == MODE_GL16 && clears == before_clears);
+        assert_fresh_night_cycle(hl);
+    }
+    memcpy(hl->front_fb, target, FB_BYTES);
+    assert(update_display_full(hl) == EPD_DRAW_SUCCESS);
 }
 
 static void check_night_cycles(EpdiyHighlevelState* hl) {
@@ -184,6 +271,7 @@ static void check_night_cycles(EpdiyHighlevelState* hl) {
     // Day effects, ordinary navigation, controls and minute bands leave the night interval untouched.
     assert(update_display_full(hl) == EPD_DRAW_SUCCESS);
     assert_night_scan(hl, false, false);
+    int clears_before_controls = clears;
     for (int i = 0; i < 32; ++i) {
         assert(update_display_text_turn(hl, false) == EPD_DRAW_SUCCESS && last_mode == MODE_GL16);
         assert(update_display_text_direct(hl, false) == EPD_DRAW_SUCCESS && last_mode == MODE_GL16);
@@ -196,6 +284,7 @@ static void check_night_cycles(EpdiyHighlevelState* hl) {
         assert(update_display_with(hl, &E0470_NAVIGATION_WAVEFORM, MODE_GL16) == EPD_DRAW_SUCCESS && last_mode == MODE_GL16);
         assert(update_display_mode(hl, MODE_GL16) == EPD_DRAW_SUCCESS && last_mode == MODE_GL16);
     }
+    assert(clears == clears_before_controls);
     assert_night_scan(hl, true, false);
     assert_night_scan(hl, false, true);
 
@@ -209,7 +298,7 @@ static void check_night_cycles(EpdiyHighlevelState* hl) {
             display_request_navigation_settle();
             assert(update_display_mode(hl, MODE_GL16) == EPD_DRAW_SUCCESS && last_mode == MODE_GC16);
         } else if (reset_kind == 1) {
-            assert(update_display_full(hl) == EPD_DRAW_SUCCESS);
+            assert(update_display_clean(hl) == EPD_DRAW_SUCCESS);
         } else if (reset_kind == 2) {
             assert(display_boot_white(hl) == EPD_DRAW_SUCCESS);
         } else if (reset_kind == 3) {
@@ -230,15 +319,21 @@ static void check_night_cycles(EpdiyHighlevelState* hl) {
         if (due) assert_night_scan(hl, true, false);
         memcpy(expected_old, hl->back_fb, FB_BYTES);
         memset(hl->front_fb, 0x0f, FB_BYTES);
-        int drawn_before = draws;
+        int drawn_before = draws, clears_before_failure = clears;
         fail_power = power_failure != 0; fail_draw = !power_failure;
         assert(night_turn(hl, due != 0) != EPD_DRAW_SUCCESS);
-        assert(!memcmp(hl->back_fb, expected_old, FB_BYTES));
+        if (due && !power_failure) {
+            for (size_t b = 0; b < FB_BYTES; ++b) assert(hl->back_fb[b] == 255);
+            assert(memcmp(hl->front_fb, hl->back_fb, FB_BYTES));
+        } else assert(!memcmp(hl->back_fb, expected_old, FB_BYTES));
         if (power_failure) assert(draws == drawn_before);
         else assert(last_mode == (due ? MODE_GC16 : MODE_GL16));
+        assert(clears == clears_before_failure + (due && !power_failure));
         fail_power = fail_draw = false;
         int clears_before = clears;
+        expect_clean(hl, due == 0);
         assert(night_turn(hl, due == 0) == EPD_DRAW_SUCCESS && last_mode == MODE_GC16);
+        check_clean_at_clear = check_old_at_draw = false;
         assert(clears == clears_before + 1 && !memcmp(hl->front_fb, hl->back_fb, FB_BYTES));
         assert_fresh_night_cycle(hl);
     }
@@ -303,6 +398,7 @@ int main(void) {
     memcpy(front, target, FB_BYTES);
     memset(back, 0x55, FB_BYTES);
     EpdiyHighlevelState hl = {.front_fb = front, .back_fb = back, .difference_fb = difference, .waveform = &E0470_WAVEFORM};
+    clear_hl = &hl;
     guard_draw_result(&hl, EPD_DRAW_SUCCESS);
     assert(!clocks && !clears && !draws && !memcmp(front, target, FB_BYTES));
     for (int i = 0; i < 7; ++i) {
@@ -360,6 +456,7 @@ int main(void) {
         }
     }
     check_night_cycles(&hl);
+    check_physical_cleanup(&hl);
     memcpy(front, target, FB_BYTES);
     cleanup_every = 3;
     update_display_full(&hl);
@@ -452,10 +549,13 @@ int main(void) {
     for (unsigned i = 0; i < sizeof(reader_entries) / sizeof(reader_entries[0]); ++i) {
         display_request_navigation_settle();
         before_draws = draws;
+        int clears_before = clears;
         assert(update_display_with(&hl, reader_entries[i], MODE_GL16) == EPD_DRAW_SUCCESS);
         assert(draws == before_draws + 1 && last_waveform == &E0470_FULL_WAVEFORM && last_mode == MODE_GC16);
+        assert(clears == clears_before + (reader_entries[i] == &E0470_TEXTTURN_NIGHT_WAVEFORM));
         assert(update_display_with(&hl, reader_entries[i], MODE_GL16) == EPD_DRAW_SUCCESS);
         assert(last_waveform == reader_entries[i] && last_mode == MODE_GL16);
+        assert(clears == clears_before + (reader_entries[i] == &E0470_TEXTTURN_NIGHT_WAVEFORM));
     }
     memcpy(front,target,FB_BYTES);memset(back,0x66,FB_BYTES);
     display_request_navigation_settle();before_draws=draws;
@@ -509,6 +609,7 @@ int main(void) {
     assert(update_display_mode(&hl, MODE_DU) == EPD_DRAW_POWER_NOT_READY);
     assert(update_display_mode(&hl, MODE_GL16) == EPD_DRAW_POWER_NOT_READY);
     assert(update_display_from_white(&hl) == EPD_DRAW_POWER_NOT_READY);
+    assert(update_display_clean(&hl) == EPD_DRAW_POWER_NOT_READY);
     assert(display_boot_white(&hl) == EPD_DRAW_POWER_NOT_READY);
     assert(update_display_area_quiet(&hl, (EpdRect){1,2,3,4}) == EPD_DRAW_POWER_NOT_READY);
     assert(update_display_area_with(&hl, &E0470_WAVEFORM, MODE_GL16, (EpdRect){1,2,3,4}) == EPD_DRAW_POWER_NOT_READY);
@@ -571,5 +672,5 @@ int main(void) {
     update_display_area_quiet(&hl, (EpdRect){1,2,3,4});
     assert(mask_draws == clean_count);
     assert(allocations == 0);
-    puts("display: shared successful night cycles 1/3/5/30/off, excluded day/controls/footer, cleanup resets, failed retry, actual references and underrun recovery passed");
+    puts("display: physical night cleanup preserves targets and establishes actual white, shared cycles 1/3/5/30/off, excluded day/controls/footer, successful resets, failed retry and underrun recovery passed");
 }

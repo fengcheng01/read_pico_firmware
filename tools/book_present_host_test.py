@@ -29,7 +29,7 @@ harness = r'''
 #define portMAX_DELAY 1
 #define TAG "test"
 typedef enum { APP_REDRAW_NONE,APP_REDRAW_DONE,APP_REDRAW_PAGE,APP_REDRAW_FULL,APP_REDRAW_AREA } app_redraw_t;
-typedef enum { SHELF,READING,TOC,LAYOUT } book_view_t;
+typedef enum { SHELF,READING,TOC,LAYOUT,SEARCH } book_view_t;
 enum EpdDrawError { EPD_DRAW_SUCCESS=0, EPD_DRAW_FAILURE=1 };
 typedef struct { int x,y,width,height; } EpdRect;
 typedef struct { int* hl; uint8_t* fb; } app_ctx_t;
@@ -38,6 +38,8 @@ static book_view_t s_view,s_presented_view;
 static bool s_presented_valid,s_presented_reading_overlay,s_text_turn,s_image_open,s_toolbar,s_clear_confirm,direct;
 static bool s_quote_selecting,s_ended;
 static bool s_reader_target_night,s_reader_target_binary;
+static bool s_search_dirty,s_search_fast;
+static int64_t s_search_edit_ms, processing_us;
 static char* s_text;
 static blk_t* s_blocks;
 static size_t s_block_count;
@@ -47,7 +49,7 @@ static int64_t s_du_ms;
 static void* s_prep_done;
 static char s_footer_status[8];
 typedef int EpdWaveform;
-static int E0470_WAVEFORM,E0470_NAVIGATION_WAVEFORM,E0470_TEXTTURN_WAVEFORM,E0470_TEXTTURN_NIGHT_WAVEFORM;
+static int E0470_WAVEFORM,E0470_NAVIGATION_WAVEFORM,E0470_TEXTTURN_WAVEFORM,E0470_TEXTTURN_NIGHT_WAVEFORM,E0470_DIRECT_WAVEFORM;
 static unsigned fulls,turns,directs,navs,areas,renders,joins,entries;
 static unsigned quantizes,serial,last_render_serial,last_quantize_serial,last_draw_serial;
 static uint8_t* last_quantize_frame;
@@ -56,7 +58,7 @@ static bool last_quantize_night;
 static void display_request_navigation_settle(void) { entries++; }
 static bool fail,prepare,night_setting,last_direct_night,last_standard_night;
 static bool last_page_night;
-static int64_t esp_timer_get_time(void) { return 0; }
+static int64_t esp_timer_get_time(void) { return processing_us; }
 static int epd_width(void) { return 16; }
 static int epd_height(void) { return 8; }
 static void finish_reader_frame(app_ctx_t* ctx,uint8_t* fb);
@@ -75,6 +77,7 @@ static bool app_settings_book_direct(void) {return direct;}
 static bool app_settings_book_night(void) {return night_setting;}
 static enum EpdDrawError result(void) {last_draw_serial=++serial;return fail?EPD_DRAW_FAILURE:EPD_DRAW_SUCCESS;}
 static enum EpdDrawError update_display_full(int* h) {(void)h;fulls++;return result();}
+static enum EpdDrawError update_display_clean(int* h) {(void)h;fulls++;return result();}
 static enum EpdDrawError update_display_text_turn(int* h,bool night) {(void)h;last_standard_night=night;turns++;return result();}
 static enum EpdDrawError update_display_text_direct(int* h,bool night) {(void)h;last_direct_night=night;directs++;return result();}
 static enum EpdDrawError update_display_with(int* h,const int* w,int mode) {
@@ -82,7 +85,7 @@ static enum EpdDrawError update_display_with(int* h,const int* w,int mode) {
  last_page_night=w==&E0470_TEXTTURN_NIGHT_WAVEFORM;navs++;return result();
 }
 static enum EpdDrawError update_display_mode(int* h,int mode) {(void)h;(void)mode;assert(0);return result();}
-static enum EpdDrawError update_display_area_with(int* h,const int* w,int mode,EpdRect r) {(void)h;(void)r;assert(w==(s_view==READING&&s_text?(s_reader_target_night?&E0470_TEXTTURN_NIGHT_WAVEFORM:&E0470_TEXTTURN_WAVEFORM):&E0470_WAVEFORM)&&mode==MODE_GL16);areas++;return result();}
+static enum EpdDrawError update_display_area_with(int* h,const int* w,int mode,EpdRect r) {(void)h;(void)r;assert(w==(s_view==SEARCH&&s_search_fast?&E0470_DIRECT_WAVEFORM:s_view==READING&&s_text?(s_reader_target_night?&E0470_TEXTTURN_NIGHT_WAVEFORM:&E0470_TEXTTURN_WAVEFORM):&E0470_WAVEFORM)&&mode==MODE_GL16);areas++;return result();}
 static EpdRect ui_rect_union(EpdRect a,EpdRect b) {(void)b;return a;}
 static void guard_draw_result(int* h,enum EpdDrawError err) {(void)h;(void)err;}
 ''' + production + r'''
@@ -117,7 +120,7 @@ int main(void) {
    s_presented_view=SHELF;s_presented_valid=true;
    present(&ctx,APP_REDRAW_PAGE);
    assert(navs==before_nav+1&&entries==before_entries+1&&fulls==before_full);
-   assert(!last_page_night&&s_reader_target_night==(bool)night&&s_reader_target_binary);
+   assert(last_page_night==(bool)night&&s_reader_target_night==(bool)night&&s_reader_target_binary);
    assert(quantizes==before_quantize+1&&renders==before_render+1);
    assert(last_quantize_frame==ctx.fb&&last_quantize_width==epd_width()&&last_quantize_height==epd_height());
    assert(last_quantize_night==(bool)night&&last_render_serial<last_quantize_serial&&last_quantize_serial<last_draw_serial);
@@ -204,6 +207,16 @@ int main(void) {
  s_view=LAYOUT;unsigned before_entries=entries;present(&ctx,APP_REDRAW_PAGE);
  assert(entries==before_entries+1);present(&ctx,APP_REDRAW_PAGE);assert(entries==before_entries+1);
  s_view=TOC;present(&ctx,APP_REDRAW_PAGE);assert(entries==before_entries+2);
+ // 旧队列采样不用于停输计时；只有成功闲置定稿消费待定稿状态，失败保留并延后重试。
+ // Ignore old queued sample time for idle timing; only a successful idle settle consumes pending state, with failed settles retained and deferred.
+ s_view=s_presented_view=SEARCH;s_reader_target_night=false;
+ s_search_dirty=s_search_fast=true;processing_us=8000000;
+ unsigned before_areas=areas;present(&ctx,APP_REDRAW_AREA);
+ assert(areas==before_areas+1&&s_search_dirty&&!s_search_fast&&s_search_edit_ms==8000);
+ fail=true;processing_us=11000000;present(&ctx,APP_REDRAW_AREA);
+ assert(s_search_dirty&&s_search_edit_ms==11000);
+ fail=false;processing_us=14000000;present(&ctx,APP_REDRAW_AREA);
+ assert(!s_search_dirty&&!s_search_fast&&s_search_edit_ms==14000);
  puts("reader present: view/overlay-entry requests and failed retry, manual cleanup, preparation join, day/night binary direct frames before entry/redraw/turn, grayscale image fallback and ordinary-turn preservation PASS");
 }
 '''

@@ -53,6 +53,7 @@ extern const EpdWaveform E0470_WAVEFORM, E0470_FULL_WAVEFORM, E0470_GRAY8_WAVEFO
 extern const EpdWaveform E0470_FOLLOW_WAVEFORM;
 extern const EpdWaveform E0470_NAVIGATION_WAVEFORM;
 extern const EpdWaveform E0470_TEXTTURN_WAVEFORM, E0470_TEXTTURN_NIGHT_WAVEFORM;
+extern const EpdWaveform E0470_DIRECT_WAVEFORM;
 int epd_width(void);
 int epd_height(void);
 int epd_rotated_display_width(void);
@@ -71,6 +72,7 @@ void epd_draw_rotated_image(EpdRect rect, const uint8_t* image, uint8_t* fb);
 uint8_t* epd_hl_get_framebuffer(EpdiyHighlevelState* hl);
 enum EpdDrawError update_display_mode(EpdiyHighlevelState* hl, enum EpdDrawMode mode);
 enum EpdDrawError update_display_full(EpdiyHighlevelState* hl);
+enum EpdDrawError update_display_clean(EpdiyHighlevelState* hl);
 enum EpdDrawError update_display_text_turn(EpdiyHighlevelState* hl, bool white_on_black);
 enum EpdDrawError update_display_text_direct(EpdiyHighlevelState* hl, bool white_on_black);
 enum EpdDrawError update_display_white(EpdiyHighlevelState* hl);

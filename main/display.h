@@ -48,13 +48,16 @@ enum EpdDrawError update_display_from_white(EpdiyHighlevelState* hl);
 enum EpdDrawError update_display_from_white_with(
     EpdiyHighlevelState* hl, const EpdWaveform* waveform, enum EpdDrawMode mode
 );
-/// 下一次导航整页用厂家GC16清理一次；成功消费，失败保留，不用于按钮或普通翻页。
-/// Arm one vendor GC16 cleaning at the next whole-page navigation; consume on success, retain on failure, never arm for controls or ordinary turns.
+/// 下一次导航整页用厂家GC16清理一次，夜间先物理清白；成功消费，失败保留，不用于按钮或普通翻页。
+/// Arm one vendor GC16 cleaning at the next whole-page navigation, physically clearing first for night; consume on success, retain on failure, never arm for controls or ordinary turns.
 void display_request_navigation_settle(void);
 /// 把前缓冲铺白再 GC16 全刷，物理屏回到白底。
 /// Paint the front buffer white and GC16 the panel back to white.
 enum EpdDrawError update_display_white(EpdiyHighlevelState* hl);
 enum EpdDrawError update_display_full(EpdiyHighlevelState* hl);
+/// 物理清白后用厂家GC16重画保留的目标；夜间显式清理使用，普通翻页不调用。
+/// Physically clear white, then redraw the retained target with vendor GC16; for explicit night cleanup, never ordinary turns.
+enum EpdDrawError update_display_clean(EpdiyHighlevelState* hl);
 enum EpdDrawError update_display_with(
     EpdiyHighlevelState* hl, const EpdWaveform* waveform, enum EpdDrawMode mode
 );

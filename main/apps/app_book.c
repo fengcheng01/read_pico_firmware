@@ -13,6 +13,10 @@
  * Frozen: Hardware feedback showed a body-only black block with white surroundings; READING and its image/tool/confirmation/end overlays now invert the whole screen, while TOC, reader settings and other pages stay day-themed.
  * 冻结：先组合完整日间帧再反色一次，预绘缓存保持日间；局部编辑按真实front内存主题恢复日间再转回，不把已反色目标重复反色。
  * Frozen: Compose a complete day frame before one inversion and keep preparation caches day-themed; local edits return the actual front memory to day before restoring its target theme, without reinverting an already-inverted target.
+ * 冻结：用户反馈夜间清理后仍留设置轮廓，夜间手动、布局和到期清理先物理清白再呈现真实正文；普通翻页与日间保持原路径。
+ * Frozen: Settings outlines remain after night cleanup on hardware; night manual, layout and due cleaning physically clear white before presenting the actual body, retaining ordinary turns and day paths.
+ * 冻结：用户反馈搜索点击迟滞，搜索入口和键盘不刷按下态；完整轻点后仅输入栏黑白直刷，停输后局部灰阶定稿，匹配仍只在应用执行。
+ * Frozen: Search taps lag on hardware; search entry and keyboard omit pressed scans, complete taps update only the input in binary direct, idle settles local gray, and matching still runs only on Apply.
  * 冻结：阅读设置/工具条的清残影先退出覆盖层，再清当前正文，避免清的是菜单而非阅读页。
  * Frozen: Cleaning from reader settings/tools first closes overlays, then cleans the current body instead of the menu.
  * 冻结：0.5.19实机退化后用户明确优先无闪速度，纯文字直刷改厂家黑白DU；标准及含图章节保留灰阶，夜间周期清理由显示层按用户档位执行。
@@ -212,6 +216,8 @@ static int s_pressed_control = -1;
 static int64_t s_du_ms;
 static unsigned s_du_count;
 static EpdRect s_du_area;
+static bool s_search_dirty, s_search_fast;
+static int64_t s_search_edit_ms;
 static SemaphoreHandle_t s_draw_lock, s_prep_done;
 static TaskHandle_t s_prep_task;
 static uint8_t* s_next_fb;
@@ -413,6 +419,8 @@ static EpdRect search_rect(int id) {
     if (id < 43) return ui_row_rect(id - 40, 3, 808, 80);
     return ui_bar_rect(id - 43, 2);
 }
+static EpdRect search_input_rect(void) { return (EpdRect){UI_MARGIN, 190, ui_content_width(), 168}; }
+static void draw_search_input(uint8_t* fb);
 static size_t selected_count(void) {
     size_t selected = 0;
     for (int i = 0; i < s_count; ++i) if (s_shelf[i].selected) ++selected;
@@ -434,12 +442,14 @@ static void search_begin(void) {
     s_search_parent = s_view;
     memcpy(s_search_draft, s_query, sizeof(s_query));
     s_view = SEARCH;
+    s_search_dirty = s_search_fast = false;
 }
 static void refresh_search_matches(void) {
     for (int i = 0; i < s_count; ++i)
         s_shelf[i].search_match = read_pico_search_match(s_shelf[i].name, s_query);
 }
 static void search_finish(app_ctx_t* ctx, bool apply) {
+    s_search_dirty = s_search_fast = false;
     s_view = s_search_parent;
     if (apply) {
         memcpy(s_query, s_search_draft, sizeof(s_query));
@@ -460,7 +470,7 @@ static app_redraw_t search_action(app_ctx_t* ctx, int id) {
     } else if (id == 41 && len) s_search_draft[len - 1] = 0;
     else if (id == 42) s_search_draft[0] = 0;
     else if (id == 43 || id == 44) { search_finish(ctx, id == 44); return APP_REDRAW_PAGE; }
-    return APP_REDRAW_AREA;
+    return len == strlen(s_search_draft) ? APP_REDRAW_NONE : APP_REDRAW_AREA;
 }
 static bool pending_reserve(const char* path) {
     if (pending_find(path)) return true;
@@ -613,9 +623,8 @@ static void draw_manage(uint8_t* fb) {
         draw_control(fb, manage_rect(2, 3), "删除文件", 402);
     }
 }
-static void draw_search(uint8_t* fb) {
-    ui_clear_page(fb);
-    ui_draw_header(fb, "搜索图书", "输入拼音首字母、完整拼音或英文");
+static void draw_search_input(uint8_t* fb) {
+    ui_clear_rect_fast(fb, search_input_rect());
     EpdRect field = {UI_MARGIN, 200, ui_content_width(), 88};
     ui_draw_round_rect(fb, field, UI_BTN_RADIUS, UI_GRAY_BLACK);
     const char* tail = s_search_draft;
@@ -624,6 +633,11 @@ static void draw_search(uint8_t* fb) {
     char count[48];
     snprintf(count, sizeof(count), "%u/64 · 清空后应用可显示全部", (unsigned)strlen(s_search_draft));
     ui_text(fb, UI_MARGIN, 310, UI_PX_CAPTION, count, EPD_DRAW_ALIGN_LEFT, false);
+}
+static void draw_search(uint8_t* fb) {
+    ui_clear_page(fb);
+    ui_draw_header(fb, "搜索图书", "输入拼音首字母、完整拼音或英文");
+    draw_search_input(fb);
     const char* keys = search_keys();
     for (int i = 0; i < 40; ++i) {
         char label[2] = {keys[i], 0};
@@ -1061,6 +1075,7 @@ finished:
 static bool present(app_ctx_t* ctx, app_redraw_t redraw) {
     if (redraw == APP_REDRAW_NONE || redraw == APP_REDRAW_DONE) return true;
     int64_t start = esp_timer_get_time();
+    const bool search_edit = s_view == SEARCH && s_search_fast;
     if (redraw == APP_REDRAW_PAGE || redraw == APP_REDRAW_FULL) render(ctx, ctx->fb);
     // 初次进正文也提交真实黑白帧，避免入口灰阶与后续DU目标不同。
     // Body entries also commit actual black/white frames so entry gray never differs from subsequent DU targets.
@@ -1080,12 +1095,12 @@ static bool present(app_ctx_t* ctx, app_redraw_t redraw) {
         s_presented_reading_overlay && !reading_overlay;
     if (redraw == APP_REDRAW_FULL) {
         s_text_turn = false;
-        err = update_display_full(ctx->hl);
+        err = s_reader_target_night ? update_display_clean(ctx->hl) : update_display_full(ctx->hl);
     }
     else if ((body_entry || view_entry || overlay_exit) && APP_PAGE_REFRESH_MODE == MODE_GL16) {
         s_text_turn = false;
         display_request_navigation_settle();
-        err = update_display_with(ctx->hl, &E0470_NAVIGATION_WAVEFORM, MODE_GL16);
+        err = update_display_with(ctx->hl, s_reader_target_night ? &E0470_TEXTTURN_NIGHT_WAVEFORM : &E0470_NAVIGATION_WAVEFORM, MODE_GL16);
     }
     else if (redraw == APP_REDRAW_AREA) {
         // 正文单遍快速翻页，控件仅局推。/ Present body turns once with the fast profile; controls stay local.
@@ -1098,9 +1113,11 @@ static bool present(app_ctx_t* ctx, app_redraw_t redraw) {
             // 阅读控件使用原灰阶表但不进入通用整页周期，字号重绘也不算翻页。
             // Reader controls retain their gray table outside generic page counting; size redraws never count as turns.
             const EpdWaveform* waveform = &E0470_WAVEFORM;
-            if ((s_mode & 0xF) == MODE_GL16 && s_view == READING && s_text)
+            if (s_view == SEARCH && s_search_fast) waveform = &E0470_DIRECT_WAVEFORM;
+            else if ((s_mode & 0xF) == MODE_GL16 && s_view == READING && s_text)
                 waveform = s_reader_target_night ? &E0470_TEXTTURN_NIGHT_WAVEFORM : &E0470_TEXTTURN_WAVEFORM;
             err = update_display_area_with(ctx->hl, waveform, s_mode, s_area);
+            s_search_fast = false;
         }
     }
     else if (APP_PAGE_REFRESH_MODE == MODE_GL16)
@@ -1117,10 +1134,17 @@ static bool present(app_ctx_t* ctx, app_redraw_t redraw) {
     ESP_LOGI(TAG, "present draw=%lld display=%lld join=%lld ms", (drawn - start) / 1000,
              (displayed - drawn) / 1000, (esp_timer_get_time() - displayed) / 1000);
     guard_draw_result(ctx->hl, err);
+    // 队列采样时间可能陈旧；从实际呈现结束计时，失败定稿也等待下一次闲置再重试。
+    // Queued sample times can be stale; time from the actual present, and retry failed settling only after another idle interval.
+    if (s_view == SEARCH && s_search_dirty && redraw == APP_REDRAW_AREA)
+        s_search_edit_ms = esp_timer_get_time() / 1000;
     if (err == EPD_DRAW_SUCCESS) {
         s_presented_view = s_view;
         s_presented_reading_overlay = reading_overlay;
         s_presented_valid = true;
+        if (s_view == SEARCH && (redraw == APP_REDRAW_PAGE || redraw == APP_REDRAW_FULL ||
+            (redraw == APP_REDRAW_AREA && !search_edit)))
+            s_search_dirty = s_search_fast = false;
     }
     s_mode = MODE_GL16;
     return true;
@@ -2158,7 +2182,16 @@ static app_redraw_t action_at(app_ctx_t* ctx, uint16_t x, uint16_t y) {
     if (s_view == SEARCH) {
         for (int i = 0; i < 45; ++i) if (ui_rect_hit(search_rect(i), x, y)) {
             app_redraw_t result = search_action(ctx, i);
-            if (result == APP_REDRAW_AREA) { render(ctx, ctx->fb); s_area = (EpdRect){UI_MARGIN, 190, ui_content_width(), 850}; s_mode = MODE_GL16; }
+            if (result == APP_REDRAW_AREA) {
+                lock_draw();
+                draw_search_input(ctx->fb);
+                s_area = search_input_rect();
+                EpdRect physical = ui_rotate_rect_to_fb(s_area);
+                display_prepare_direct_area(ctx->fb, epd_width(), epd_height(), physical.x, physical.y, physical.width, physical.height);
+                unlock_draw();
+                s_mode = MODE_GL16;
+                s_search_dirty = s_search_fast = true;
+            }
             return result;
         }
         return APP_REDRAW_NONE;
@@ -2317,6 +2350,7 @@ static void on_enter(app_ctx_t* ctx) {
     s_du_count = 0;
     s_size_settle_ms = 0;
     s_poll_ms = 0;
+    s_search_dirty = s_search_fast = false;
     s_sync_note[0] = 0;
     if (!cached) {
         copy_text(s_storage, sizeof(s_storage), "正在检测存储…");
@@ -2570,7 +2604,11 @@ static app_redraw_t gesture_event(app_ctx_t* ctx, const ui_gesture_event_t* ev) 
     int start = control_at(ctx, ev->x0, ev->y0, &start_rect);
     int end = control_at(ctx, ev->x, ev->y, &end_rect);
     if (ev->type == UI_GESTURE_PRESS) {
-        if (start >= 1000) { s_pressed_control = -1; return APP_REDRAW_NONE; }
+        if (start >= 1000 || s_view == SEARCH ||
+            ((s_view == SHELF || s_view == BULK) && start == 112)) {
+            s_pressed_control = -1;
+            return APP_REDRAW_NONE;
+        }
         s_pressed_control = start;
         return start >= 0 ? paint_control(ctx, start_rect) : APP_REDRAW_NONE;
     }
@@ -2600,6 +2638,7 @@ static app_redraw_t gesture_event(app_ctx_t* ctx, const ui_gesture_event_t* ev) 
     if (ev->type == UI_GESTURE_TAP && !s_scan_pending) {
         if (start >= 0 && start == end) {
             app_redraw_t result = action_at(ctx, ev->x0, ev->y0);
+            if (s_view == SEARCH) return result;
             return result != APP_REDRAW_NONE ? result : paint_control(ctx, start_rect);
         }
         if (start < 0 && end < 0 && s_view == READING && !s_clear_confirm)
@@ -2765,6 +2804,15 @@ static app_redraw_t on_tick(app_ctx_t* ctx) {
             }
         }
         return APP_REDRAW_PAGE;
+    }
+    if (s_view == SEARCH && s_search_dirty && ctx->now_ms - s_search_edit_ms >= UI_SETTLE_IDLE_MS) {
+        lock_draw();
+        draw_search_input(ctx->fb);
+        unlock_draw();
+        s_search_fast = false;
+        s_area = search_input_rect();
+        s_mode = MODE_GL16;
+        return APP_REDRAW_AREA;
     }
     if (s_du_count && (s_du_count >= UI_SETTLE_DU_MAX ||
         ctx->now_ms - s_du_ms >= UI_SETTLE_IDLE_MS)) {

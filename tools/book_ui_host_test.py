@@ -147,6 +147,8 @@ static char s_manage_message[128];
 typedef enum {SHELF,READING,TOC,LAYOUT,TAP_ZONES,MANAGE,BULK,SEARCH} book_view_t;
 static book_view_t s_view,s_search_parent;
 static bool s_presented_valid,s_text_turn;
+static bool s_search_dirty,s_search_fast;
+static bool s_reader_target_night,s_reader_target_binary,s_presented_reading_overlay;
 #define UI_KEY_1 1
 #define UI_KEY_2 2
 #define UI_KEY_3 3

@@ -244,6 +244,142 @@ class PreviewTests(unittest.TestCase):
         self.assertEqual(set(pixels[::684]), {0})
         self.assertEqual(set(pixels[683::684]), {0})
 
+    def open_fixture_search(self):
+        self.preview.command("fixture 1")
+        self.settle()
+        self.preview.command("tap 220 1140")
+        self.settle()
+        before = self.state()
+        self.preview.command("tap 544 212")
+        self.assertEqual(self.state()["presents"], before["presents"] + 1)
+        self.assertEqual(self.state()["gc_presents"], before["gc_presents"] + 1)
+
+    def test_search_fast_input_and_idle_settle(self):
+        self.open_fixture_search()
+        empty = self.reader_pixels()
+        before = self.state()
+        for x in (67, 128, 189, 250, 311, 372, 433):
+            self.preview.command(f"tap {x} 432")
+            state = self.state()
+            self.assertEqual(state["presents"], before["presents"] + 1)
+            self.assertEqual(state["refresh_wave"], 6)
+            self.assertEqual(state["refresh_area"], [40, 190, 604, 168])
+            self.assertEqual(state["gc_presents"], before["gc_presents"])
+            self.assertEqual(state["physical_clears"], before["physical_clears"])
+            self.assertEqual(state["body_presents"], before["body_presents"])
+            before = state
+        quick = self.reader_pixels()
+        field = [y * 684 + x for y in range(190, 358) for x in range(40, 644)]
+        changed = [i for i, (a, b) in enumerate(zip(empty, quick)) if a != b]
+        self.assertTrue(changed)
+        self.assertTrue(all(190 <= i // 684 < 358 and 40 <= i % 684 < 644 for i in changed))
+        self.assertEqual({quick[i] for i in field}, {0, 255})
+        self.preview.command("time_step 1")
+        self.assertEqual(self.state()["presents"], before["presents"])
+        self.preview.command("time_step 1")
+        gray = self.reader_pixels()
+        self.assertEqual(self.state()["presents"], before["presents"] + 1)
+        self.assertEqual(self.state()["refresh_wave"], 0)
+        self.assertEqual(self.state()["refresh_area"], [40, 190, 604, 168])
+        self.assertGreater(len({gray[i] for i in field}), 2)
+        self.assertEqual(quick, bytes((0 if value < 128 else 255) if
+            190 <= i // 684 < 358 and 40 <= i % 684 < 644 else value for i, value in enumerate(gray)))
+        settled = self.state()["presents"]
+        self.preview.command("time_step 3")
+        self.assertEqual(self.state()["presents"], settled)
+        # 已经过一次定稿后，新的输入仍完整等待两秒，不能继承旧采样时间。
+        # A new edit after settling still gets a full idle interval instead of inheriting an old sampled timestamp.
+        self.preview.command("tap 494 432")
+        self.assertEqual(self.state()["presents"], settled + 1)
+        self.assertEqual(self.state()["refresh_wave"], 6)
+        self.preview.command("tick")
+        self.assertEqual(self.state()["presents"], settled + 1)
+
+    def test_search_limits_noops_and_cancel_apply(self):
+        self.open_fixture_search()
+        empty = self.reader_pixels()
+        before = self.state()["presents"]
+        for _ in range(64):
+            self.preview.command("tap 67 432")
+        self.assertEqual(self.state()["presents"], before + 64)
+        self.assertEqual(self.state()["refresh_wave"], 6)
+        full = self.reader_pixels()
+        self.preview.command("tap 128 432")
+        self.assertEqual(self.state()["presents"], before + 64)
+        self.assertEqual(self.reader_pixels(), full)
+        for _ in range(64):
+            self.preview.command("tap 342 848")
+        before = self.state()["presents"]
+        self.preview.command("tap 342 848")
+        self.preview.command("tap 544 848")
+        self.assertEqual(self.state()["presents"], before)
+        self.preview.command("time_step 2")
+        self.assertEqual(self.reader_pixels(), empty)
+        self.preview.command("tap 67 432")
+        self.preview.command("tap 136 848")
+        self.preview.command("tap 544 848")
+        self.preview.command("time_step 2")
+        self.assertEqual(self.reader_pixels(), empty)
+        self.preview.command("tap 67 432")
+        before = self.state()
+        self.preview.command("tap 180 1140")
+        self.assertEqual(self.state()["presents"], before["presents"] + 1)
+        self.assertEqual(self.state()["gc_presents"], before["gc_presents"] + 1)
+        self.preview.command("tap 544 212")
+        self.assertEqual(self.reader_pixels(), empty)
+        before = self.state()
+        self.preview.command("tap 424 1140")
+        self.assertEqual(self.state()["presents"], before["presents"] + 1)
+        self.assertEqual(self.state()["gc_presents"], before["gc_presents"] + 1)
+
+    def test_search_cancelled_gestures_do_not_type_or_scan(self):
+        self.open_fixture_search()
+        empty = self.reader_pixels()
+        before = self.state()["presents"]
+        self.preview.command("hold 67 432")
+        self.preview.command("swipe 67 432 97 432")
+        self.preview.command("swipe 67 432 128 432")
+        self.assertEqual(self.reader_pixels(), empty)
+        self.assertEqual(self.state()["presents"], before)
+
+    def check_reader_night_manual_clean(self, direct):
+        self.open_fixture_reader()
+        self.reader_display_settings()
+        self.preview.command("tap 300 676")
+        if direct:
+            self.preview.command("tap 300 1006")
+        self.preview.command("tap 424 1140")
+        for _ in range(64):
+            self.preview.command("tick")
+        self.preview.command("key 1")
+        self.preview.command("key 1")
+        self.preview.command("key 2")
+        body = self.reader_pixels()
+        self.assertEqual(self.state()["night_turns"], 1)
+        self.reader_display_settings()
+        self.assertEqual(self.reader_pixels()[0], 255)
+        before = self.state()
+        self.preview.command("tap 170 1140")
+        self.assertEqual(self.reader_pixels(), body)
+        self.assert_reader_dark_margins()
+        self.assertEqual(self.state()["physical_clears"], before["physical_clears"] + 1)
+        self.assertEqual(self.state()["gc_presents"], before["gc_presents"] + 1)
+        self.assertEqual(self.state()["refresh_mode"], 2)
+        self.assertEqual(self.state()["night_turns"], 0)
+        if direct:
+            self.assertEqual(set(self.reader_pixels()), {0, 255})
+        before = self.state()
+        self.preview.command("key 2")
+        self.assertEqual(self.state()["physical_clears"], before["physical_clears"])
+        self.assertEqual(self.state()["gc_presents"], before["gc_presents"])
+        self.assertEqual(self.state()["night_turns"], 1)
+
+    def test_reader_night_manual_clean_standard(self):
+        self.check_reader_night_manual_clean(False)
+
+    def test_reader_night_manual_clean_direct(self):
+        self.check_reader_night_manual_clean(True)
+
     def test_reader_night_whole_frame_and_cached_turns(self):
         self.open_fixture_reader()
         day = self.reader_pixels()
@@ -339,6 +475,7 @@ class PreviewTests(unittest.TestCase):
                 self.settle()
                 self.assertEqual(self.state()["night_turns"], turn % 3)
                 self.assertEqual(self.state()["gc_presents"], state["gc_presents"] + turn // 3)
+                self.assertEqual(self.state()["physical_clears"], state["physical_clears"] + turn // 3)
                 self.assertEqual(self.state()["refresh_mode"], 2 if turn % 3 == 0 else 5)
                 self.assert_reader_dark_margins()
                 if direct:
