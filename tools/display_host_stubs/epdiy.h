@@ -7,7 +7,7 @@
 #include <stdint.h>
 typedef struct { int x, y, width, height; } EpdRect;
 typedef struct { int id; } EpdWaveform;
-enum EpdDrawMode { MODE_DU = 1, MODE_GC16 = 2, MODE_GL16 = 5, MODE_PACKING_1PPB_DIFFERENCE = 0x100 };
+enum EpdDrawMode { MODE_DU = 1, MODE_GC16 = 2, MODE_GL16 = 5, MODE_PACKING_1PPB_DIFFERENCE = 0x100, PREVIOUSLY_WHITE = 0x200 };
 enum EpdDrawError { EPD_DRAW_SUCCESS = 0, EPD_DRAW_EMPTY_LINE_QUEUE = 1, EPD_DRAW_OTHER_ERROR = 2, EPD_DRAW_POWER_NOT_READY = 0x800 };
 void epd_poweron(void);
 void epd_poweroff(void);

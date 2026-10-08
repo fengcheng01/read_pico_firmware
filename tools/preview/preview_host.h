@@ -53,7 +53,7 @@ extern const EpdWaveform E0470_WAVEFORM, E0470_FULL_WAVEFORM, E0470_GRAY8_WAVEFO
 extern const EpdWaveform E0470_FOLLOW_WAVEFORM;
 extern const EpdWaveform E0470_NAVIGATION_WAVEFORM;
 extern const EpdWaveform E0470_TEXTTURN_WAVEFORM, E0470_TEXTTURN_NIGHT_WAVEFORM;
-extern const EpdWaveform E0470_DIRECT_WAVEFORM;
+extern const EpdWaveform E0470_DIRECT_WAVEFORM, E0470_CROSSMUX_WAVEFORM;
 int epd_width(void);
 int epd_height(void);
 int epd_rotated_display_width(void);
@@ -75,6 +75,8 @@ enum EpdDrawError update_display_full(EpdiyHighlevelState* hl);
 enum EpdDrawError update_display_clean(EpdiyHighlevelState* hl);
 enum EpdDrawError update_display_text_turn(EpdiyHighlevelState* hl, bool white_on_black);
 enum EpdDrawError update_display_text_direct(EpdiyHighlevelState* hl, bool white_on_black);
+typedef enum { DISPLAY_CROSSMUX_TURN, DISPLAY_CROSSMUX_ENTRY, DISPLAY_CROSSMUX_CLEAN, DISPLAY_CROSSMUX_REDRAW } display_crossmux_action_t;
+enum EpdDrawError update_display_night_crossmux(EpdiyHighlevelState* hl, display_crossmux_action_t action);
 enum EpdDrawError update_display_white(EpdiyHighlevelState* hl);
 enum EpdDrawError update_display_with(EpdiyHighlevelState*, const EpdWaveform*, enum EpdDrawMode);
 enum EpdDrawError update_display_from_white(EpdiyHighlevelState* hl);

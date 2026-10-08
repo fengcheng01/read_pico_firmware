@@ -41,7 +41,8 @@ static bool s_navigation_entry;
 static bool menu_open = true, white_exit;
 static int menu_leaf, unsupported = -1, asset = -1, refresh_mode, presents, gc_presents;
 static unsigned s_night_body_turns, body_presents, quiet_presents, night_area_presents;
-static unsigned physical_clears;
+static unsigned physical_clears, crossmux_presents;
+static int crossmux_action = -1;
 static EpdRect refresh_area;
 static int refresh_wave;
 static char font_path[TTF_FONT_PATH_MAX];
@@ -58,6 +59,7 @@ const EpdWaveform E0470_NAVIGATION_WAVEFORM = {4};
 const EpdWaveform E0470_TEXTTURN_NIGHT_WAVEFORM = {5};
 const EpdWaveform E0470_TEXTTURN_WAVEFORM = {7};
 const EpdWaveform E0470_DIRECT_WAVEFORM = {6};
+const EpdWaveform E0470_CROSSMUX_WAVEFORM = {8};
 static int64_t s_time_bias_ms;
 
 int64_t esp_timer_get_time(void) {
@@ -159,6 +161,27 @@ enum EpdDrawError update_display_text_turn(EpdiyHighlevelState* state, bool whit
 enum EpdDrawError update_display_text_direct(EpdiyHighlevelState* state, bool white_on_black) {
     display_prepare_direct_frame(state->front_fb, epd_width(), epd_height(), white_on_black);
     return record_body(white_on_black, true);
+}
+
+// 只记录真实reader选择的对照出口、周期与模式；不模拟波形或光学残影。
+// Record the production reader's comparison call, interval and mode without simulating waveforms or optical ghosts.
+enum EpdDrawError update_display_night_crossmux(EpdiyHighlevelState* state, display_crossmux_action_t action) {
+    display_prepare_direct_frame(state->front_fb, epd_width(), epd_height(), true);
+    unsigned every = app_settings_gc_every();
+    bool entry = action == DISPLAY_CROSSMUX_ENTRY || s_navigation_entry;
+    bool turn = action == DISPLAY_CROSSMUX_TURN;
+    bool clean = action == DISPLAY_CROSSMUX_CLEAN || (turn && !entry && every && s_night_body_turns + 1 >= every);
+    refresh_wave = E0470_CROSSMUX_WAVEFORM.unused;
+    refresh_area = (EpdRect){0, 0, 684, 1216};
+    crossmux_action = action;
+    crossmux_presents++;
+    enum EpdDrawError result = record_refresh(clean ? MODE_GC16 : entry ? MODE_GL16 : MODE_DU);
+    if (result == EPD_DRAW_SUCCESS) {
+        if (clean || entry) { s_night_body_turns = 0; s_navigation_entry = false; }
+        else if (turn) s_night_body_turns = every ? s_night_body_turns + 1 : 0;
+        if (turn) body_presents++;
+    }
+    return result;
 }
 
 static void present(app_redraw_t redraw) {
@@ -333,11 +356,11 @@ int main(int argc, char** argv) {
         if (!export_frame(argv[1])) { perror("frame export"); return 1; }
         static book_quote_t quote_snapshot[BOOK_QUOTES_MAX];
         size_t quote_count = book_quotes_list(quote_snapshot, BOOK_QUOTES_MAX);
-        printf("{\"page\":%d,\"menu\":%s,\"menu_leaf\":%d,\"leaf\":%d,\"asset\":%d,\"unsupported\":%d,\"refresh_mode\":%d,\"presents\":%d,\"gc_presents\":%d,\"refresh_wave\":%d,\"night_turns\":%u,\"body_presents\":%u,\"quiet_presents\":%u,\"night_area_presents\":%u,\"reading\":%s,\"sync_starts\":%u,\"sync_job\":%d,\"quote_count\":%u,\"history_page\":%u,\"history_count\":%u,\"physical_clears\":%u,\"refresh_area\":[%d,%d,%d,%d]}\n",
+        printf("{\"page\":%d,\"menu\":%s,\"menu_leaf\":%d,\"leaf\":%d,\"asset\":%d,\"unsupported\":%d,\"refresh_mode\":%d,\"presents\":%d,\"gc_presents\":%d,\"refresh_wave\":%d,\"night_turns\":%u,\"body_presents\":%u,\"quiet_presents\":%u,\"night_area_presents\":%u,\"reading\":%s,\"sync_starts\":%u,\"sync_job\":%d,\"quote_count\":%u,\"history_page\":%u,\"history_count\":%u,\"physical_clears\":%u,\"crossmux_presents\":%u,\"crossmux_action\":%d,\"refresh_area\":[%d,%d,%d,%d]}\n",
                app_index_of(current), menu_open ? "true" : "false", menu_leaf, ctx.leaf, asset, unsupported, refresh_mode, presents, gc_presents, refresh_wave, s_night_body_turns, body_presents, quiet_presents, night_area_presents,
                current == app_by_id(OS_APP_LIBRARY) && book_chapter_count() > 0 ? "true" : "false",
                preview_sync_starts(), preview_sync_job(), (unsigned)quote_count, book_home_snapshot()->recent_page, book_home_snapshot()->history_count,
-               physical_clears, refresh_area.x, refresh_area.y, refresh_area.width, refresh_area.height);
+               physical_clears, crossmux_presents, crossmux_action, refresh_area.x, refresh_area.y, refresh_area.width, refresh_area.height);
         fflush(stdout);
         if (!fgets(command, sizeof(command), stdin)) break;
         int value, x, y, x1, y1;

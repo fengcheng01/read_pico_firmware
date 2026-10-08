@@ -72,12 +72,23 @@ extern const EpdWaveform E0470_NAVIGATION_ENTRY_WAVEFORM;
 #define E0470_DIRECT_FRAMES (E0470_FULL_DU_FRAMES + 1)
 extern const EpdWaveform E0470_DIRECT_WAVEFORM;
 
+/// 用户授权的Crossmux Pico夜间对照：逐字节复现0x1abin/freeink-sdk@96de1be默认DU20/GC36/GL37。
+/// User-authorized Crossmux Pico night reference: reproduce 0x1abin/freeink-sdk@96de1be default DU20/GC36/GL37 byte for byte.
+/// DU沿用目标阈值与真实旧灰；GC/GL按11/5/0/3右对齐裁剪，GL另含其15→15单相白动作，不改厂家源或本地原档位。
+/// DU retains target thresholding and actual old grays; GC/GL use right-aligned 11/5/0/3 trimming, with GL's single 15→15 white action, without changing vendor sources or original local profiles.
+/// 只用于可选夜间对照，不是光学去残影保证；GL对角线不保持，不能配套EE未变选择码。
+/// Optional night comparison only, without an optical ghost-removal guarantee; GL diagonals drive, so selective unchanged EE codes are incompatible.
+#define E0470_CROSSMUX_DU_FRAMES E0470_FULL_DU_FRAMES
+#define E0470_CROSSMUX_GC16_FRAMES 36
+#define E0470_CROSSMUX_GL16_FRAMES 37
+extern const EpdWaveform E0470_CROSSMUX_WAVEFORM;
+
 /// 最近墨迹动作掩码专用：FF擦白三相，其他码保持，再三相中性。/ Recent-ink action masks only: FF erases for three phases, others hold, then three neutral phases.
 #define E0470_WHITE_CLEANUP_FRAMES 6
 extern const EpdWaveform E0470_WHITE_CLEANUP_WAVEFORM;
 
-/// 默认灰阶相数；裁剪器仅保留给诊断实验，不用于产品默认刷新。
-/// Default gray phase counts; the trimmer remains for diagnostic experiments, outside product updates.
+/// 本地默认灰阶相数；裁剪器用于诊断及可选Crossmux对照，不改本地默认刷新。
+/// Local default gray phase counts; trimming serves diagnostics and optional Crossmux comparison without changing local default updates.
 #define E0470_GC16_FRAMES E0470_FULL_GC16_FRAMES
 #define E0470_GL16_FRAMES (E0470_FULL_GL16_FRAMES + 1)
 
@@ -107,8 +118,8 @@ const EpdWaveformPhases* e0470_waveform_phases(const EpdWaveform* waveform, int 
 /// / 2-bit action for (from→to) at `phase`: 0 hold, 1 darken, 2 erase.
 int e0470_phase_action(const EpdWaveformPhases* phases, int phase, int to, int from);
 
-/// 生成 E0470_WAVEFORM 与 E0470_FOLLOW_WAVEFORM 的表。必须在第一次刷新之前调用一次。
-/// / Build E0470_WAVEFORM and E0470_FOLLOW_WAVEFORM. Call once before the first refresh.
+/// 生成本地运行时表及隔离Crossmux对照表，必须在第一次刷新之前调用一次。
+/// Build local runtime tables and the isolated Crossmux reference before the first refresh.
 void e0470_waveform_init(void);
 
 #ifdef __cplusplus

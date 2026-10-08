@@ -20,12 +20,18 @@
  * Frozen: The user now prioritizes flicker-free speed, choosing vendor black/white DU for direct turns; targets are only 0/15, without quantizing old gray codes or reordering the 20 source phases.
  * 实机修订：0.5.25定向补黑和后置局部擦写未改善夜间残影，后者增加旧字闪动；撤回两实验，保留普通翻页与已有周期/手动完整清理。
  * Device revision: 0.5.25 black reinforcement and post-DU local cleaning failed to improve night ghosts, with local cleaning flashing old glyphs; withdraw both experiments and retain ordinary turns with existing interval/manual full cleaning.
+ * 冻结：用户要求继续比较Crossmux Pico方案；独立对照表逐字节复现freeink-sdk 96de1be默认DU20/GC36/GL37，仅由夜间可选路径调用，不改本地默认、日间或厂家源表。
+ * Frozen: The user requests further comparison with Crossmux Pico; an isolated reference reproduces freeink-sdk 96de1be default DU20/GC36/GL37 byte for byte, selected only by optional night paths without changing local defaults, daytime or vendor source tables.
+ * 修订：此前只比较源码，没有交付完整Crossmux波形对照；本次复现其裁剪与白白单相动作，不增加新剂量，也不承诺光学改善。
+ * Revision: Prior work compared source without delivering a complete Crossmux waveform reference; this reproduces its trimming and single white-to-white action without new doses or an optical-improvement claim.
  */
 
 #include "e0470_epaper_waveform.h"
 
+#include <assert.h>
 #include <string.h>
 
+#include "e0470_waveform_trim.h"
 #include "du.h"
 #include "gc16.h"
 #include "gl16.h"
@@ -235,6 +241,54 @@ const EpdWaveform E0470_DIRECT_WAVEFORM = {
     .mode_data = e0470_direct_modes, .temp_intervals = e0470_intervals,
 };
 
+/* ---- Crossmux Pico 对照 / Crossmux Pico reference ---- */
+// 来源：0x1abin/freeink-sdk@96de1be6ce08eb732909e6e8149af8f892b9a2c5，EpdiyLcd/src/e0470/e0470_epaper_waveform.c 默认装配。
+// Source: 0x1abin/freeink-sdk@96de1be6ce08eb732909e6e8149af8f892b9a2c5, EpdiyLcd/src/e0470/e0470_epaper_waveform.c default assembly.
+// 裁剪器要求源相数容量；只读厂家48相源，不把白白动作先写入源表，也不套用TextTurn左对齐或对角线清零。
+// The trimmer requires source-phase capacity; read the vendor 48-phase sources without adding white-to-white drive to them or applying TextTurn left alignment/diagonal clearing.
+static uint8_t e0470_crossmux_gc16_data[E0470_FULL_GC16_FRAMES][16][4];
+static uint8_t e0470_crossmux_gl16_data[E0470_FULL_GL16_FRAMES][16][4];
+static const EpdWaveformPhases e0470_crossmux_gc16_phases = {
+    .phases = E0470_CROSSMUX_GC16_FRAMES, .phase_times = NULL,
+    .luts = (const uint8_t*)e0470_crossmux_gc16_data,
+};
+static const EpdWaveformPhases e0470_crossmux_gl16_phases = {
+    .phases = E0470_CROSSMUX_GL16_FRAMES, .phase_times = NULL,
+    .luts = (const uint8_t*)e0470_crossmux_gl16_data,
+};
+static const EpdWaveformPhases* e0470_crossmux_gc16_ranges[] = { &e0470_crossmux_gc16_phases };
+static const EpdWaveformPhases* e0470_crossmux_gl16_ranges[] = { &e0470_crossmux_gl16_phases };
+static const EpdWaveformMode e0470_crossmux_gc16_mode = {
+    .type = 2, .temp_ranges = 1, .range_data = e0470_crossmux_gc16_ranges,
+};
+static const EpdWaveformMode e0470_crossmux_gl16_mode = {
+    .type = 5, .temp_ranges = 1, .range_data = e0470_crossmux_gl16_ranges,
+};
+static const EpdWaveformMode* e0470_crossmux_modes[] = {
+    &e0470_complete_du_mode, &e0470_crossmux_gc16_mode, &e0470_crossmux_gl16_mode,
+};
+const EpdWaveform E0470_CROSSMUX_WAVEFORM = {
+    .num_modes = 3, .num_temp_ranges = 1,
+    .mode_data = e0470_crossmux_modes, .temp_intervals = e0470_intervals,
+};
+
+static void e0470_crossmux_build(void) {
+    const e0470_trim_t trim = {
+        .erase_max = 11, .sat_cut = 5, .white_sat_cut = 0, .hold = 3,
+    };
+    const int gc = e0470_waveform_trim(&e0470_full_gc16_phases, &trim, e0470_crossmux_gc16_data);
+    const int gl = e0470_waveform_trim(&e0470_full_gl16_phases, &trim, e0470_crossmux_gl16_data);
+    assert(gc == E0470_CROSSMUX_GC16_FRAMES && gl == E0470_CROSSMUX_GL16_FRAMES);
+    // 与SDK一致：在裁剪GL最后的白动作相给15→15补一次白，不新增相；没有白动作时沿用其尾前第三相回退。
+    // Match the SDK: add one 15→15 white action at the trimmed GL's last white-action phase without adding phases, using its third-from-last fallback when none exists.
+    int tick = -1;
+    for (int f = E0470_CROSSMUX_GL16_FRAMES - 1; f >= 0 && tick < 0; --f)
+        for (int from = 0; from < 15; ++from)
+            if (lut_get(e0470_crossmux_gl16_data, f, 15, from) == 2) { tick = f; break; }
+    if (tick < 0) tick = E0470_CROSSMUX_GL16_FRAMES - 3;
+    lut_or(e0470_crossmux_gl16_data, tick, 15, 15, 2);
+}
+
 // FF选择三相原厂擦白尾段，00和其他动作码保持；不会压黑任何像素。
 // FF selects three vendor erase-tail phases; 00 and other action codes hold, never darkening pixels.
 static uint8_t e0470_white_cleanup_data[E0470_WHITE_CLEANUP_FRAMES][16][4];
@@ -301,6 +355,7 @@ int e0470_phase_action(const EpdWaveformPhases* phases, int phase, int to, int f
 void e0470_waveform_init(void) {
     e0470_follow_lut_build(E0470_FOLLOW_FRAMES, e0470_follow_data);
     e0470_complete_du_build();
+    e0470_crossmux_build();
     memset(e0470_settled_gl16_data, 0, sizeof(e0470_settled_gl16_data));
     memcpy(e0470_settled_gl16_data, e0470_full_gl16_data, sizeof(e0470_full_gl16_data));
     e0470_navigation_entry_build();

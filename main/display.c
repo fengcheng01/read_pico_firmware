@@ -6,16 +6,18 @@
  *
  * Present path: power down after normal updates, idle timeout for tracking, and pclk underrun recovery.
  *
- * 冻结：用户确认日间0.5.21效果并要求夜间优先无闪、按设置周期清理；实机GC残留设置框，夜间清理先物理清白再厂家GC16，日间不计周期，0关闭。
- * Frozen: The user accepts 0.5.21 daytime behavior and flash-free night turns with scheduled cleaning; hardware GC leaves setting outlines, so night cleaning physically clears before vendor GC16, with day excluded and 0 disabling the interval.
- * 冻结：用户实测否定0.5.19并明确优先无闪速度；直刷使用厂家黑白DU及真实二值目标，标准模式保留灰阶。
- * Frozen: Device feedback rejects 0.5.19 and the user explicitly prioritizes flash-free speed; direct uses vendor black/white DU with actual binary targets, while standard retains gray.
+ * 冻结：用户确认日间0.5.21效果并要求夜间优先无闪、按设置周期清理；实机GC残留设置框，当前夜间方案先物理清白再厂家GC16，日间不计周期，0关闭；Crossmux对照按下述授权例外。
+ * Frozen: The user accepts 0.5.21 daytime behavior and flash-free night turns with scheduled cleaning; hardware GC leaves setting outlines, so the current night profile physically clears before vendor GC16, with day excluded and 0 disabling the interval; the authorized Crossmux exception follows below.
+ * 冻结：用户实测否定0.5.19并明确优先无闪速度；直刷使用厂家黑白DU及真实二值目标，当前标准模式保留灰阶。
+ * Frozen: Device feedback rejects 0.5.19 and the user explicitly prioritizes flash-free speed; direct uses vendor black/white DU with actual binary targets, while current standard retains gray.
  * 冻结：旧参考保留实际灰码，不能伪造白基准；正文和普通导航白白保持，不恢复历史字形补擦。
  * Frozen: Prior references retain actual gray codes without fictional white baselines; body and ordinary navigation hold white without historical glyph cleanup.
- * 冻结：标准正文恢复厂家黑/灰对角线定稿，白白保持；日间布局入口GC16一次，夜间入口先物理清白，按钮和页脚不清理；成功清理重置夜间计数。
- * Frozen: Standard body restores vendor black/gray diagonal settling and held white; day layout entries use one GC16 while night entries physically clear first, controls/footer never clean, and successful cleaning resets night counts.
+ * 冻结：标准日间正文恢复厂家黑/灰对角线定稿，白白保持；日间布局入口GC16一次，当前夜间入口先物理清白，按钮和页脚不清理；成功清理重置夜间计数。
+ * Frozen: Standard day body restores vendor black/gray diagonal settling and held white; day layout entries use one GC16 while current night entries physically clear first, controls/footer never clean, and successful cleaning resets night counts.
  * 冻结：普通夜间保持未变背景，只在用户设置周期到期清理；失败不累计，不伪造黑基准或交换厂家动作。
  * Frozen: Ordinary night turns hold unchanged backgrounds and clean only at the user-selected interval; failures never count, without fabricated black baselines or swapped vendor actions.
+ * 冻结：用户要求继续探索Crossmux，本测试版可选其Pico DU20/入口GL37/周期和手动GC36；已知参考单扫不先清白，未知仍完整恢复，原档位不改。
+ * Frozen: The user requests further Crossmux exploration; this test build optionally compares Pico DU20/entry GL37/due or manual GC36, with one known-baseline scan, full unknown recovery and unchanged original profiles.
  * 实机修订：0.5.25定向补黑和后置局部擦写未改善夜间残影，后者增加旧字闪动；撤回两实验，保留普通翻页与已有周期/手动完整清理。
  * Device revision: 0.5.25 black reinforcement and post-DU local cleaning failed to improve night ghosts, with local cleaning flashing old glyphs; withdraw both experiments and retain ordinary turns with existing interval/manual full cleaning.
  */
@@ -323,6 +325,42 @@ enum EpdDrawError update_display_text_direct(EpdiyHighlevelState* hl, bool white
     // Commit actual black/white targets per the user's speed preference; vendor DU still reads the real prior gray frame.
     display_prepare_direct_frame(hl->front_fb, epd_width(), epd_height(), white_on_black);
     return update_display_with_profile(hl, &E0470_DIRECT_WAVEFORM, MODE_GL16, white_on_black, false);
+}
+
+// 对照固定SDK96de1be的Pico刷新出口；保留本地板级扫描和成功提交策略。
+// Compare the Pico path in SDK96de1be while retaining local board scanning and success-only commits.
+enum EpdDrawError update_display_night_crossmux(EpdiyHighlevelState* hl, display_crossmux_action_t action) {
+    display_prepare_direct_frame(hl->front_fb, epd_width(), epd_height(), true);
+    const bool turn = action == DISPLAY_CROSSMUX_TURN;
+    const bool entry = action == DISPLAY_CROSSMUX_ENTRY || s_navigation_entry;
+    const bool recovery = s_baseline_unknown;
+    const unsigned every = app_settings_gc_every();
+    const bool clean = action == DISPLAY_CROSSMUX_CLEAN ||
+        (turn && !entry && every && s_night_body_turns + 1 >= every);
+    const EpdWaveform* waveform = recovery ? &E0470_FULL_WAVEFORM : &E0470_CROSSMUX_WAVEFORM;
+    enum EpdDrawMode mode = (enum EpdDrawMode)((recovery || clean ? MODE_GC16 : entry ? MODE_GL16 : MODE_DU) | PREVIOUSLY_WHITE);
+    use_scan_for(waveform, mode);
+    if (!power_ready()) return EPD_DRAW_POWER_NOT_READY;
+    epd_hl_waveform(hl, waveform);
+    if (recovery) {
+        // SDK未知参考需要真实清白；恢复不沿用已知参考的裁剪GC，也不伪造白帧。
+        // Unknown SDK references require an actual clear; recovery neither uses trimmed known-baseline GC nor fabricates white frames.
+        epd_clear();
+        memset(hl->back_fb, 255, (size_t)epd_width() * epd_height() / 2);
+    }
+    enum EpdDrawError result = (mode & 0xF) == MODE_GC16
+        ? epd_hl_update_screen_full(hl, mode, 25) : epd_hl_update_screen(hl, mode, 25);
+    s_baseline_unknown = result != EPD_DRAW_SUCCESS;
+    if (result == EPD_DRAW_SUCCESS) {
+        if ((mode & 0xF) == MODE_GC16 || entry) {
+            s_night_body_turns = 0;
+            s_soft_refreshes = 0;
+            s_navigation_entry = false;
+        } else if (turn) s_night_body_turns = every ? s_night_body_turns + 1 : 0;
+    }
+    epd_hl_waveform(hl, &E0470_WAVEFORM);
+    finish_update(waveform);
+    return result;
 }
 
 // 分钟字带用产品GL16局推，保持灰阶且不计入整屏清理周期。

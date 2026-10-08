@@ -18,6 +18,7 @@
 #define FB_BYTES 128
 const EpdWaveform E0470_WAVEFORM = {0}, E0470_FOLLOW_WAVEFORM = {1}, E0470_FULL_WAVEFORM = {2}, E0470_TEXTTURN_WAVEFORM = {3}, E0470_NAVIGATION_WAVEFORM = {4}, E0470_NAVIGATION_ENTRY_WAVEFORM = {7};
 const EpdWaveform E0470_DIRECT_WAVEFORM = {5}, E0470_WHITE_CLEANUP_WAVEFORM = {6}, E0470_TEXTTURN_NIGHT_WAVEFORM = {8};
+const EpdWaveform E0470_CROSSMUX_WAVEFORM = {9};
 static uint8_t target[FB_BYTES], presented[FB_BYTES];
 static uint8_t expected_old[FB_BYTES];
 static bool check_old_at_draw;
@@ -374,6 +375,151 @@ static void check_withdrawn_night_tiers(EpdiyHighlevelState* hl) {
     assert(legacy_cleanup_reads == 0 && allocations == before_alloc);
 }
 
+static void assert_crossmux_scan(EpdiyHighlevelState* hl, display_crossmux_action_t action,
+    enum EpdDrawMode mode, bool full, bool clean) {
+    uint8_t requested[FB_BYTES];
+    memcpy(requested, hl->front_fb, FB_BYTES);
+    display_prepare_direct_frame(requested, epd_width(), epd_height(), true);
+    memcpy(expected_old, hl->back_fb, FB_BYTES);
+    memcpy(clear_prior, hl->back_fb, FB_BYTES);
+    memcpy(clear_target, requested, FB_BYTES);
+    if (clean) memset(expected_old, 255, FB_BYTES);
+    int before_draws = draws, before_full = full_draws, before_clears = clears;
+    int before_on = powerons, before_off = poweroffs;
+    unsigned before_selected = mask_draws, before_alloc = allocations;
+    check_old_at_draw = true; check_clean_at_clear = clean;
+    assert(update_display_night_crossmux(hl, action) == EPD_DRAW_SUCCESS);
+    check_old_at_draw = check_clean_at_clear = false;
+    assert(draws == before_draws + 1 && full_draws == before_full + full && clears == before_clears + clean);
+    assert(powerons == before_on + 1 && poweroffs == before_off + 1 && !hv_on);
+    assert(last_waveform == (clean ? &E0470_FULL_WAVEFORM : &E0470_CROSSMUX_WAVEFORM) && !last_area);
+    if (clean) assert((last_mode & 15) == MODE_GC16);
+    else assert(last_mode == (mode | PREVIOUSLY_WHITE));
+    assert(mask_draws == before_selected && allocations == before_alloc);
+    assert(!memcmp(hl->front_fb, requested, FB_BYTES) && !memcmp(hl->back_fb, requested, FB_BYTES));
+    assert(hl->waveform == &E0470_WAVEFORM);
+}
+
+static void crossmux_picture(EpdiyHighlevelState* hl, unsigned page) {
+    for (unsigned b = 0; b < FB_BYTES; ++b) hl->front_fb[b] = (uint8_t)(b * 37 + page * 53);
+}
+
+static void check_crossmux_night(EpdiyHighlevelState* hl) {
+    const unsigned intervals[] = {0, 1, 3, 10, 30};
+    // 各周期只算成功TURN；REDRAW、日间、标准灰阶和独立控件不消耗翻页次数。
+    // Count successful TURN actions only; REDRAW, day, standard grays and independent controls do not consume turn intervals.
+    for (unsigned i = 0; i < sizeof(intervals) / sizeof(*intervals); ++i) {
+        cleanup_every = intervals[i];
+        assert(update_display_full(hl) == EPD_DRAW_SUCCESS);
+        memset(hl->back_fb, 0x78, FB_BYTES);
+        crossmux_picture(hl, 0);
+        assert_crossmux_scan(hl, DISPLAY_CROSSMUX_ENTRY, MODE_GL16, false, false);
+        unsigned turns = intervals[i] ? intervals[i] * 2 + 1 : 40;
+        for (unsigned turn = 1; turn <= turns; ++turn) {
+            crossmux_picture(hl, turn);
+            assert_crossmux_scan(hl, DISPLAY_CROSSMUX_REDRAW, MODE_DU, false, false);
+            assert(update_display_text_turn(hl, false) == EPD_DRAW_SUCCESS);
+            assert(update_display_area_quiet(hl, (EpdRect){1,2,3,4}) == EPD_DRAW_SUCCESS);
+            crossmux_picture(hl, turn + 1);
+            bool due = intervals[i] && turn % intervals[i] == 0;
+            assert_crossmux_scan(hl, DISPLAY_CROSSMUX_TURN, due ? MODE_GC16 : MODE_DU, due, false);
+        }
+    }
+
+    // ENTRY、手动GC、通用整屏GC和切回当前方案都重置周期，始终保留实际旧灰参考。
+    // Entries, manual GC, generic full-screen GC and switching to the current profile reset intervals while retaining actual prior gray references.
+    cleanup_every = 3;
+    for (int reset = 0; reset < 5; ++reset) {
+        assert(update_display_full(hl) == EPD_DRAW_SUCCESS);
+        for (unsigned turn = 0; turn < 2; ++turn) {
+            crossmux_picture(hl, turn);
+            assert_crossmux_scan(hl, DISPLAY_CROSSMUX_TURN, MODE_DU, false, false);
+        }
+        crossmux_picture(hl, 8);
+        if (reset == 0) assert_crossmux_scan(hl, DISPLAY_CROSSMUX_ENTRY, MODE_GL16, false, false);
+        else if (reset == 1) assert_crossmux_scan(hl, DISPLAY_CROSSMUX_CLEAN, MODE_GC16, true, false);
+        else if (reset == 2) assert(update_display_full(hl) == EPD_DRAW_SUCCESS);
+        else if (reset == 3) {
+            display_request_navigation_settle();
+            assert_night_scan(hl, false, true);
+            crossmux_picture(hl, 9);
+            display_request_navigation_settle();
+            assert_crossmux_scan(hl, DISPLAY_CROSSMUX_TURN, MODE_GL16, false, false);
+        } else {
+            display_request_navigation_settle();
+            assert_crossmux_scan(hl, DISPLAY_CROSSMUX_REDRAW, MODE_GL16, false, false);
+        }
+        for (unsigned turn = 1; turn <= 3; ++turn) {
+            crossmux_picture(hl, turn);
+            assert_crossmux_scan(hl, DISPLAY_CROSSMUX_TURN, turn == 3 ? MODE_GC16 : MODE_DU, turn == 3, false);
+        }
+    }
+
+    // 上电和每类扫描失败不提交真实旧参考；下一次动作只清白+完整GC一次，不能追加DU。
+    // Power and each scan failure preserve the actual old reference; the next action performs exactly one physical clear plus full GC, with no extra DU.
+    for (int action = DISPLAY_CROSSMUX_TURN; action <= DISPLAY_CROSSMUX_REDRAW; ++action)
+    for (int power_failure = 0; power_failure < 2; ++power_failure) {
+        assert(update_display_full(hl) == EPD_DRAW_SUCCESS);
+        memset(hl->back_fb, 0x78, FB_BYTES); crossmux_picture(hl, (unsigned)action);
+        memcpy(expected_old, hl->back_fb, FB_BYTES);
+        int before_draws = draws, before_clears = clears;
+        fail_power = power_failure != 0; fail_draw = !power_failure;
+        assert(update_display_night_crossmux(hl, (display_crossmux_action_t)action) ==
+            (power_failure ? EPD_DRAW_POWER_NOT_READY : EPD_DRAW_OTHER_ERROR));
+        fail_power = fail_draw = false;
+        assert(draws == before_draws + !power_failure && clears == before_clears);
+        assert(!memcmp(hl->back_fb, expected_old, FB_BYTES) && hl->waveform == &E0470_WAVEFORM);
+        assert_crossmux_scan(hl, (display_crossmux_action_t)action, MODE_GC16, true, true);
+        for (unsigned turn = 1; turn <= 3; ++turn) {
+            crossmux_picture(hl, turn);
+            assert_crossmux_scan(hl, DISPLAY_CROSSMUX_TURN, turn == 3 ? MODE_GC16 : MODE_DU, turn == 3, false);
+        }
+    }
+    // 到期GC失败、入口标记失败与关闭/重开周期都不能遗留额外清理或旧计数。
+    // Failed due GC, failed entry markers and disabled/reenabled intervals leave neither extra cleanup nor stale counts.
+    assert(update_display_full(hl) == EPD_DRAW_SUCCESS);
+    for (unsigned turn = 1; turn <= 2; ++turn) {
+        crossmux_picture(hl, turn); assert_crossmux_scan(hl, DISPLAY_CROSSMUX_TURN, MODE_DU, false, false);
+    }
+    fail_draw = true;
+    assert(update_display_night_crossmux(hl, DISPLAY_CROSSMUX_TURN) == EPD_DRAW_OTHER_ERROR);
+    fail_draw = false;
+    assert_crossmux_scan(hl, DISPLAY_CROSSMUX_REDRAW, MODE_GC16, true, true);
+    display_request_navigation_settle(); fail_power = true;
+    assert(update_display_night_crossmux(hl, DISPLAY_CROSSMUX_TURN) == EPD_DRAW_POWER_NOT_READY);
+    fail_power = false;
+    assert_crossmux_scan(hl, DISPLAY_CROSSMUX_REDRAW, MODE_GC16, true, true);
+    assert_crossmux_scan(hl, DISPLAY_CROSSMUX_REDRAW, MODE_DU, false, false);
+    // 未知参考恢复自身失败也保留真实目标；只在实际清白后允许白后缓冲。
+    // A failed unknown-baseline recovery also retains the real target; a white back buffer is permitted only after physical clearing.
+    for (int power_failure = 0; power_failure < 2; ++power_failure) {
+        assert(update_display_full(hl) == EPD_DRAW_SUCCESS);
+        memset(hl->front_fb, 0x78, FB_BYTES); memset(hl->back_fb, 0x66, FB_BYTES);
+        guard_draw_result(hl, EPD_DRAW_OTHER_ERROR);
+        int before_clears = clears;
+        fail_power = power_failure != 0; fail_draw = !power_failure;
+        assert(update_display_night_crossmux(hl, DISPLAY_CROSSMUX_CLEAN) ==
+            (power_failure ? EPD_DRAW_POWER_NOT_READY : EPD_DRAW_OTHER_ERROR));
+        fail_power = fail_draw = false;
+        assert(clears == before_clears + !power_failure);
+        for (unsigned b = 0; b < FB_BYTES; ++b) {
+            assert(hl->front_fb[b] == 0x0f);
+            assert(hl->back_fb[b] == (power_failure ? 0x66 : 255));
+        }
+        assert_crossmux_scan(hl, DISPLAY_CROSSMUX_CLEAN, MODE_GC16, true, true);
+    }
+    cleanup_every = 0;
+    for (unsigned turn = 1; turn <= 20; ++turn) {
+        crossmux_picture(hl, turn); assert_crossmux_scan(hl, DISPLAY_CROSSMUX_TURN, MODE_DU, false, false);
+    }
+    cleanup_every = 3;
+    for (unsigned turn = 1; turn <= 3; ++turn) {
+        crossmux_picture(hl, turn);
+        assert_crossmux_scan(hl, DISPLAY_CROSSMUX_TURN, turn == 3 ? MODE_GC16 : MODE_DU, turn == 3, false);
+    }
+    assert(legacy_cleanup_reads == 0 && allocations == 0);
+}
+
 int main(void) {
     check_history_reference();
     // 整帧反色覆盖全部打包灰码，并验证往返与无效尺寸不写内存。
@@ -706,6 +852,8 @@ int main(void) {
     assert(mask_draws == clean_count);
     assert(allocations == 0);
     check_withdrawn_night_tiers(&hl);
+    check_crossmux_night(&hl);
     puts("display: physical night cleanup preserves targets and establishes actual white, shared cycles 1/3/5/30/off, excluded day/controls/footer, successful resets, failed retry and underrun recovery passed");
     puts("display: legacy night experiment tiers 1/2 remain unread; no post scans or allocation, both night profiles retain their shared cleanup interval");
+    puts("display: Crossmux night uses real-gray differential DU/GL and one full GC without preclear; intervals, entries, redraws, profile switches and failed recovery passed");
 }

@@ -13,6 +13,9 @@
 static bool fail_draw;
 static bool require_diagonals, require_selectors;
 static const uint8_t* expected_selective;
+static const EpdiyHighlevelState* expected_hint_state;
+static const uint8_t *expected_hint_prior, *expected_hint_target;
+static enum EpdDrawMode expected_hint_mode;
 static unsigned draw_calls;
 static size_t table_bytes;
 static const EpdWaveform waveform = {0};
@@ -53,6 +56,11 @@ enum EpdDrawError epd_draw_base(EpdRect area, const uint8_t* data, EpdRect crop,
                                const uint8_t* columns, const EpdWaveform* wave) {
     (void)area; (void)crop; (void)mode; (void)temp; (void)wave;
     draw_calls++;
+    if (expected_hint_state) {
+        assert(mode == (expected_hint_mode | MODE_PACKING_1PPB_DIFFERENCE));
+        assert(!memcmp(expected_hint_state->back_fb, expected_hint_prior, 128));
+        assert(!memcmp(expected_hint_state->front_fb, expected_hint_target, 128));
+    }
     if (require_diagonals) {
         for (int y = 0; y < 4; ++y) assert(lines[y]);
         for (int x = 0; x < 32; ++x) assert(columns[x] == 255);
@@ -87,6 +95,39 @@ int main(void) {
                    : epd_hl_update_screen(&hl, MODE_GL16, 25);
         assert(err == EPD_DRAW_SUCCESS && !memcmp(front, back, sizeof(front)));
     }
+    // SDK白参考提示在1PPB差分中不能覆盖真实旧灰；DU/GL差分与GC整屏均保留全部16→0/15迁移。
+    // SDK white-reference hints must not override actual prior grays in 1PPB differences; DU/GL differences and full GC retain every 16→0/15 transition.
+    uint8_t hinted_prior[128] = {0}, hinted_target[128] = {0}, hinted_codes[256];
+    for (int p = 0; p < 256; ++p) {
+        unsigned from = p % 16, to = (p / 16 % 2) ? 15 : 0;
+        hinted_prior[p / 2] |= (uint8_t)(from << ((p % 2) * 4));
+        hinted_target[p / 2] |= (uint8_t)(to << ((p % 2) * 4));
+        hinted_codes[p] = (uint8_t)(to << 4 | from);
+    }
+    expected_hint_state = &hl;
+    expected_hint_prior = hinted_prior;
+    expected_hint_target = hinted_target;
+    expected_selective = hinted_codes;
+    const enum EpdDrawMode hinted_modes[] = {MODE_DU, MODE_GL16, MODE_GC16};
+    for (unsigned m = 0; m < sizeof(hinted_modes) / sizeof(hinted_modes[0]); ++m) {
+        for (int hint = 0; hint < 2; ++hint) {
+            expected_hint_mode = (enum EpdDrawMode)(hinted_modes[m] | (hint ? PREVIOUSLY_WHITE : 0));
+            memcpy(front, hinted_target, sizeof(front)); memcpy(back, hinted_prior, sizeof(back));
+            unsigned calls_before = draw_calls;
+            fail_draw = true;
+            enum EpdDrawError err = m == 2 ? epd_hl_update_screen_full(&hl, expected_hint_mode, 25)
+                                          : epd_hl_update_screen(&hl, expected_hint_mode, 25);
+            assert(err == EPD_DRAW_EMPTY_LINE_QUEUE && draw_calls == calls_before + 1);
+            assert(!memcmp(back, hinted_prior, sizeof(back)));
+            fail_draw = false;
+            err = m == 2 ? epd_hl_update_screen_full(&hl, expected_hint_mode, 25)
+                         : epd_hl_update_screen(&hl, expected_hint_mode, 25);
+            assert(err == EPD_DRAW_SUCCESS && draw_calls == calls_before + 2);
+            assert(!memcmp(front, hinted_target, sizeof(front)) && !memcmp(back, front, sizeof(back)));
+        }
+    }
+    expected_hint_state = NULL; expected_selective = NULL;
+    puts("epdiy: DU/GL difference and full GC keep every actual gray-to-binary reference with or without PREVIOUSLY_WHITE; failures retain and success commits actual targets");
     // 完全相同的灰阶帧也必须送出真实对角线和全像素掩码，白底/灰字定稿不能被差分裁掉。
     // Identical gray frames must still carry real diagonals and full-pixel masks so diff cropping cannot skip white/gray settling.
     for (int i = 0; i < 128; ++i) front[i] = back[i] = (uint8_t)((i % 16) * 17);

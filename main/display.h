@@ -67,6 +67,18 @@ enum EpdDrawError update_display_text_turn(EpdiyHighlevelState* hl, bool white_o
 /// 厂家黑白DU直刷，实际二值目标和真实旧灰参考；日间不计周期，夜间与标准共计成功翻页。
 /// Vendor black/white DU with actual binary targets and real prior grays; day never counts, night shares successful turns with standard.
 enum EpdDrawError update_display_text_direct(EpdiyHighlevelState* hl, bool white_on_black);
+typedef enum {
+    DISPLAY_CROSSMUX_TURN, ///< 夜间正文翻页，计入保存周期 / Night body turn counted toward the saved interval
+    DISPLAY_CROSSMUX_ENTRY, ///< 反色或布局入口，单次GL并重置周期 / Inversion or layout entry with one GL and a reset interval
+    DISPLAY_CROSSMUX_CLEAN, ///< 手动单次GC，不先物理清白 / Manual single GC without a preliminary physical clear
+    DISPLAY_CROSSMUX_REDRAW, ///< 同布局重绘，不计翻页 / Same-layout redraw excluded from turn counting
+} display_crossmux_action_t;
+/// 用户选择的Pico对照：实际二值目标与真实参考，DU20/入口GL37/到期及手动GC36，已知参考不先清白。
+/// User-selected Pico comparison: actual binary targets and references, DU20/entry GL37/due or manual GC36, without clearing a known baseline first.
+/// 未知参考仍先物理清白并完整GC48恢复；只在成功后提交计数，不执行内容呈现后的补扫。
+/// Unknown references retain physical-clear/full-GC48 recovery; commit counts only on success and never post-scan presented content.
+enum EpdDrawError update_display_night_crossmux(EpdiyHighlevelState* hl, display_crossmux_action_t action);
+
 /// 灰阶图还在屏上时置位：菜单盖上来或离页先刷白，避免从中间灰差分。
 /// Set while a gray image is still on panel: wipe to white before the menu or leave so the next update is not a mid-gray differential.
 void display_hold_white_exit(bool hold);

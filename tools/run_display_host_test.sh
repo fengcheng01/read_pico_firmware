@@ -20,3 +20,6 @@ cc -std=c11 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
     components/e0470_epaper_waveform/e0470_epaper_waveform.c \
     components/e0470_epaper_waveform/e0470_waveform_trim.c -o build/book-tests/navigation-waveform
 build/book-tests/navigation-waveform
+
+# 独立固定SDK指纹检查对照表全部字节，并保证原模式不变。/ Check all comparison bytes against pinned SDK fingerprints and retain original modes.
+python3 tools/crossmux_waveform_host_test.py

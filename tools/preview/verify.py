@@ -1348,48 +1348,160 @@ class PreviewTests(unittest.TestCase):
         pixels = self.preview.frame.read_bytes()[len(b"P5\n684 1216\n255\n"):]
         self.assertGreater(len(set(pixels)), 2)
 
-    def test_reader_withdrawn_night_experiment_area_is_inert(self):
+    def test_reader_crossmux_selection_gestures_persist_without_changing_day(self):
+        self.open_fixture_reader()
+        day = self.reader_pixels()
+        self.reader_display_settings()
+        current = self.preview.png
+        presents = self.state()["presents"]
+        # 绘制和命中共用48像素按钮边界，邻接空隙不得切换方案或刷新。
+        # Paint and hit testing share the 48-pixel bounds; adjacent gaps must neither switch profiles nor refresh.
+        for command in ("tap 39 1072", "tap 644 1072", "tap 300 1047", "tap 10 1096"):
+            self.preview.command(command)
+            self.assertEqual(self.preview.png, current)
+            self.assertEqual(self.state()["presents"], presents)
+        for command in ("hold 300 1072", "swipe 300 1072 300 940"):
+            self.preview.command(command)
+            self.assertEqual(self.preview.png, current)
+        self.preview.command("tap 40 1048")
+        selected = self.preview.png
+        self.assertNotEqual(selected, current)
+        crossmux_presents = self.state()["crossmux_presents"]
+        self.preview.command("tap 424 1140")
+        self.assertEqual(self.reader_pixels(), day)
+        self.assertGreater(len(set(self.reader_pixels())), 2)
+        self.preview.command("key 2")
+        self.settle()
+        self.assertEqual(self.state()["refresh_mode"], 5)
+        self.assertEqual(self.state()["refresh_wave"], 7)
+        self.assertEqual(self.state()["crossmux_presents"], crossmux_presents)
+        self.page("app_os_home")
+        self.settle()
+        self.preview.command("tap 400 425")
+        self.settle()
+        self.reader_display_settings()
+        self.assertEqual(self.preview.png, selected)
+        self.preview.command("tap 643 1095")
+        self.assertEqual(self.preview.png, current)
+
+    def test_reader_crossmux_night_standard_uses_binary_turns_and_single_clean(self):
         self.open_fixture_reader()
         self.reader_display_settings()
-        settings = self.preview.png
-        presents = self.state()["presents"]
-        # 旧实验按钮已撤回，该提示区域不接受动作，也不为轻点/按住/滑出追加反馈刷新。
-        # The withdrawn experiment is now inert caption space, with no action or extra feedback refresh for taps, holds or slide-outs.
-        for command in ("tap 300 1072", "hold 300 1072", "swipe 300 1072 300 940"):
-            self.preview.command(command)
-            self.assertEqual(self.preview.png, settings)
-            self.assertEqual(self.state()["presents"], presents)
-        self.preview.command("tap 300 1006")
-        self.assertNotEqual(self.preview.png, settings)
-        cleans = self.state()["gc_presents"]
-        self.preview.command("tap 424 1140")
-        self.assertEqual(self.state()["gc_presents"], cleans + 1)
-        self.assertEqual(set(self.reader_pixels()), {0, 255})
-        self.reader_display_settings()
-        self.preview.command("tap 300 676")
-        night_settings = self.preview.png
-        presents = self.state()["presents"]
         self.preview.command("tap 300 1072")
-        self.assertEqual(self.preview.png, night_settings)
-        self.assertEqual(self.state()["presents"], presents)
-        cleans = self.state()["gc_presents"]
+        self.preview.command("tap 300 676")
+        for _ in range(6):
+            self.preview.command("tap 300 900")
+        before = self.state()
         self.preview.command("tap 424 1140")
-        self.assertEqual(self.state()["gc_presents"], cleans + 1)
+        self.assertEqual(self.state()["refresh_mode"], 5)
+        self.assertEqual(self.state()["gc_presents"], before["gc_presents"])
+        self.assertEqual(self.state()["physical_clears"], before["physical_clears"])
+        self.assertEqual(self.state()["night_turns"], 0)
+        self.assertEqual(self.state()["crossmux_action"], 1)
+        self.assertEqual(self.state()["crossmux_presents"], before["crossmux_presents"] + 1)
+        self.assertEqual(self.state()["refresh_wave"], 8)
+        self.assertEqual(set(self.reader_pixels()), {0, 255})
         self.assert_reader_dark_margins()
+        state = self.state()
+        for turn in range(1, 7):
+            self.preview.command("key 2" if turn % 2 else "key 0")
+            self.settle()
+            self.assertEqual(self.state()["refresh_mode"], 2 if turn % 3 == 0 else 1)
+            self.assertEqual(self.state()["night_turns"], turn % 3)
+            self.assertEqual(self.state()["gc_presents"], state["gc_presents"] + turn // 3)
+            self.assertEqual(self.state()["physical_clears"], state["physical_clears"])
+            self.assertEqual(self.state()["crossmux_action"], 0)
+            self.assertEqual(self.state()["crossmux_presents"], state["crossmux_presents"] + turn)
+            self.assertEqual(self.state()["refresh_wave"], 8)
+            self.assertEqual(set(self.reader_pixels()), {0, 255})
+        self.preview.command("key 2")
+        self.assertEqual(self.state()["night_turns"], 1)
         night_body = self.reader_pixels()
         self.reader_display_settings()
-        cleans = self.state()["gc_presents"]
+        before = self.state()
         self.preview.command("tap 164 1140")
-        self.assertEqual(self.state()["gc_presents"], cleans + 1)
+        self.assertEqual(self.state()["gc_presents"], before["gc_presents"] + 1)
+        self.assertEqual(self.state()["physical_clears"], before["physical_clears"])
+        self.assertEqual(self.state()["night_turns"], 0)
+        self.assertEqual(self.state()["crossmux_action"], 2)
         self.assertEqual(self.reader_pixels(), night_body)
-        # 原翻页效果和夜间开关仍可回到灰阶日间，两个底栏出口保留真实正文清理。
-        # Original direct/night switches still restore gray day reading, while both bottom exits retain real body cleaning.
+        # 切回当前方案恢复原标准灰阶与入口物理清理；选择未被对照模式改写。
+        # Returning to current restores standard grayscale and physical entry cleanup without changing the user's turn-effect choice.
         self.reader_display_settings()
-        self.preview.command("tap 300 1006")
+        self.preview.command("tap 300 1072")
+        before = self.state()
+        self.preview.command("tap 424 1140")
+        self.assertEqual(self.state()["physical_clears"], before["physical_clears"] + 1)
+        self.assertEqual(self.state()["gc_presents"], before["gc_presents"] + 1)
+        self.assertGreater(len(set(self.reader_pixels())), 2)
+        self.assert_reader_dark_margins()
+
+    def test_reader_crossmux_illustrated_chapter_excludes_comparison(self):
+        self.preview.command("fixture 1")
+        self.preview.command("tap 220 1140")
+        self.settle()
+        self.preview.command("tap 300 650")
+        self.settle()
+        self.assertTrue(self.state()["reading"])
+        self.reader_display_settings()
+        self.preview.command("tap 424 1140")
+        day_body = self.reader_pixels()
+        self.reader_display_settings()
+        self.preview.command("tap 300 1072")
+        self.preview.command("tap 300 676")
+        crossmux_presents = self.state()["crossmux_presents"]
+        self.preview.command("tap 424 1140")
+        self.assertEqual(self.reader_pixels(), bytes(255 - value for value in day_body))
+        self.assertGreater(len(set(self.reader_pixels())), 2)
+        self.assertEqual(self.state()["crossmux_presents"], crossmux_presents)
+        self.preview.command("key 2")
+        self.settle()
+        self.assertEqual(self.state()["refresh_mode"], 5)
+        self.assertEqual(self.state()["refresh_wave"], 5)
+        self.assertEqual(self.state()["night_turns"], 1)
+        self.assertGreater(len(set(self.reader_pixels())), 2)
+        self.assertEqual(self.state()["crossmux_presents"], crossmux_presents)
+
+    def test_reader_crossmux_footer_and_controls_keep_gray_without_counting_turns(self):
+        self.page("app_os_reading")
+        self.preview.command("tap 300 900")
+        self.preview.command("tap 300 966")
+        self.page("app_os_home")
+        self.open_fixture_reader()
+        self.reader_display_settings()
+        self.preview.command("tap 300 1072")
         self.preview.command("tap 300 676")
         self.preview.command("tap 424 1140")
-        self.assertGreater(len(set(self.reader_pixels())), 2)
-        self.assertEqual(set(self.reader_pixels()[:684 * 24]), {255})
+        self.preview.command("key 2")
+        self.settle()
+        state = self.state()
+        self.assertEqual(state["night_turns"], 1)
+        self.preview.command("time_step 60")
+        self.assertEqual(self.state()["refresh_mode"], 5)
+        self.assertEqual(self.state()["refresh_wave"], 5)
+        self.assertEqual(self.state()["night_turns"], 1)
+        self.assertEqual(self.state()["body_presents"], state["body_presents"])
+        self.assertEqual(self.state()["gc_presents"], state["gc_presents"])
+        self.assertEqual(self.state()["night_area_presents"], state["night_area_presents"] + 1)
+        self.assertEqual(self.state()["crossmux_presents"], state["crossmux_presents"])
+        self.preview.command("key 1")
+        self.preview.command("tap 544 944")
+        self.preview.command("time_step 2")
+        self.assertEqual(self.state()["refresh_mode"], 5)
+        self.assertEqual(self.state()["refresh_wave"], 5)
+        self.assertEqual(self.state()["night_turns"], 1)
+        self.assertEqual(self.state()["body_presents"], state["body_presents"])
+        self.assertEqual(self.state()["gc_presents"], state["gc_presents"])
+        self.assertEqual(self.state()["crossmux_presents"], state["crossmux_presents"])
+        before = self.state()
+        self.preview.command("key 1")
+        self.assertEqual(self.state()["refresh_mode"], 5)
+        self.assertEqual(self.state()["night_turns"], 0)
+        self.assertEqual(self.state()["physical_clears"], before["physical_clears"])
+        self.assertEqual(self.state()["gc_presents"], before["gc_presents"])
+        self.assertEqual(self.state()["crossmux_action"], 1)
+        self.assertEqual(self.state()["crossmux_presents"], before["crossmux_presents"] + 1)
+        self.assertEqual(set(self.reader_pixels()), {0, 255})
 
     def test_reader_binary_guides_keep_grid_through_turns(self):
         self.preview.command("fixture 1")

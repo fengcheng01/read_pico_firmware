@@ -8,6 +8,8 @@
  * partition is not erased.
  * 冻结：0.5.25夜间实验被用户实测否定，旧bk_ngclean键不再读取或写入，已有夜间、直刷与周期选择保持。
  * Frozen: Device feedback rejects the 0.5.25 night experiment; never read or write the legacy bk_ngclean key, while retaining saved night, direct and interval choices.
+ * 冻结：用户要求可真机对照Crossmux Pico刷新策略，独立bk_ngprofile默认当前方案，不自动改旧选择；这不是整套固件移植。
+ * Frozen: The user requests an on-device comparison of Crossmux Pico refresh policy; independent bk_ngprofile defaults to current behavior without changing saved choices, and is not a whole-firmware transplant.
  */
 
 #include "settings.h"
@@ -53,6 +55,7 @@
 #define NVS_KEY_IDLE "idle_min"
 #define NVS_KEY_GC_EVERY "gc_every"
 #define NVS_KEY_BOOK_DIRECT "bk_direct"
+#define NVS_KEY_BOOK_NIGHT_PROFILE "bk_ngprofile"
 #define FONT_PATH_MAX 160
 
 static app_sleep_mode_t s_sleep = APP_SLEEP_DEEP;
@@ -88,6 +91,7 @@ static uint8_t s_idle_lock;
 // 与 app_config.h 的原编译期档一致，保持升级无行为变化。/ Matches the old compile-time tier in app_config.h; upgrades keep behavior.
 static uint8_t s_gc_every = 5;
 static bool s_book_direct;
+static uint8_t s_book_night_profile = BOOK_NIGHT_PROFILE_CURRENT;
 
 static uint8_t valid_book_px(uint8_t px) {
     return px >= 36 && px <= 72 && (px - 36) % 4 == 0 ? px : 48;
@@ -100,6 +104,7 @@ static bool gc_every_valid(uint8_t every) {
 }
 
 void app_settings_init(void) {
+    s_book_night_profile = BOOK_NIGHT_PROFILE_CURRENT;
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         nvs_flash_erase();
@@ -167,6 +172,9 @@ void app_settings_init(void) {
     if (nvs_get_u8(h, NVS_KEY_GC_EVERY, &gc_every) == ESP_OK && gc_every_valid(gc_every)) s_gc_every = gc_every;
     uint8_t direct = 0;
     if (nvs_get_u8(h, NVS_KEY_BOOK_DIRECT, &direct) == ESP_OK) s_book_direct = direct == 1;
+    uint8_t night_profile = BOOK_NIGHT_PROFILE_CURRENT;
+    if (nvs_get_u8(h, NVS_KEY_BOOK_NIGHT_PROFILE, &night_profile) == ESP_OK &&
+        night_profile <= BOOK_NIGHT_PROFILE_CROSSMUX) s_book_night_profile = night_profile;
     uint32_t clock_ppm = 0;
     if (nvs_get_u32(h, "sl_clk_ppm", &clock_ppm) == ESP_OK && clock_ppm <= 20000) {
         s_sleep_clock_ppm = (int32_t)clock_ppm - 10000;
@@ -482,6 +490,13 @@ void app_settings_set_book_direct(bool on) {
     if (s_book_direct == on) return;
     s_book_direct = on;
     nvs_put_u8_checked(NVS_KEY_BOOK_DIRECT, on);
+}
+
+uint8_t app_settings_book_night_profile(void) { return s_book_night_profile; }
+void app_settings_set_book_night_profile(uint8_t profile) {
+    if (profile > BOOK_NIGHT_PROFILE_CROSSMUX || s_book_night_profile == profile) return;
+    s_book_night_profile = profile;
+    nvs_put_u8_checked(NVS_KEY_BOOK_NIGHT_PROFILE, profile);
 }
 
 void app_settings_set_gc_every(uint8_t every) {

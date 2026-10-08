@@ -123,6 +123,16 @@ bool app_settings_book_direct(void);
 void app_settings_set_book_direct(bool on);
 
 enum {
+    BOOK_NIGHT_PROFILE_CURRENT = 0, ///< 当前清理 / Current cleanup
+    BOOK_NIGHT_PROFILE_CROSSMUX = 1, ///< Crossmux Pico 对照 / Crossmux Pico comparison
+};
+/// 夜间刷新方案，默认当前清理；Crossmux对照仅纯文字夜间使用黑白DU和周期单次GC，不移植其它固件功能。
+/// Night refresh profile defaults to current cleanup; the Crossmux comparison uses BW DU and one periodic GC for night text only, without transplanting other firmware features.
+uint8_t app_settings_book_night_profile(void);
+/// 保存有效方案，拒绝未知值；独立于已撤回的实验设置。/ Persist a valid profile, rejecting unknown values; independent of the withdrawn experiment setting.
+void app_settings_set_book_night_profile(uint8_t profile);
+
+enum {
     BOOK_TAP_ACTION_NONE = 0, ///< 无操作 / None
     BOOK_TAP_ACTION_PREV = 1, ///< 上一页 / Previous page
     BOOK_TAP_ACTION_NEXT = 2, ///< 下一页 / Next page

@@ -3,6 +3,11 @@
 按日期和作者简述对用户可见的功能变化；详细实现历史见 Git。使用方法见 [README](../README.zh-CN.md)。
 User-visible changes by date and author; Git retains implementation history. See [README](../README.md) for usage.
 
+## 0.5.27-20261008.1 · 2026-10-08
+
+- 新增“更多设置→翻页显示→夜间方案：Crossmux”可选Pico对照，默认仍为当前方案并保留已有周期/翻页选择。纯文字夜间固定黑白DU20，已知参考入口GL37、周期及手动单次GC36；未知参考保留原完整恢复，日间/插图/控件不参加。仅对照波形和策略，保留本地扫描时序；宿主UI验证通过，残影、白度与闪烁仍待真机比较。
+  Add an optional Pico comparison under More Settings → Turns/Display → Night Profile: Crossmux, retaining Current by default and saved intervals/turn choices. Night text uses binary DU20, known-reference entry GL37 and single periodic/manual GC36; unknown references retain full recovery, with day/illustrations/controls excluded. Compare waveforms and policy while retaining local scan timing; host UI checks pass, with ghosts, whiteness and flicker awaiting device comparison.
+
 ## 0.5.26 · 2026-10-08
 
 - 根据真机反馈撤回无效的定向补黑及后置局部擦写实验，移除入口与额外扫描，消除该实验引入的旧字闪动；升级不再读取已保存实验档位，保留夜间、直刷、周期及时钟修复。夜间历史残影仍未解决，手动及周期完整清理保持原方案，不承诺普通无闪翻页无残影。
