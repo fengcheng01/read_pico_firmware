@@ -3,7 +3,12 @@
 按日期和作者简述对用户可见的功能变化；详细实现历史见 Git。使用方法见 [README](../README.zh-CN.md)。
 User-visible changes by date and author; Git retains implementation history. See [README](../README.md) for usage.
 
-## 0.5.25 · 2026-10-08
+## 0.5.26 · 2026-10-08
+
+- 根据真机反馈撤回无效的定向补黑及后置局部擦写实验，移除入口与额外扫描，消除该实验引入的旧字闪动；升级不再读取已保存实验档位，保留夜间、直刷、周期及时钟修复。夜间历史残影仍未解决，手动及周期完整清理保持原方案，不承诺普通无闪翻页无残影。
+  Withdraw ineffective targeted black reinforcement and post-DU local cleaning after device feedback, removing their controls and extra scans to eliminate experimental old-glyph flashes. Upgrades ignore saved experiment choices while retaining night, direct, interval and clock fixes. Historical night ghosts remain unresolved; manual/interval full cleaning retains its prior behavior without claiming ghost-free ordinary turns.
+
+## 0.5.25 · 2026-10-08 · 已撤回 / Withdrawn
 
 - 新增可切换的夜间残影实验：关闭、定向补黑、局部擦写，本测试版缺省定向补黑；仅夜间纯文字黑白直刷，在正常DU成功后处理旧亮字已变黑的位置，保护新白字和其余黑底。局部擦写会轻闪并增加翻页耗时；到期整屏清理仍沿用原设置，标准灰阶、日间及插图不参加实验。实际残影改善需真机对照。
   Add switchable night ghosting experiments: off, targeted black reinforcement and local erase/rewrite, defaulting to reinforcement in this test build. Only text-only binary night direct turns post-scan prior light glyphs now black after successful DU, protecting new white glyphs and the remaining black background. Local cleaning flashes briefly and slows turns; due full cleaning retains its saved interval, with standard gray, day and illustrations outside the experiment. Ghost improvement requires device comparison.

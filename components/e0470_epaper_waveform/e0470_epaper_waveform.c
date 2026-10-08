@@ -12,14 +12,14 @@
  * Frozen: Device regression rejects 0.5.19 estimated monotonic gray, uniform 18-tick whitening and three entry ticks; retain vendor gray paths, with the single-tick entry table for diagnostics only.
  * 修订：端点预算差不能建立校准灰阶；未经面板实测，不再把任意单向灰阶或额外白推动交付为修复。
  * Revision: Endpoint-budget differences cannot establish calibrated gray transitions; do not ship arbitrary monotonic gray or added white drive as a fix without panel measurements.
- * 冻结：默认正文及普通重绘白白保持；用户授权的二值夜间A/B实验可在成功DU后只处理选中黑像素，实验表不得改动其他档位。
- * Frozen: Default body turns and ordinary redraws hold white; user-authorized binary-night A/B experiments may act only on selected black pixels after successful DU, without changing other profiles.
- * 修订：持续旧白字轮廓促使用户授权定向补黑与局部擦写对照；推动剂量未经光学校准，仅作实验，不承诺无残影。
- * Revision: Persistent old white glyph outlines lead the user to authorize targeted black boosting and local erase/rewrite comparisons; drive doses are not optically calibrated and remain experiments without a ghost-free claim.
+ * 冻结：正文及普通重绘白白保持，不按历史字形补擦，不触发正文周期GC16。
+ * Frozen: Body turns and ordinary redraws hold white without historical glyph cleanup or scheduled body GC16.
  * 修订：0.5.20标准正文实机黑芯发白；日间恢复厂家黑/灰对角线并用真实整页差分，夜间保留原选择性保持，避免0→0定稿使黑底整屏亮闪。
  * Revision: Standard body black cores fade on 0.5.20 hardware; day retains vendor black/gray diagonals with actual full-page differences, while night retains prior selective holds to avoid a whole-screen light flash from black-background 0→0 settling.
  * 冻结：用户本次明确优先无闪速度，直刷改用厂家黑白DU；目标仅0/15，旧灰码与20相动作顺序不得量化或重排。
  * Frozen: The user now prioritizes flicker-free speed, choosing vendor black/white DU for direct turns; targets are only 0/15, without quantizing old gray codes or reordering the 20 source phases.
+ * 实机修订：0.5.25定向补黑和后置局部擦写未改善夜间残影，后者增加旧字闪动；撤回两实验，保留普通翻页与已有周期/手动完整清理。
+ * Device revision: 0.5.25 black reinforcement and post-DU local cleaning failed to improve night ghosts, with local cleaning flashing old glyphs; withdraw both experiments and retain ordinary turns with existing interval/manual full cleaning.
  */
 
 #include "e0470_epaper_waveform.h"
@@ -235,55 +235,6 @@ const EpdWaveform E0470_DIRECT_WAVEFORM = {
     .mode_data = e0470_direct_modes, .temp_intervals = e0470_intervals,
 };
 
-/* ---- 二值夜间清理实验 / Binary-night cleanup experiments ---- */
-// 00选择已成功DU后的实际黑像素，EE与其他码保持；不作虚构的旧灰迁移，也不修改前后缓冲。
-// Selector 00 addresses actual black pixels after successful DU; EE and every other code hold, without fictional old-gray transitions or framebuffer changes.
-// 两相黑推动取厂家DU15→0的最后两黑相，随后三相中性；剂量未标定，仅用于用户授权实验。
-// Two black actions come from the last two black phases of vendor DU15→0, followed by three neutral phases; the uncalibrated dose is only for the user-authorized experiment.
-static uint8_t e0470_night_black_boost_data[E0470_NIGHT_BLACK_BOOST_FRAMES][16][4];
-static const EpdWaveformPhases e0470_night_black_boost_phases = {
-    .phases = E0470_NIGHT_BLACK_BOOST_FRAMES, .phase_times = NULL,
-    .luts = (const uint8_t*)e0470_night_black_boost_data,
-};
-static const EpdWaveformPhases* e0470_night_black_boost_ranges[] = { &e0470_night_black_boost_phases };
-static const EpdWaveformMode e0470_night_black_boost_mode = {
-    .type = 5, .temp_ranges = 1, .range_data = e0470_night_black_boost_ranges,
-};
-static const EpdWaveformMode* e0470_night_black_boost_modes[] = { &e0470_night_black_boost_mode };
-const EpdWaveform E0470_NIGHT_BLACK_BOOST_WAVEFORM = {
-    .num_modes = 1, .num_temp_ranges = 1,
-    .mode_data = e0470_night_black_boost_modes, .temp_intervals = e0470_intervals,
-};
-
-// 仅00逐相复制厂家GC16的0→0擦写；其余码保持，局部亮闪和光学清理效果须实机验证。
-// Only 00 copies vendor GC16's 0→0 erase/rewrite phase by phase; other codes hold, with local light flashing and optical cleanup requiring device verification.
-static uint8_t e0470_night_local_clean_data[E0470_NIGHT_LOCAL_CLEAN_FRAMES][16][4];
-static const EpdWaveformPhases e0470_night_local_clean_phases = {
-    .phases = E0470_NIGHT_LOCAL_CLEAN_FRAMES, .phase_times = NULL,
-    .luts = (const uint8_t*)e0470_night_local_clean_data,
-};
-static const EpdWaveformPhases* e0470_night_local_clean_ranges[] = { &e0470_night_local_clean_phases };
-static const EpdWaveformMode e0470_night_local_clean_mode = {
-    .type = 5, .temp_ranges = 1, .range_data = e0470_night_local_clean_ranges,
-};
-static const EpdWaveformMode* e0470_night_local_clean_modes[] = { &e0470_night_local_clean_mode };
-const EpdWaveform E0470_NIGHT_LOCAL_CLEAN_WAVEFORM = {
-    .num_modes = 1, .num_temp_ranges = 1,
-    .mode_data = e0470_night_local_clean_modes, .temp_intervals = e0470_intervals,
-};
-
-static void e0470_night_cleanup_build(void) {
-    memset(e0470_night_black_boost_data, 0, sizeof(e0470_night_black_boost_data));
-    int phase = E0470_NIGHT_BLACK_BOOST_ACTIVE_FRAMES - 1;
-    for (int f = E0470_FULL_DU_FRAMES - 1; f >= 0 && phase >= 0; --f) {
-        const int action = lut_get(e0470_full_du_data, f, 0, 15);
-        if (action == 1) lut_set(e0470_night_black_boost_data, phase--, 0, 0, action);
-    }
-    memset(e0470_night_local_clean_data, 0, sizeof(e0470_night_local_clean_data));
-    for (int f = 0; f < E0470_NIGHT_LOCAL_CLEAN_FRAMES; ++f)
-        lut_set(e0470_night_local_clean_data, f, 0, 0, lut_get(e0470_full_gc16_data, f, 0, 0));
-}
-
 // FF选择三相原厂擦白尾段，00和其他动作码保持；不会压黑任何像素。
 // FF selects three vendor erase-tail phases; 00 and other action codes hold, never darkening pixels.
 static uint8_t e0470_white_cleanup_data[E0470_WHITE_CLEANUP_FRAMES][16][4];
@@ -367,7 +318,6 @@ void e0470_waveform_init(void) {
         for (int gray = 0; gray < 16; ++gray) lut_set(e0470_page_gl16_data, f, gray, gray, 0);
     for (int f = 0; f < E0470_DIRECT_FRAMES; ++f)
         for (int gray = 0; gray < 16; ++gray) lut_set(e0470_direct_data, f, gray, gray, 0);
-    e0470_night_cleanup_build();
     memset(e0470_white_cleanup_data, 0, sizeof(e0470_white_cleanup_data));
     for (int f = 0; f < 3; ++f)
         lut_set(e0470_white_cleanup_data, f, 15, 15,

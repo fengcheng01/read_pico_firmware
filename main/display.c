@@ -14,10 +14,10 @@
  * Frozen: Prior references retain actual gray codes without fictional white baselines; body and ordinary navigation hold white without historical glyph cleanup.
  * 冻结：标准正文恢复厂家黑/灰对角线定稿，白白保持；日间布局入口GC16一次，夜间入口先物理清白，按钮和页脚不清理；成功清理重置夜间计数。
  * Frozen: Standard body restores vendor black/gray diagonal settling and held white; day layout entries use one GC16 while night entries physically clear first, controls/footer never clean, and successful cleaning resets night counts.
- * 冻结：用户授权旧字补黑/局部擦写实验；仅普通二值夜间直刷在DU成功后补扫实际旧亮字变黑位置，其他模式保持。
- * Frozen: The user authorizes old-glyph black reinforcement/local cleaning; only ordinary binary night direct turns post-scan actual prior light glyphs now black after successful DU; other modes retain their paths.
- * 冻结：周期到期仍完整清理并跳过实验；补扫不改前后实际帧，两扫全成功才计数，失败标未知以完整恢复。
- * Frozen: Due intervals still clean fully and skip the experiment; post-scans never change actual frames, count only after both scans succeed and mark failed baselines unknown for complete recovery.
+ * 冻结：普通夜间保持未变背景，只在用户设置周期到期清理；失败不累计，不伪造黑基准或交换厂家动作。
+ * Frozen: Ordinary night turns hold unchanged backgrounds and clean only at the user-selected interval; failures never count, without fabricated black baselines or swapped vendor actions.
+ * 实机修订：0.5.25定向补黑和后置局部擦写未改善夜间残影，后者增加旧字闪动；撤回两实验，保留普通翻页与已有周期/手动完整清理。
+ * Device revision: 0.5.25 black reinforcement and post-DU local cleaning failed to improve night ghosts, with local cleaning flashing old glyphs; withdraw both experiments and retain ordinary turns with existing interval/manual full cleaning.
  */
 
 #include "display.h"
@@ -26,13 +26,11 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
-#include <stdlib.h>
 
 #include "app_config.h"
 #include "e0470_epaper_waveform.h"
 #include "esp_log.h"
 #include "esp_timer.h"
-#include "esp_heap_caps.h"
 #include "settings.h"
 #include "read_pico_board.h"
 
@@ -91,40 +89,6 @@ static int s_soft_refreshes;
 // Both night effects share successful turns, reset after successful actual whole-screen cleaning.
 static unsigned s_night_body_turns;
 static bool s_baseline_unknown;
-// 旧字选择图按需放PSRAM并复用，不保存跨页推动预算。/ Lazily reuse a PSRAM old-glyph selector, without retaining cross-page drive budgets.
-static uint8_t* s_night_erased_mask;
-static size_t s_night_mask_bytes;
-
-static enum EpdDrawError prepare_night_mask(EpdiyHighlevelState* hl, const uint8_t** mask) {
-    size_t pixels = (size_t)epd_width() * (size_t)epd_height();
-    size_t bytes = (pixels + 7) / 8;
-    if (bytes > s_night_mask_bytes) {
-        uint8_t* next = heap_caps_calloc(1, bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-        if (!next) return EPD_DRAW_FAILED_ALLOC;
-        free(s_night_erased_mask);
-        s_night_erased_mask = next;
-        s_night_mask_bytes = bytes;
-    }
-    *mask = display_night_erased_mask(hl->back_fb, hl->front_fb, s_night_erased_mask, epd_width(), epd_height())
-            ? s_night_erased_mask : NULL;
-    return EPD_DRAW_SUCCESS;
-}
-
-static enum EpdDrawError apply_night_cleanup(EpdiyHighlevelState* hl, const uint8_t* mask, uint8_t cleanup) {
-    if (!mask || !display_night_cleanup_selectors(mask, hl->front_fb, hl->difference_fb, epd_width(), epd_height()))
-        return EPD_DRAW_SUCCESS;
-    const EpdWaveform* wave = cleanup == BOOK_NIGHT_CLEAN_LOCAL
-        ? &E0470_NIGHT_LOCAL_CLEAN_WAVEFORM : &E0470_NIGHT_BLACK_BOOST_WAVEFORM;
-    // 00是真实黑目标的显式动作，EE是该实验表的保持；不重写高层实际参考帧。
-    // 00 explicitly drives a real black target and EE holds in this experimental table; never rewrite high-level actual references.
-    uint8_t present[256] = {0};
-    present[0] = present[0xee] = 1;
-    epd_leading_skip_discard();
-    epd_leading_skip_set_present(hl->difference_fb, present);
-    use_scan_for(wave, MODE_GL16);
-    EpdRect full = epd_full_screen();
-    return epd_draw_base(full, hl->difference_fb, full, MODE_PACKING_1PPB_DIFFERENCE | MODE_GL16, 25, NULL, NULL, wave);
-}
 
 // 上电失败不扫描、不提交虚假的成功参考帧；重试沿用未知基准恢复。
 // Failed power-on must not scan or commit a false successful baseline; retries use unknown-baseline recovery.
@@ -161,8 +125,7 @@ static bool changed_page(const EpdiyHighlevelState* hl) {
 // 跟随 DU 专用于跟手，不参与页级清理计数。/ FOLLOW DU is for live tracking and excluded from page cleanup counting.
 static enum EpdDrawError hl_update(
     EpdiyHighlevelState* hl, const EpdWaveform* waveform, enum EpdDrawMode mode, bool full,
-    const EpdRect* area, bool night_body_turn, bool physical_clean,
-    const uint8_t* night_mask, uint8_t night_cleanup
+    const EpdRect* area, bool night_body_turn, bool physical_clean
 ) {
     const bool is_full_screen = area == NULL ||
         (area->x == 0 && area->y == 0 && area->width >= epd_width() && area->height >= epd_height());
@@ -221,8 +184,6 @@ static enum EpdDrawError hl_update(
     else if ((waveform == &E0470_DIRECT_WAVEFORM || waveform == &E0470_TEXTTURN_NIGHT_WAVEFORM) && (mode & 0xF) != MODE_GC16)
         result = epd_hl_update_screen_selective(hl, mode, 25, NULL);
     else result = full ? epd_hl_update_screen_full(hl, mode, 25) : epd_hl_update_screen(hl, mode, 25);
-    if (result == EPD_DRAW_SUCCESS && night_mask && !physical_clean && (mode & 0xF) != MODE_GC16)
-        result = apply_night_cleanup(hl, night_mask, night_cleanup);
     s_baseline_unknown = result != EPD_DRAW_SUCCESS;
     // 按实际扫描结果提交计数：恢复GC也归零，失败或普通控件不得推进。
     // Commit counts from the actual scan: recovery GC resets them, while failures and ordinary controls never advance them.
@@ -248,7 +209,7 @@ enum EpdDrawError update_display_mode(
         return update_display_with(hl, s_navigation_entry ? &E0470_NAVIGATION_WAVEFORM : &E0470_WAVEFORM, mode);
     use_scan_for(&E0470_WAVEFORM, mode);
     if (!power_ready()) return EPD_DRAW_POWER_NOT_READY;
-    enum EpdDrawError result = hl_update(hl, &E0470_WAVEFORM, mode, false, NULL, false, false, NULL, BOOK_NIGHT_CLEAN_OFF);
+    enum EpdDrawError result = hl_update(hl, &E0470_WAVEFORM, mode, false, NULL, false, false);
     finish_update(&E0470_WAVEFORM);
     return result;
 }
@@ -332,23 +293,10 @@ static enum EpdDrawError update_display_with_profile(
     if (clean_entry) mode = (enum EpdDrawMode)((mode & ~0xF) | MODE_GC16);
     physical_clean = physical_clean || (clean_entry &&
         (waveform == &E0470_TEXTTURN_NIGHT_WAVEFORM || night_body_turn));
-    const uint8_t* night_mask = NULL;
-    uint8_t night_cleanup = BOOK_NIGHT_CLEAN_OFF;
-    unsigned every = night_body_turn ? app_settings_gc_every() : 0;
-    bool due = every && s_night_body_turns + 1 >= every;
-    if (night_body_turn && applied == &E0470_DIRECT_WAVEFORM && (mode & 0xF) == MODE_GL16 &&
-        !physical_clean && !s_baseline_unknown && !due) {
-        uint8_t chosen = app_settings_book_night_cleanup();
-        if (chosen == BOOK_NIGHT_CLEAN_BLACK || chosen == BOOK_NIGHT_CLEAN_LOCAL) {
-            enum EpdDrawError prepared = prepare_night_mask(hl, &night_mask);
-            if (prepared != EPD_DRAW_SUCCESS) return prepared;
-            night_cleanup = chosen;
-        }
-    }
     use_scan_for(applied, mode);
     if (!power_ready()) return EPD_DRAW_POWER_NOT_READY;
     epd_hl_waveform(hl, applied);
-    enum EpdDrawError result = hl_update(hl, applied, mode, false, NULL, night_body_turn, physical_clean, night_mask, night_cleanup);
+    enum EpdDrawError result = hl_update(hl, applied, mode, false, NULL, night_body_turn, physical_clean);
     epd_hl_waveform(hl, &E0470_WAVEFORM);
     finish_update(applied);
     return result;
@@ -384,7 +332,7 @@ enum EpdDrawError update_display_area_quiet(EpdiyHighlevelState* hl, EpdRect are
     if (!power_ready()) return EPD_DRAW_POWER_NOT_READY;
     epd_hl_waveform(hl, &E0470_WAVEFORM);
     enum EpdDrawError result;
-    if (s_baseline_unknown) result = hl_update(hl, &E0470_WAVEFORM, MODE_GL16, true, &area, false, false, NULL, BOOK_NIGHT_CLEAN_OFF);
+    if (s_baseline_unknown) result = hl_update(hl, &E0470_WAVEFORM, MODE_GL16, true, &area, false, false);
     else result = epd_hl_update_area_full(hl, MODE_GL16, 25, area);
     s_baseline_unknown = result != EPD_DRAW_SUCCESS;
     epd_hl_waveform(hl, &E0470_WAVEFORM);
@@ -399,7 +347,7 @@ enum EpdDrawError update_display_area_with(
     use_scan_for(waveform, mode);
     if (!power_ready()) return EPD_DRAW_POWER_NOT_READY;
     epd_hl_waveform(hl, waveform);
-    enum EpdDrawError result = hl_update(hl, waveform, mode, false, &area, false, false, NULL, BOOK_NIGHT_CLEAN_OFF);
+    enum EpdDrawError result = hl_update(hl, waveform, mode, false, &area, false, false);
     epd_hl_waveform(hl, &E0470_WAVEFORM);
     finish_update(waveform);
     return result;

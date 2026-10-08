@@ -2,11 +2,11 @@
  * SPDX-FileCopyrightText: 2026 mindreset
  * SPDX-License-Identifier: Apache-2.0
  *
- * 中文：阅读完整帧反色、真实黑白转换与夜间旧字选择图；历史预算保留作诊断对照，产品不调用。
- * English: Reader frame inversion, actual binary conversion and night old-glyph selectors; historical budgets remain a diagnostic reference, outside product updates.
+ * 中文：阅读完整帧反色和整帧/物理区域直刷真实黑白转换；历史掩码保留作诊断对照，产品不再调用。
+ * English: Whole-reader frame inversion and actual binary direct conversion of frames/physical areas; history masks remain a diagnostic reference, outside product updates.
  *
- * 冻结：直刷量化只改真实目标为0/15；用户授权夜间实验后，旧字选择图只读前后帧，不改参考，不访问硬件。
- * Frozen: Direct quantization modifies only the actual target to 0/15; user-authorized night selectors read both frames without changing references or accessing hardware.
+ * 冻结：用户本次明确优先无闪速度，直刷阈值量化为0/15而不保留灰阶抗锯齿；只改目标帧，不访问旧参考或硬件。
+ * Frozen: The user now prioritizes flicker-free speed, thresholding direct targets to 0/15 without gray antialiasing; modify only the target frame, without accessing prior references or hardware.
  */
 #include "display_pixels.h"
 #include <stddef.h>
@@ -58,44 +58,6 @@ void display_prepare_direct_area(uint8_t* fb, int width, int height, int x, int 
 size_t display_ghost_history_bytes(int width, int height) {
     if (width <= 0 || height <= 0 || (width & 1) || (size_t)width > (SIZE_MAX - 3) / (size_t)height) return 0;
     return ((size_t)width * height + 3) / 4;
-}
-
-static size_t night_pixels(int width, int height) {
-    if (width <= 0 || height <= 0 || (width & 1) || (size_t)width > (SIZE_MAX - 7) / (size_t)height) return 0;
-    return (size_t)width * (size_t)height;
-}
-
-size_t display_night_erased_mask(const uint8_t* prior, const uint8_t* target, uint8_t* packed, int width, int height) {
-    size_t pixels = night_pixels(width, height);
-    if (!pixels || !prior || !target || !packed) return 0;
-    memset(packed, 0, (pixels + 7) / 8);
-    size_t count = 0;
-    for (size_t i = 0; i < pixels; i += 2) {
-        unsigned old = prior[i / 2], goal = target[i / 2];
-        for (unsigned j = 0; j < 2; ++j) {
-            if ((old >> (4 * j) & 15) == 0 || (goal >> (4 * j) & 15) != 0) continue;
-            size_t at = i + j;
-            packed[at / 8] |= (uint8_t)(1u << (at % 8));
-            ++count;
-        }
-    }
-    return count;
-}
-
-size_t display_night_cleanup_selectors(const uint8_t* packed, const uint8_t* target, uint8_t* selectors, int width, int height) {
-    size_t pixels = night_pixels(width, height);
-    if (!pixels || !packed || !target || !selectors) return 0;
-    size_t count = 0;
-    for (size_t i = 0; i < pixels; i += 2) {
-        unsigned goal = target[i / 2];
-        for (unsigned j = 0; j < 2; ++j) {
-            size_t at = i + j;
-            bool selected = (packed[at / 8] & (1u << (at % 8))) && (goal >> (4 * j) & 15) == 0;
-            selectors[at] = selected ? 0 : 0xee;
-            count += selected;
-        }
-    }
-    return count;
 }
 
 static void set_age(display_ghost_history_t* h, size_t i, unsigned age) {

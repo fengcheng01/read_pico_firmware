@@ -66,8 +66,6 @@ enum EpdDrawError update_display_with(
 enum EpdDrawError update_display_text_turn(EpdiyHighlevelState* hl, bool white_on_black);
 /// 厂家黑白DU直刷，实际二值目标和真实旧灰参考；日间不计周期，夜间与标准共计成功翻页。
 /// Vendor black/white DU with actual binary targets and real prior grays; day never counts, night shares successful turns with standard.
-/// 夜间实验按保存选择补扫旧亮字变黑的位置；仅两扫全成功计一次，周期清理替代实验。
-/// Saved night experiments post-scan prior light glyphs now black; count once only when both scans succeed, with due cleaning replacing the experiment.
 enum EpdDrawError update_display_text_direct(EpdiyHighlevelState* hl, bool white_on_black);
 /// 灰阶图还在屏上时置位：菜单盖上来或离页先刷白，避免从中间灰差分。
 /// Set while a gray image is still on panel: wipe to white before the menu or leave so the next update is not a mid-gray differential.

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 mindreset
 # SPDX-License-Identifier: Apache-2.0
-"""真实设置的夜间实验迁移与持久化回归。/ Real settings night-experiment migration and persistence regressions."""
+"""撤回夜间实验后的真实设置升级回归。/ Real settings upgrade regression after withdrawing night experiments."""
 from pathlib import Path
 import os
 import subprocess
@@ -30,7 +30,7 @@ typedef int nvs_handle_t;
 #define ESP_LOGW(...) ((void)0)
 static bool has_cleanup;
 static uint8_t stored_cleanup;
-static unsigned writes, commits;
+static unsigned legacy_reads, writes, commits, erases;
 static int init_error, open_error;
 static size_t host_strlcpy(char* dst,const char* src,size_t cap) {
     size_t n=strlen(src);
@@ -39,7 +39,7 @@ static size_t host_strlcpy(char* dst,const char* src,size_t cap) {
 }
 #define strlcpy host_strlcpy
 static esp_err_t nvs_flash_init(void){return init_error;}
-static esp_err_t nvs_flash_erase(void){return ESP_OK;}
+static esp_err_t nvs_flash_erase(void){++erases;return ESP_OK;}
 static esp_err_t nvs_open(const char* ns,int mode,nvs_handle_t* out) {
     assert(!strcmp(ns,"read_pico")&&(mode==NVS_READONLY||mode==NVS_READWRITE));
     *out=1;return open_error;
@@ -48,8 +48,13 @@ static void nvs_close(nvs_handle_t h){assert(h==1);}
 static esp_err_t nvs_commit(nvs_handle_t h){assert(h==1);++commits;return ESP_OK;}
 static esp_err_t nvs_get_u8(nvs_handle_t h,const char* key,uint8_t* out) {
     assert(h==1);
-    if(!strcmp(key,"bk_ngclean")&&has_cleanup){*out=stored_cleanup;return ESP_OK;}
-    // 升级夹具已有的阅读选择不可被新增选项覆盖。/ Existing reader choices in the upgrade fixture must not be overwritten.
+    if(!strcmp(key,"bk_ngclean")) {
+        ++legacy_reads;
+        if(has_cleanup){*out=stored_cleanup;return ESP_OK;}
+        return ESP_ERR_NVS_NOT_FOUND;
+    }
+    // 升级已有的夜间、直刷和周期设置继续使用；旧实验键原样留在NVS里但不读写。
+    // Preserve existing night, direct and interval choices; leave the old experiment key in NVS without reading or writing it.
     if(!strcmp(key,"bk_night")||!strcmp(key,"bk_direct")){*out=1;return ESP_OK;}
     if(!strcmp(key,"gc_every")){*out=10;return ESP_OK;}
     return ESP_ERR_NVS_NOT_FOUND;
@@ -58,8 +63,7 @@ static esp_err_t nvs_get_i8(nvs_handle_t h,const char* key,int8_t* out){(void)h;
 static esp_err_t nvs_get_u32(nvs_handle_t h,const char* key,uint32_t* out){(void)h;(void)key;(void)out;return ESP_ERR_NVS_NOT_FOUND;}
 static esp_err_t nvs_get_str(nvs_handle_t h,const char* key,char* out,size_t* cap){(void)h;(void)key;(void)out;(void)cap;return ESP_ERR_NVS_NOT_FOUND;}
 static esp_err_t nvs_set_u8(nvs_handle_t h,const char* key,uint8_t value) {
-    assert(h==1&&!strcmp(key,"bk_ngclean"));
-    has_cleanup=true;stored_cleanup=value;++writes;return ESP_OK;
+    (void)key;(void)value;assert(h==1);++writes;return ESP_OK;
 }
 static esp_err_t nvs_set_i8(nvs_handle_t h,const char* key,int8_t value){(void)h;(void)key;(void)value;assert(false);return 1;}
 static esp_err_t nvs_set_u32(nvs_handle_t h,const char* key,uint32_t value){(void)h;(void)key;(void)value;assert(false);return 1;}
@@ -73,52 +77,32 @@ static void check_existing_choices(void) {
 }
 int main(int argc,char** argv) {
     (void)argv;
-    assert(app_settings_book_night_cleanup()==BOOK_NIGHT_CLEAN_BLACK);
     if(argc>1) {
         // 启动存储不可用仍使用静态默认，不擦分区。/ An unavailable store at startup retains the static default without erasing the partition.
         init_error=5;app_settings_init();
-        assert(app_settings_book_night_cleanup()==BOOK_NIGHT_CLEAN_BLACK&&writes==0);
+        assert(!app_settings_book_night()&&!app_settings_book_direct()&&app_settings_gc_every()==5);
         init_error=0;open_error=5;app_settings_init();
-        assert(app_settings_book_night_cleanup()==BOOK_NIGHT_CLEAN_BLACK&&writes==0);
-        puts("night settings: unavailable NVS boot retains BLACK default PASS");
+        assert(!app_settings_book_night()&&!app_settings_book_direct()&&app_settings_gc_every()==5);
+        assert(!legacy_reads&&!writes&&!commits&&!erases);
+        puts("night settings withdrawal: unavailable NVS retains existing defaults without reading legacy keys or erasing PASS");
         return 0;
     }
-    app_settings_init();
-    assert(app_settings_book_night_cleanup()==BOOK_NIGHT_CLEAN_BLACK&&writes==0&&commits==0);
+    has_cleanup=false;app_settings_init();
     check_existing_choices();
-    // 所有有效档位均保存并从实际加载路径读回，重复保存不写NVS。/ Every valid tier persists and reloads through production init, while identical saves skip NVS.
-    for(uint8_t mode=BOOK_NIGHT_CLEAN_OFF;mode<=BOOK_NIGHT_CLEAN_LOCAL;++mode) {
-        unsigned before=writes;
-        app_settings_set_book_night_cleanup(mode);
-        assert(app_settings_book_night_cleanup()==mode&&writes==before+1&&commits==writes);
-        assert(stored_cleanup==mode);
-        app_settings_set_book_night_cleanup(mode);
-        assert(writes==before+1);
-        // 先改缓存，再恢复持久化夹具，防止仅检查setter缓存而漏掉加载缺陷。
-        // Change the cache before restoring the stored fixture so a getter-only check cannot hide load defects.
-        app_settings_set_book_night_cleanup((mode+1)%3);
-        stored_cleanup=mode;
+    // 曾保存的实验1/2以及其它旧值都不得进入生产加载路径，也不删除或迁移键值。
+    // Previously saved experiment tiers 1/2 and other old values never enter production loading, and their keys are neither erased nor migrated.
+    const uint8_t legacy[] = {1, 2, 0, 255};
+    for(size_t i=0;i<sizeof(legacy);++i) {
+        has_cleanup=true;stored_cleanup=legacy[i];
         app_settings_init();
-        assert(app_settings_book_night_cleanup()==mode);
         check_existing_choices();
-    }
-    for(unsigned raw=3;raw<=255;++raw) {
-        unsigned before=writes;
-        app_settings_set_book_night_cleanup((uint8_t)raw);
-        assert(app_settings_book_night_cleanup()==BOOK_NIGHT_CLEAN_LOCAL&&writes==before);
-    }
-    // 非法磁盘值和缺键回到测试版默认，不改写旧数据或其它阅读选项。/ Invalid stored values and missing keys use the test-build default without rewriting legacy data or other reader choices.
-    for(unsigned raw=3;raw<=255;++raw) {
-        has_cleanup=true;stored_cleanup=(uint8_t)raw;
-        unsigned before=writes;
-        app_settings_init();
-        assert(app_settings_book_night_cleanup()==BOOK_NIGHT_CLEAN_BLACK&&writes==before&&stored_cleanup==raw);
-        check_existing_choices();
+        assert(has_cleanup&&stored_cleanup==legacy[i]);
+        assert(!legacy_reads&&!writes&&!commits&&!erases);
     }
     has_cleanup=false;app_settings_init();
-    assert(app_settings_book_night_cleanup()==BOOK_NIGHT_CLEAN_BLACK);
     check_existing_choices();
-    puts("night settings: default/missing migration, all 3 tiers reload, unchanged saves, 253 invalid setters/stored values and retained night/direct/10-page choices PASS");
+    assert(!legacy_reads&&!writes&&!commits&&!erases);
+    puts("night settings withdrawal: legacy bk_ngclean tiers 1/2/off/invalid and missing key ignored without reads/writes/erase; night/direct/10-page choices retained PASS");
 }
 '''
 

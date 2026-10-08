@@ -1348,75 +1348,48 @@ class PreviewTests(unittest.TestCase):
         pixels = self.preview.frame.read_bytes()[len(b"P5\n684 1216\n255\n"):]
         self.assertGreater(len(set(pixels)), 2)
 
-    def test_reader_night_experiment_selection_cancel_and_persistence(self):
+    def test_reader_withdrawn_night_experiment_area_is_inert(self):
         self.open_fixture_reader()
         self.reader_display_settings()
-        black = self.preview.png
-        # 按住、滑出和控件外轻点不循环档位；取消后还原同一真实画面。
-        # Holds, slide-outs and outside taps do not cycle the tier; cancellation restores the same real frame.
-        for command in ("hold 300 1072", "swipe 300 1072 300 940", "tap 39 1072", "tap 300 1047"):
+        settings = self.preview.png
+        presents = self.state()["presents"]
+        # 旧实验按钮已撤回，该提示区域不接受动作，也不为轻点/按住/滑出追加反馈刷新。
+        # The withdrawn experiment is now inert caption space, with no action or extra feedback refresh for taps, holds or slide-outs.
+        for command in ("tap 300 1072", "hold 300 1072", "swipe 300 1072 300 940"):
             self.preview.command(command)
-            self.assertEqual(self.preview.png, black)
-            self.assertEqual(self.state()["page"], self.indices["app_book"])
-        self.preview.command("tap 40 1048")
-        local = self.preview.png
-        self.assertNotEqual(local, black)
-        self.assertEqual(self.state()["page"], self.indices["app_book"])
-        self.preview.command("tap 643 1095")
-        off = self.preview.png
-        self.assertNotEqual(off, local)
-        self.assertNotEqual(off, black)
-        self.preview.command("tap 300 1072")
-        self.assertEqual(self.preview.png, black)
-        # 排版、同步页签的同坐标不是实验按钮，六行与原直刷入口仍独立。
-        # The same coordinates are no experiment button in typography/sync tabs; six rows and the original direct entry remain independent.
-        for x in (136, 548):
-            self.preview.command(f"tap {x} 224")
-            other_group = self.preview.png
-            self.preview.command("tap 300 1072")
-            self.assertEqual(self.preview.png, other_group)
-        self.preview.command("tap 342 224")
-        self.assertEqual(self.preview.png, black)
-        self.preview.command("tap 300 1072")
-        self.assertEqual(self.preview.png, local)
+            self.assertEqual(self.preview.png, settings)
+            self.assertEqual(self.state()["presents"], presents)
+        self.preview.command("tap 300 1006")
+        self.assertNotEqual(self.preview.png, settings)
         cleans = self.state()["gc_presents"]
         self.preview.command("tap 424 1140")
-        self.assertTrue(self.state()["reading"])
         self.assertEqual(self.state()["gc_presents"], cleans + 1)
-        self.page("app_os_home")
-        self.settle()
-        self.preview.command("tap 400 425")
-        self.settle()
+        self.assertEqual(set(self.reader_pixels()), {0, 255})
         self.reader_display_settings()
-        self.assertEqual(self.preview.png, local)
-        # 离页仍保留局部擦写选择，整周期返回原图也验证真实菜单循环。
-        # The local choice survives leaving, and a full cycle returning to the original frame checks the real menu sequence.
-        for _ in range(3):
-            self.preview.command("tap 300 1072")
-        self.assertEqual(self.preview.png, local)
-
-    def test_reader_night_experiment_preserves_day_standard_and_direct_frames(self):
-        self.open_fixture_reader()
-        for direct in (False, True):
-            if direct:
-                self.reader_display_settings()
-                self.preview.command("tap 300 1006")
-                self.preview.command("tap 424 1140")
-            expected = self.reader_pixels()
-            if direct:
-                self.assertEqual(len(set(expected)), 2)
-            else:
-                self.assertGreater(len(set(expected)), 2)
-            # 日间所有实验档位返读只走既有布局清理，正文和页脚逐像素保持。
-            # Returning under every day experiment tier uses the existing layout clean and preserves body/footer pixel for pixel.
-            for _ in range(3):
-                self.reader_display_settings()
-                self.preview.command("tap 300 1072")
-                cleans = self.state()["gc_presents"]
-                self.preview.command("tap 424 1140")
-                self.assertTrue(self.state()["reading"])
-                self.assertEqual(self.state()["gc_presents"], cleans + 1)
-                self.assertEqual(self.reader_pixels(), expected)
+        self.preview.command("tap 300 676")
+        night_settings = self.preview.png
+        presents = self.state()["presents"]
+        self.preview.command("tap 300 1072")
+        self.assertEqual(self.preview.png, night_settings)
+        self.assertEqual(self.state()["presents"], presents)
+        cleans = self.state()["gc_presents"]
+        self.preview.command("tap 424 1140")
+        self.assertEqual(self.state()["gc_presents"], cleans + 1)
+        self.assert_reader_dark_margins()
+        night_body = self.reader_pixels()
+        self.reader_display_settings()
+        cleans = self.state()["gc_presents"]
+        self.preview.command("tap 164 1140")
+        self.assertEqual(self.state()["gc_presents"], cleans + 1)
+        self.assertEqual(self.reader_pixels(), night_body)
+        # 原翻页效果和夜间开关仍可回到灰阶日间，两个底栏出口保留真实正文清理。
+        # Original direct/night switches still restore gray day reading, while both bottom exits retain real body cleaning.
+        self.reader_display_settings()
+        self.preview.command("tap 300 1006")
+        self.preview.command("tap 300 676")
+        self.preview.command("tap 424 1140")
+        self.assertGreater(len(set(self.reader_pixels())), 2)
+        self.assertEqual(set(self.reader_pixels()[:684 * 24]), {255})
 
     def test_reader_binary_guides_keep_grid_through_turns(self):
         self.preview.command("fixture 1")

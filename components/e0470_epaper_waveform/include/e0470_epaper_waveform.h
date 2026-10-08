@@ -72,20 +72,6 @@ extern const EpdWaveform E0470_NAVIGATION_ENTRY_WAVEFORM;
 #define E0470_DIRECT_FRAMES (E0470_FULL_DU_FRAMES + 1)
 extern const EpdWaveform E0470_DIRECT_WAVEFORM;
 
-/// 二值夜间定向补黑实验：成功DU后仅00选中实际黑像素，两相厂家DU黑推动再三相中性；EE和其他码保持。
-/// Binary-night targeted black-boost experiment: after successful DU, only 00 selects actual black pixels for two vendor DU black actions and three neutral phases; EE and other codes hold.
-/// MODE_GL16动作选择表，不能伪造前后缓冲；剂量未经光学校准，不承诺无残影。
-/// MODE_GL16 action-selector table, without fictional framebuffers; its dose is not optically calibrated and does not promise ghost-free results.
-#define E0470_NIGHT_BLACK_BOOST_ACTIVE_FRAMES 2
-#define E0470_NIGHT_BLACK_BOOST_FRAMES (E0470_NIGHT_BLACK_BOOST_ACTIVE_FRAMES + 3)
-extern const EpdWaveform E0470_NIGHT_BLACK_BOOST_WAVEFORM;
-/// 二值夜间局部擦写实验：成功DU后仅00逐相复制完整厂家GC16黑→黑48相，EE和其他码保持。
-/// Binary-night local erase/rewrite experiment: after successful DU, only 00 copies all 48 vendor GC16 black→black phases, with EE and other codes held.
-/// MODE_GL16动作选择表，仅处理实际黑像素且保持真实缓冲；局部亮闪及清理效果须实机验证。
-/// MODE_GL16 action-selector table for actual black pixels while retaining truthful buffers; local light flashing and cleanup require device verification.
-#define E0470_NIGHT_LOCAL_CLEAN_FRAMES E0470_FULL_GC16_FRAMES
-extern const EpdWaveform E0470_NIGHT_LOCAL_CLEAN_WAVEFORM;
-
 /// 最近墨迹动作掩码专用：FF擦白三相，其他码保持，再三相中性。/ Recent-ink action masks only: FF erases for three phases, others hold, then three neutral phases.
 #define E0470_WHITE_CLEANUP_FRAMES 6
 extern const EpdWaveform E0470_WHITE_CLEANUP_WAVEFORM;
@@ -121,8 +107,8 @@ const EpdWaveformPhases* e0470_waveform_phases(const EpdWaveform* waveform, int 
 /// / 2-bit action for (from→to) at `phase`: 0 hold, 1 darken, 2 erase.
 int e0470_phase_action(const EpdWaveformPhases* phases, int phase, int to, int from);
 
-/// 生成运行时波形及夜间实验选择表。必须在第一次刷新之前调用一次。
-/// Build runtime waveforms and night experimental selector tables. Call once before the first refresh.
+/// 生成 E0470_WAVEFORM 与 E0470_FOLLOW_WAVEFORM 的表。必须在第一次刷新之前调用一次。
+/// / Build E0470_WAVEFORM and E0470_FOLLOW_WAVEFORM. Call once before the first refresh.
 void e0470_waveform_init(void);
 
 #ifdef __cplusplus

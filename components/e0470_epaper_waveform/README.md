@@ -17,8 +17,6 @@ epdiy waveform tables for the **E0470A01** 4.7" monochrome e-paper panel (684 ×
 | `E0470_TEXTTURN_WAVEFORM` | 完整厂家GL48加1相中性，保留全部变化与黑/灰对角线，白白保持 / Full vendor GL48 plus one neutral, retaining all changes and black/gray diagonals while holding white | 标准日间正文真实整页差分 / Actual full-page differences for standard day turns |
 | `E0470_TEXTTURN_NIGHT_WAVEFORM` | 厂家变化GL48加1相中性，全部对角线保持 / Vendor changed GL48 paths plus one neutral, with all diagonals held | 标准夜间选择性翻页，黑底不参与0→0定稿 / Selective standard night turns, excluding black background from 0→0 settling |
 | `E0470_DIRECT_WAVEFORM` | 厂家DU20相加1相中性，真实旧灰阶到黑白目标；中间目标全部保持 / Vendor DU 20 phases plus one neutral, actual old grays to binary targets; all intermediate targets hold | 速度优先黑白正文与搜索输入栏局推；图文章节正文不用 / Speed-first binary body turns and local search input; excluded for illustrated body turns |
-| `E0470_NIGHT_BLACK_BOOST_WAVEFORM` | 5相，仅00使用厂家DU末尾两个黑动作，其余保持 / Five phases; only 00 uses the final two vendor DU black actions, all others hold | 夜间直刷成功后定向补黑实验 / Targeted reinforcement after successful night direct DU |
-| `E0470_NIGHT_LOCAL_CLEAN_WAVEFORM` | 48相，仅00完整复制厂家GC16黑→黑，其余保持 / 48 phases; only 00 copies complete vendor GC16 black→black, all others hold | 旧字局部擦写实验，可能局部亮闪 / Local old-glyph erase/rewrite, possibly flashing locally |
 | `E0470_NAVIGATION_WAVEFORM` | 厂家GL16原48相加1相中性，保留黑/灰对角线，白白保持 / Vendor GL16 48 phases plus one neutral, preserving black/gray diagonals and holding white | 普通导航重绘 / Ordinary navigation redraws |
 | `E0470_NAVIGATION_ENTRY_WAVEFORM` | 仅真实15→15在第45相增加一次白动作，其余与NAV一致 / One added white action for actual 15→15 at phase 45 only; otherwise identical to NAV | 诊断对照，产品布局入口不调用 / Diagnostic reference, outside product layout entries |
 
@@ -121,10 +119,5 @@ Apache-2.0，见 [LICENSE](LICENSE)。波形表随本板附带，按现状提供
 
 Apache-2.0, see [LICENSE](LICENSE). The waveform tables ship with the board and are provided as-is.
 
-## 夜间实验 / Night experiment
-
-0.5.25按用户授权提供可关闭的两档实验，仅在纯文字夜间直刷的普通DU成功后调用。00表示实际目标已黑且旧帧曾亮的位置，EE及其它码保持；不伪造旧白差分。定向补黑使用厂家白→黑DU的末尾两个黑动作加三相中性；局部擦写完整复制厂家GC16真实黑→黑48相，不压缩或重排。实际帧不改，两扫全成功才计一次翻页，失败完整恢复；周期/入口/手动清理替代实验。标准、日间及图文章节不选这两张表。
-Version 0.5.25 offers two optional user-authorized experiments only after successful ordinary DU in text-only binary night turns. Selector 00 denotes an actual black target that was light in the prior frame; EE and all other codes hold without fabricated white differences. Reinforcement uses the final two black actions from vendor white→black DU plus three neutral phases. Local cleaning copies every phase of complete vendor GC16 black→black without compression or reordering. Actual frames stay unchanged; only both successful scans count, with full recovery after failure. Due/entry/manual cleanup replaces the experiment. Standard, day and illustrated chapters never select these tables.
-
-`bash tools/run_display_host_test.sh`逐相检查实际实验表的256选择码与厂家相序，以及原厂家/产品表不变。附加推动未光学校准，局部擦写可能轻闪、变慢；软件测试不能证明残影改善或长期效果，需同板对照。完整运行及失败契约见[阅读刷新说明](../../docs/READING_HOME.md#夜间旧字实验--night-old-glyph-experiment)。
-The display host runner checks all 256 selectors against actual experimental/vendor phase order and unchanged original profiles. Added drive is not optically calibrated; local cleaning can flash and slow down. Software tests establish neither ghost reduction nor long-term efficacy; compare on the same panel. The linked reading specification defines operation and failures.
+0.5.25的定向补黑及后置局部擦写实验因真机无效并增加旧字闪动，已于0.5.26删除；原厂家灰阶及DU表保持。当前没有由本仓真机验证的无闪夜间清净波形，手动与周期清理仍使用完整物理清白后GC16。
+The ineffective 0.5.25 targeted black boost and post-DU local-cleaning experiments, which added old-glyph flashes on hardware, are removed in 0.5.26. Original vendor gray and DU tables remain. This tree has no device-validated ghost-clean night waveform without flashing; manual and interval cleaning retain complete physical white clearing followed by GC16.
