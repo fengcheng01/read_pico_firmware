@@ -11,11 +11,11 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 source = (ROOT / 'main/apps/app_book.c').read_text()
 def production_function(name):
-    match = re.search(r'^static bool ' + re.escape(name) + r'\([^\n]*\) \{', source, re.M)
+    match = re.search(r'^static (?:bool|void) ' + re.escape(name) + r'\([^\n]*\) \{', source, re.M)
     assert match, name
     end = source.index('\n}', match.end()) + 2
     return source[match.start():end]
-production = production_function('reader_direct_enabled') + '\n' + production_function('present')
+production = '\n'.join(production_function(name) for name in ('finish_reader_frame', 'reader_direct_enabled', 'present'))
 harness = r'''
 #include <assert.h>
 #include <stdbool.h>
@@ -37,6 +37,7 @@ typedef struct { bool image; } blk_t;
 static book_view_t s_view,s_presented_view;
 static bool s_presented_valid,s_presented_reading_overlay,s_text_turn,s_image_open,s_toolbar,s_clear_confirm,direct;
 static bool s_quote_selecting,s_ended;
+static bool s_reader_target_night,s_reader_target_binary;
 static char* s_text;
 static blk_t* s_blocks;
 static size_t s_block_count;
@@ -45,7 +46,8 @@ static int s_mode=MODE_GL16,s_du_count;
 static int64_t s_du_ms;
 static void* s_prep_done;
 static char s_footer_status[8];
-static int E0470_WAVEFORM,E0470_NAVIGATION_WAVEFORM;
+typedef int EpdWaveform;
+static int E0470_WAVEFORM,E0470_NAVIGATION_WAVEFORM,E0470_TEXTTURN_WAVEFORM,E0470_TEXTTURN_NIGHT_WAVEFORM;
 static unsigned fulls,turns,directs,navs,areas,renders,joins,entries;
 static unsigned quantizes,serial,last_render_serial,last_quantize_serial,last_draw_serial;
 static uint8_t* last_quantize_frame;
@@ -53,10 +55,15 @@ static int last_quantize_width,last_quantize_height;
 static bool last_quantize_night;
 static void display_request_navigation_settle(void) { entries++; }
 static bool fail,prepare,night_setting,last_direct_night,last_standard_night;
+static bool last_page_night;
 static int64_t esp_timer_get_time(void) { return 0; }
 static int epd_width(void) { return 16; }
 static int epd_height(void) { return 8; }
-static void render(app_ctx_t* ctx,uint8_t* fb) { assert(ctx->fb==fb);renders++;last_render_serial=++serial; }
+static void finish_reader_frame(app_ctx_t* ctx,uint8_t* fb);
+static void display_invert_frame(uint8_t* fb,int width,int height) {(void)fb;(void)width;(void)height;}
+static void render(app_ctx_t* ctx,uint8_t* fb) {
+ assert(ctx->fb==fb);renders++;last_render_serial=++serial;finish_reader_frame(ctx,fb);
+}
 static void display_prepare_direct_frame(uint8_t* fb,int width,int height,bool night) {
  quantizes++;last_quantize_frame=fb;last_quantize_width=width;last_quantize_height=height;
  last_quantize_night=night;last_quantize_serial=++serial;
@@ -70,9 +77,12 @@ static enum EpdDrawError result(void) {last_draw_serial=++serial;return fail?EPD
 static enum EpdDrawError update_display_full(int* h) {(void)h;fulls++;return result();}
 static enum EpdDrawError update_display_text_turn(int* h,bool night) {(void)h;last_standard_night=night;turns++;return result();}
 static enum EpdDrawError update_display_text_direct(int* h,bool night) {(void)h;last_direct_night=night;directs++;return result();}
-static enum EpdDrawError update_display_with(int* h,const int* w,int mode) {(void)h;assert(w==&E0470_NAVIGATION_WAVEFORM&&mode==MODE_GL16);navs++;return result();}
+static enum EpdDrawError update_display_with(int* h,const int* w,int mode) {
+ (void)h;assert((w==&E0470_NAVIGATION_WAVEFORM||w==&E0470_TEXTTURN_NIGHT_WAVEFORM)&&mode==MODE_GL16);
+ last_page_night=w==&E0470_TEXTTURN_NIGHT_WAVEFORM;navs++;return result();
+}
 static enum EpdDrawError update_display_mode(int* h,int mode) {(void)h;(void)mode;assert(0);return result();}
-static enum EpdDrawError update_display_area_with(int* h,const int* w,int mode,EpdRect r) {(void)h;(void)r;assert(w==&E0470_WAVEFORM&&mode==MODE_GL16);areas++;return result();}
+static enum EpdDrawError update_display_area_with(int* h,const int* w,int mode,EpdRect r) {(void)h;(void)r;assert(w==(s_view==READING&&s_text?(s_reader_target_night?&E0470_TEXTTURN_NIGHT_WAVEFORM:&E0470_TEXTTURN_WAVEFORM):&E0470_WAVEFORM)&&mode==MODE_GL16);areas++;return result();}
 static EpdRect ui_rect_union(EpdRect a,EpdRect b) {(void)b;return a;}
 static void guard_draw_result(int* h,enum EpdDrawError err) {(void)h;(void)err;}
 ''' + production + r'''
@@ -107,13 +117,15 @@ int main(void) {
    s_presented_view=SHELF;s_presented_valid=true;
    present(&ctx,APP_REDRAW_PAGE);
    assert(navs==before_nav+1&&entries==before_entries+1&&fulls==before_full);
+   assert(!last_page_night&&s_reader_target_night==(bool)night&&s_reader_target_binary);
    assert(quantizes==before_quantize+1&&renders==before_render+1);
    assert(last_quantize_frame==ctx.fb&&last_quantize_width==epd_width()&&last_quantize_height==epd_height());
    assert(last_quantize_night==(bool)night&&last_render_serial<last_quantize_serial&&last_quantize_serial<last_draw_serial);
-   // 正文工具条等整页重绘仍走导航波形，量化必须在绘制之后、推屏之前。
-   // Reading toolbar page redraws keep the navigation waveform and quantize between painting and display.
+   // 同视图整页重绘按真实目标主题选波形；量化仍在绘制后、推屏前。
+   // Same-view page redraws select the actual target theme; quantization remains between painting and display.
    present(&ctx,APP_REDRAW_PAGE);
    assert(navs==before_nav+2&&entries==before_entries+1&&fulls==before_full);
+   assert(last_page_night==(bool)night);
    assert(quantizes==before_quantize+2&&renders==before_render+2);
    assert(last_quantize_frame==ctx.fb&&last_quantize_night==(bool)night);
    assert(last_render_serial<last_quantize_serial&&last_quantize_serial<last_draw_serial);
@@ -123,6 +135,7 @@ int main(void) {
    assert(quantizes==before_quantize+3&&renders==before_render+2&&last_quantize_serial<last_draw_serial);
    assert(last_quantize_frame==ctx.fb&&last_quantize_night==(bool)night);
    assert(!s_text_turn&&s_presented_valid&&s_presented_view==READING);
+   assert(s_reader_target_binary);
    // 正文叠层保留原灰阶，关闭后再使用纯正文黑白帧。
    // Reading overlays preserve grayscale before returning to the binary body frame.
    bool* overlay_flags[]={&s_clear_confirm,&s_toolbar,&s_image_open,&s_quote_selecting,&s_ended};
@@ -131,6 +144,7 @@ int main(void) {
      present(&ctx,APP_REDRAW_PAGE);
      assert(quantizes==before_quantize+3&&navs==before_nav+3+i);
      assert(fulls==before_full&&entries==before_entries+1);
+     assert(last_page_night==(bool)night&&!s_reader_target_binary);
      *overlay_flags[i]=false;
    }
    // 最后一块含图片时入口和正文翻页均保留灰阶，正文翻页不触发入口或GC16。

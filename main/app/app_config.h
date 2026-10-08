@@ -12,8 +12,8 @@
 
 #include "epdiy.h"
 
-// 普通页与正文 GL16，周期/手动 GC16，按钮反馈不触发整屏清理。
-// Ordinary pages/body use GL16; GC16 is scheduled/manual and control feedback never cleans the whole screen.
+// 普通页与标准正文使用GL16；夜间按保存周期清理，日间正文不周期，控件反馈不触发整屏清理。
+// Ordinary pages and standard body use GL16; night follows the saved cleanup interval, day body omits it, and control feedback never cleans the whole screen.
 #define APP_REFRESH_BALANCED 0
 #define APP_REFRESH_ALL_DU 1
 #define APP_REFRESH_PROFILE APP_REFRESH_BALANCED
@@ -33,5 +33,6 @@
 // 通用控件保留灰阶；连续笔迹页面有自己的 DU 出口。/ Generic controls retain grayscale; live ink owns a dedicated DU path.
 #define APP_DYNAMIC_REFRESH_MODE MODE_GL16
 
-// 非跟手更新累计到期时使用整屏 GC16。/ Accumulated non-tracking updates trigger full-screen GC16.
+// 默认周期档位；运行时沿用保存设置。通用页与成功夜间正文翻页可周期GC16，日间正文/控件排除。
+// Default interval tier; runtime retains saved settings. Generic pages and successful night body turns may schedule GC16, excluding day body/controls.
 #define APP_GC16_EVERY 5

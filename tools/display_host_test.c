@@ -130,8 +130,136 @@ static void check_history_reference(void) {
     }
 }
 
+static enum EpdDrawError night_turn(EpdiyHighlevelState* hl, bool direct) {
+    return direct ? update_display_text_direct(hl, true) : update_display_text_turn(hl, true);
+}
+
+static void assert_night_scan(EpdiyHighlevelState* hl, bool direct, bool clean) {
+    int drawn_before = draws, on_before = powerons, off_before = poweroffs, clears_before = clears;
+    unsigned selected_before = mask_draws;
+    memcpy(expected_old, hl->back_fb, FB_BYTES);
+    check_old_at_draw = true;
+    assert(night_turn(hl, direct) == EPD_DRAW_SUCCESS);
+    check_old_at_draw = false;
+    assert(draws == drawn_before + 1 && powerons == on_before + 1 && poweroffs == off_before + 1);
+    assert(last_mode == (clean ? MODE_GC16 : MODE_GL16));
+    assert(last_waveform == (clean ? &E0470_FULL_WAVEFORM : direct ? &E0470_DIRECT_WAVEFORM : &E0470_TEXTTURN_NIGHT_WAVEFORM));
+    assert(mask_draws == selected_before + (clean ? 0 : 1) && clears == clears_before);
+    assert(!memcmp(hl->front_fb, hl->back_fb, FB_BYTES) && hl->waveform == &E0470_WAVEFORM);
+}
+
+static void assert_fresh_night_cycle(EpdiyHighlevelState* hl) {
+    assert_night_scan(hl, false, false);
+    assert_night_scan(hl, true, false);
+    assert_night_scan(hl, false, true);
+}
+
+static void check_night_cycles(EpdiyHighlevelState* hl) {
+    const unsigned intervals[] = {1, 3, 5, 30};
+    // 两夜间效果单独或交替使用，都在第N次成功翻页清理一次。
+    // Both night effects alone or mixed clean once on every Nth successful turn.
+    for (unsigned n = 0; n < sizeof(intervals) / sizeof(intervals[0]); ++n) {
+        cleanup_every = intervals[n];
+        for (int profile = 0; profile < 3; ++profile) {
+            assert(update_display_full(hl) == EPD_DRAW_SUCCESS);
+            for (unsigned turn = 1; turn <= intervals[n] * 2 + 2; ++turn) {
+                memset(hl->front_fb, turn & 1 ? 0xf0 : 0x0f, FB_BYTES);
+                bool direct = profile == 1 || (profile == 2 && (turn & 1));
+                assert_night_scan(hl, direct, turn % intervals[n] == 0);
+            }
+        }
+    }
+    // 关闭期间不积累欠账，重新开启从下一次成功夜间翻页起算。
+    // Disabled cleaning accumulates no debt; reenabling starts with the next successful night turn.
+    cleanup_every = 3;
+    assert(update_display_full(hl) == EPD_DRAW_SUCCESS);
+    assert_night_scan(hl, false, false);
+    assert_night_scan(hl, true, false);
+    cleanup_every = 0;
+    for (int turn = 0; turn < 64; ++turn) assert_night_scan(hl, turn & 1, false);
+    cleanup_every = 3;
+    assert_fresh_night_cycle(hl);
+
+    // 日间两效果、普通导航、按钮和分钟局推不改变夜间周期。
+    // Day effects, ordinary navigation, controls and minute bands leave the night interval untouched.
+    assert(update_display_full(hl) == EPD_DRAW_SUCCESS);
+    assert_night_scan(hl, false, false);
+    for (int i = 0; i < 32; ++i) {
+        assert(update_display_text_turn(hl, false) == EPD_DRAW_SUCCESS && last_mode == MODE_GL16);
+        assert(update_display_text_direct(hl, false) == EPD_DRAW_SUCCESS && last_mode == MODE_GL16);
+        assert(update_display_area_with(hl, &E0470_WAVEFORM, MODE_GL16, (EpdRect){1,2,3,4}) == EPD_DRAW_SUCCESS && last_mode == MODE_GL16);
+        assert(update_display_area_quiet(hl, (EpdRect){1,2,3,4}) == EPD_DRAW_SUCCESS && last_mode == MODE_GL16);
+        assert(update_display_area_with(hl, &E0470_TEXTTURN_NIGHT_WAVEFORM, MODE_GL16, (EpdRect){1,2,3,4}) == EPD_DRAW_SUCCESS && last_mode == MODE_GL16);
+        assert(update_display_area_with(hl, &E0470_TEXTTURN_WAVEFORM, MODE_GL16, (EpdRect){0,0,epd_width(),epd_height()}) == EPD_DRAW_SUCCESS && last_mode == MODE_GL16);
+        assert(update_display_area_with(hl, &E0470_TEXTTURN_NIGHT_WAVEFORM, MODE_GL16, (EpdRect){0,0,epd_width(),epd_height()}) == EPD_DRAW_SUCCESS && last_mode == MODE_GL16);
+        assert(update_display_with(hl, &E0470_TEXTTURN_NIGHT_WAVEFORM, MODE_GL16) == EPD_DRAW_SUCCESS && last_mode == MODE_GL16);
+        assert(update_display_with(hl, &E0470_NAVIGATION_WAVEFORM, MODE_GL16) == EPD_DRAW_SUCCESS && last_mode == MODE_GL16);
+        assert(update_display_mode(hl, MODE_GL16) == EPD_DRAW_SUCCESS && last_mode == MODE_GL16);
+    }
+    assert_night_scan(hl, true, false);
+    assert_night_scan(hl, false, true);
+
+    // 布局、手动、开机及两类故障的成功全屏清理都重置未完成周期。
+    // Successful whole-screen layout, manual, boot and both fault cleanups reset an unfinished interval.
+    for (int reset_kind = 0; reset_kind < 5; ++reset_kind) {
+        assert(update_display_full(hl) == EPD_DRAW_SUCCESS);
+        assert_night_scan(hl, false, false);
+        assert_night_scan(hl, true, false);
+        if (reset_kind == 0) {
+            display_request_navigation_settle();
+            assert(update_display_mode(hl, MODE_GL16) == EPD_DRAW_SUCCESS && last_mode == MODE_GC16);
+        } else if (reset_kind == 1) {
+            assert(update_display_full(hl) == EPD_DRAW_SUCCESS);
+        } else if (reset_kind == 2) {
+            assert(display_boot_white(hl) == EPD_DRAW_SUCCESS);
+        } else if (reset_kind == 3) {
+            guard_draw_result(hl, EPD_DRAW_OTHER_ERROR);
+            assert(update_display_area_quiet(hl, (EpdRect){1,2,3,4}) == EPD_DRAW_SUCCESS && last_mode == MODE_GC16);
+        } else {
+            guard_draw_result(hl, EPD_DRAW_EMPTY_LINE_QUEUE);
+            assert(last_mode == MODE_GC16);
+        }
+        assert_fresh_night_cycle(hl);
+    }
+
+    // 普通页或到期清理失败均不提交旧参考；恢复GC不能被再次计作第1页。
+    // Failed ordinary or due turns never commit references; recovery GC must not be counted again as turn one.
+    for (int due = 0; due < 2; ++due) for (int power_failure = 0; power_failure < 2; ++power_failure) {
+        assert(update_display_full(hl) == EPD_DRAW_SUCCESS);
+        assert_night_scan(hl, false, false);
+        if (due) assert_night_scan(hl, true, false);
+        memcpy(expected_old, hl->back_fb, FB_BYTES);
+        memset(hl->front_fb, 0x0f, FB_BYTES);
+        int drawn_before = draws;
+        fail_power = power_failure != 0; fail_draw = !power_failure;
+        assert(night_turn(hl, due != 0) != EPD_DRAW_SUCCESS);
+        assert(!memcmp(hl->back_fb, expected_old, FB_BYTES));
+        if (power_failure) assert(draws == drawn_before);
+        else assert(last_mode == (due ? MODE_GC16 : MODE_GL16));
+        fail_power = fail_draw = false;
+        int clears_before = clears;
+        assert(night_turn(hl, due == 0) == EPD_DRAW_SUCCESS && last_mode == MODE_GC16);
+        assert(clears == clears_before + 1 && !memcmp(hl->front_fb, hl->back_fb, FB_BYTES));
+        assert_fresh_night_cycle(hl);
+    }
+    memcpy(hl->front_fb, target, FB_BYTES);
+    assert(update_display_full(hl) == EPD_DRAW_SUCCESS);
+}
+
 int main(void) {
     check_history_reference();
+    // 整帧反色覆盖全部打包灰码，并验证往返与无效尺寸不写内存。
+    // Whole-frame inversion covers every packed gray code, including round trips and untouched invalid dimensions.
+    uint8_t inverse[256];
+    for (unsigned i = 0; i < sizeof(inverse); ++i) inverse[i] = (uint8_t)i;
+    display_invert_frame(inverse, 32, 16);
+    for (unsigned i = 0; i < sizeof(inverse); ++i) assert(inverse[i] == (uint8_t)(i ^ 255));
+    display_invert_frame(inverse, 32, 16);
+    display_invert_frame(inverse, 31, 16);
+    display_invert_frame(inverse, 0, 16);
+    display_invert_frame(inverse, 32, -1);
+    display_invert_frame(NULL, 32, 16);
+    for (unsigned i = 0; i < sizeof(inverse); ++i) assert(inverse[i] == i);
     // 日夜均按真实灰码阈值转为黑白；穷举打包像素与边界，重复转换不变。
     // Threshold actual gray codes to black/white in both day and night; exhaust packed pixels and thresholds and verify idempotence.
     for (int night = 0; night < 2; ++night) {
@@ -231,18 +359,7 @@ int main(void) {
             assert(draws == previous_draws + 1 && clears == clears_before_reading);
         }
     }
-    // 夜间标准仍用原选择性保持，黑背景不走厂家0→0擦写，也不触发周期清理。
-    // Standard night retains selective hold, keeping black backgrounds off vendor 0→0 erasure and scheduled cleaning.
-    for (unsigned n = 0; n < sizeof(intervals) / sizeof(intervals[0]); ++n) {
-        cleanup_every = intervals[n];
-        for (int turn = 0; turn < 32; ++turn) {
-            memset(back, 0, FB_BYTES); memset(front, 0, FB_BYTES);
-            unsigned selected_before = mask_draws; int drawn_before = draws;
-            assert(update_display_text_turn(&hl, true) == EPD_DRAW_SUCCESS);
-            assert(last_mode == MODE_GL16 && last_waveform == &E0470_TEXTTURN_NIGHT_WAVEFORM);
-            assert(mask_draws == selected_before + 1 && draws == drawn_before + 1 && clears == clears_before_reading);
-        }
-    }
+    check_night_cycles(&hl);
     memcpy(front, target, FB_BYTES);
     cleanup_every = 3;
     update_display_full(&hl);
@@ -328,6 +445,18 @@ int main(void) {
     }
     // 未声明clean_page的子页也消费入口；下一次同页GL不再清理。
     // Subpages without clean_page also consume their entry; the next same-page GL never cleans again.
+    // 夜间菜单关闭仍尊重全局入口清理，不能被同视图保持路径吞掉。
+    // Night menu closing honors the global entry cleanup instead of swallowing it in a same-view hold path.
+    const EpdWaveform* reader_entries[] = {&E0470_TEXTTURN_NIGHT_WAVEFORM, &E0470_TEXTTURN_WAVEFORM, &E0470_DIRECT_WAVEFORM};
+    cleanup_every = 0;
+    for (unsigned i = 0; i < sizeof(reader_entries) / sizeof(reader_entries[0]); ++i) {
+        display_request_navigation_settle();
+        before_draws = draws;
+        assert(update_display_with(&hl, reader_entries[i], MODE_GL16) == EPD_DRAW_SUCCESS);
+        assert(draws == before_draws + 1 && last_waveform == &E0470_FULL_WAVEFORM && last_mode == MODE_GC16);
+        assert(update_display_with(&hl, reader_entries[i], MODE_GL16) == EPD_DRAW_SUCCESS);
+        assert(last_waveform == reader_entries[i] && last_mode == MODE_GL16);
+    }
     memcpy(front,target,FB_BYTES);memset(back,0x66,FB_BYTES);
     display_request_navigation_settle();before_draws=draws;
     assert(update_display_mode(&hl,MODE_GL16)==EPD_DRAW_SUCCESS);
@@ -406,7 +535,7 @@ int main(void) {
             check_old_at_draw = true;
             before_draws = draws; before_full = full_draws;
             int on_before = powerons, off_before = poweroffs;
-            assert(update_display_text_direct(&hl, (page & 1) != 0) == EPD_DRAW_SUCCESS);
+            assert(update_display_text_direct(&hl, false) == EPD_DRAW_SUCCESS);
             check_old_at_draw = false;
             assert(draws == before_draws + 1 && full_draws == before_full + 1);
             assert(powerons == on_before + 1 && poweroffs == off_before + 1);
@@ -442,5 +571,5 @@ int main(void) {
     update_display_area_quiet(&hl, (EpdRect){1,2,3,4});
     assert(mask_draws == clean_count);
     assert(allocations == 0);
-    puts("display underrun: front retained, dual-buffer diff, full GC16 recovery and bulk prefill passed");
+    puts("display: shared successful night cycles 1/3/5/30/off, excluded day/controls/footer, cleanup resets, failed retry, actual references and underrun recovery passed");
 }

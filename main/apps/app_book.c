@@ -8,13 +8,17 @@
  * 冻结：统一手势入口并接管三键为上页/工具条/下页；工具条保留强刷，长按中键或把手打开产品导航，诊断经设置访问。屏幕翻页在抬起提交，不画按下态。
  * 晃动实验默认关，只翻下一页；离页关闭AOI2并休眠。render只绘图。
  * 预渲染回调返回前收齐，避免菜单/锁屏绕过页内TTF锁。
- * 用户修订：正常正文与页脚单遍更新且不触发周期GC16；日间标准定稿黑/灰，夜间和直刷保持未变像素，白底保持。布局清理由用户另行授权。
+ * 用户修订：正文与页脚单遍更新；日间不触发周期GC16，夜间按用户选择的gc_every定期清理；日间标准定稿黑/灰，夜间和直刷保持未变像素。
+ * 冻结：实机反馈原夜间只有正文黑块、周边仍白，修订为READING及其图片/工具/确认/读完覆盖层整屏黑底；目录、阅读设置和其他页面仍用日间。
+ * Frozen: Hardware feedback showed a body-only black block with white surroundings; READING and its image/tool/confirmation/end overlays now invert the whole screen, while TOC, reader settings and other pages stay day-themed.
+ * 冻结：先组合完整日间帧再反色一次，预绘缓存保持日间；局部编辑按真实front内存主题恢复日间再转回，不把已反色目标重复反色。
+ * Frozen: Compose a complete day frame before one inversion and keep preparation caches day-themed; local edits return the actual front memory to day before restoring its target theme, without reinverting an already-inverted target.
  * 冻结：阅读设置/工具条的清残影先退出覆盖层，再清当前正文，避免清的是菜单而非阅读页。
  * Frozen: Cleaning from reader settings/tools first closes overlays, then cleans the current body instead of the menu.
- * 冻结：0.5.19实机退化后用户明确优先无闪速度，纯文字直刷改厂家黑白DU；标准及含图章节保留灰阶，不触发周期GC16。
- * Frozen: After 0.5.19 regressed on-device, the user explicitly prioritizes flash-free speed; text direct uses vendor black/white DU, standard and illustrated chapters retain gray, without scheduled GC16.
- * 冻结：0.5.20仍有布局残影，用户批准仅不同视图切换及已呈现覆盖层退出正文时请求一次清理；普通翻页、控件和后台重绘不请求。
- * Frozen: Layout ghosts remain on 0.5.20; the user authorizes one cleanup for distinct view transitions and exits from presented overlays to the body, excluding ordinary turns, controls and background redraws.
+ * 冻结：0.5.19实机退化后用户明确优先无闪速度，纯文字直刷改厂家黑白DU；标准及含图章节保留灰阶，夜间周期清理由显示层按用户档位执行。
+ * Frozen: After 0.5.19 regressed on-device, the user prioritizes flash-free speed; text direct uses vendor black/white DU and standard/illustrated chapters retain gray, with display-owned night cleanup at the user's interval.
+ * 冻结：0.5.20仍有布局残影，用户批准不同视图切换及已呈现覆盖层退出正文时请求一次入口清理；普通翻页、控件和后台重绘不追加入口请求。
+ * Frozen: Layout ghosts remain on 0.5.20; the user authorizes one entry cleanup for distinct views and exits from presented overlays to the body, without additional entry requests on ordinary turns, controls or background redraws.
  * 实机残影修订：撤回未经校准的单向灰阶、统一擦白及三相入口推白；日间标准恢复厂家黑/灰定稿，夜间及直刷保持未变像素。
  * Device-ghost revision: Withdraw uncalibrated monotonic gray, uniform whitening and three entry white actions; standard day restores vendor black/gray settling, while night and direct hold unchanged pixels.
  * 冻结：用户确认辅助线只在转场穿字，纯文字开启时统一正文/标题行网格与线位；标准段距不空槽，加大/标题段末空一槽，开关网格重排并保留文本锚点，关闭及图文排版不变。
@@ -36,7 +40,7 @@
  * Frozen: Use shared gestures and own previous/tools/next keys; retain toolbar full refresh and middle-key hold/handle product navigation, with diagnostics under Settings. Screen turns commit on release without pressed decoration.
  * Shake is experimental, off by default, forward only; exit disables AOI2 and sleeps it. Render only paints.
  * Join preparation before returning callbacks so menus/lock cannot race the page-local TTF lock.
- * User revision: present normal body/footer in one pass without scheduled GC16; standard day settles black/gray, night/direct hold unchanged pixels, and white backgrounds hold. Layout cleaning is separately authorized by the user.
+ * User revision: present body/footer in one pass; day has no scheduled GC16, while night cleans at the user's gc_every interval. Standard day settles black/gray and night/direct hold unchanged pixels.
  * Middle-key press toggles tools; holding for 500ms opens product navigation, as approved in the four-root redesign.
  * User-authorized management shows full details before separate clear/delete confirmations; retain failed saves for retry without pruning other books.
  * User revision: single-book actions use a shelf dialog; full management is for batches. Paging/sorting preserve selection; filtering/applied search and rescanning clear it.
@@ -53,12 +57,12 @@
  * Hardware feedback: reader settings add on-demand WiFi sync with confirmed pulls; cache shelf catalogs/covers across roots until source changes or loss.
  * 用户修订：阅读内进度同步隐藏服务器与用户名，只保留操作与反馈；账号仍在系统设置配置。
  * User revision: reader progress sync hides the server and username, retaining actions and feedback; account setup remains in system settings.
- * 冻结：用户拒绝Tab与正文入口黑闪；布局切换用厂家GL16及单相白底补偿，正文翻页走选择性GL16/厂家黑白DU。
- * 修订原因：0.5.19推白实验加重灰底，入口恢复0.5.18单相；普通导航白白保持。
+ * 冻结：真实Tab/正文布局入口一次厂家GC16；普通导航用厂家GL16，正文翻页用日夜标准或厂家黑白DU，夜间另按用户周期清理。
+ * 修订原因：0.5.20入口残影及夜间白字累积均可由手动清理恢复，用户批准入口清理与夜间周期清理，不再使用单相入口推白。
  * 冻结：用户要求正文长按选择所在句子，确认保存真实摘录并保留章节字节锚点；目录由工具栏访问。
  * Frozen: User-requested body holds select sentences for confirmed excerpts with chapter byte anchors; the toolbar retains TOC access.
- * Frozen: User rejects flashing Tab/body entries; layout changes use vendor GL16 with one white entry tick, while body turns use selective GL16/vendor black/white DU.
- * Revision: 0.5.19 white-drive experiments worsened gray paper; restore the 0.5.18 single tick and hold white in ordinary navigation.
+ * Frozen: Real Tab/body layout entries use one vendor GC16; ordinary navigation uses vendor GL16 and body turns use day/night standard or vendor black/white DU, with separate user-selected night cleanup.
+ * Revision: Manual cleaning restores 0.5.20 entry ghosts and accumulated white night glyphs; the user authorizes entry and periodic night cleanup instead of a single white entry action.
  * 用户批准设计稿落地：工具拆为目录/书签、添加书签、字号子面板、更多设置、清残影和书架；更多设置两组各六行，书签删除先确认，降低误触与信息密度。
  * User-approved design implementation: tools expose TOC/bookmarks, add mark, size subpanel, grouped settings, cleaning and shelf; two six-row groups and confirmed bookmark deletion reduce density and accidental loss.
  * 用户批准六项功能：目录页三页签（章节/书签/百分比跳转，书签管理或长按先确认删除）；读完面板推荐同源下一本；清残影周期改档位设置（gc_every）；异常复位日志走 os_crash；黄历锁屏在 sleep/设置侧。
@@ -179,6 +183,9 @@ static char s_message[128], s_storage[128], s_path[BOOK_STORE_PATH_MAX], s_title
 static char s_book_title[256];
 static char s_font_path[192];
 static bool s_font_notice;
+// front内存主题独立于光学提交状态；预绘始终日间，不改变这两项。
+// Front memory theme is independent of optical commit status; day preparation never changes these flags.
+static bool s_reader_target_night, s_reader_target_binary;
 static char* s_text;
 static blk_t* s_blocks;
 static size_t s_block_count;
@@ -254,6 +261,21 @@ static void draw_control(uint8_t* fb, EpdRect rect, const char* label, int id) {
 static void lock_draw(void) { if (s_draw_lock) xSemaphoreTake(s_draw_lock, portMAX_DELAY); }
 static void unlock_draw(void) { if (s_draw_lock) xSemaphoreGive(s_draw_lock); }
 static size_t fb_bytes(void) { return (size_t)epd_width() * epd_height() / 2; }
+typedef struct { bool night, binary; } reader_patch_t;
+static reader_patch_t reader_patch_begin(app_ctx_t* ctx) {
+    reader_patch_t patch = {s_reader_target_night, s_reader_target_binary};
+    if (patch.night) display_invert_frame(ctx->fb, epd_width(), epd_height());
+    return patch;
+}
+static void reader_patch_end(app_ctx_t* ctx, reader_patch_t patch) {
+    if (patch.night) display_invert_frame(ctx->fb, epd_width(), epd_height());
+    if (patch.binary) display_prepare_direct_frame(ctx->fb, epd_width(), epd_height(), patch.night);
+}
+static void finish_reader_frame(app_ctx_t* ctx, uint8_t* fb) {
+    bool night = app_settings_book_night() && (s_image_open || (s_view == READING && s_text));
+    if (night) display_invert_frame(fb, epd_width(), epd_height());
+    if (fb == ctx->fb) { s_reader_target_night = night; s_reader_target_binary = false; }
+}
 // 含已解码插图的章节保留灰阶，直刷仅处理纯文字实际黑白目标。
 // Chapters with decoded illustrations retain gray; direct uses actual black/white targets for text only.
 static bool reader_direct_enabled(void) {
@@ -272,7 +294,9 @@ static EpdRect body_rect(void) {
 // Sync typography before builds/draws; guide activation repaginates and its color stays visible in the effective direct profile.
 static void apply_typography(void) {
     book_layout_set_leading(app_settings_book_leading());
-    book_layout_set_night(app_settings_book_night());
+    // 日间规范帧包含正文、图片和线；完整组合完成后才统一转换主题。
+    // The day canonical frame includes text, images and rules; convert theme only after full composition.
+    book_layout_set_night(false);
     book_layout_set_indent(app_settings_book_indent());
     book_layout_set_paragraph(app_settings_book_para());
     book_layout_set_guide(app_settings_book_guide());
@@ -963,11 +987,11 @@ static void draw_quote(uint8_t* fb) {
 }
 static void render(app_ctx_t* ctx, uint8_t* fb) {
     lock_draw();
-    if (s_image_open) { draw_image(fb); unlock_draw(); return; }
-    if (s_view == SEARCH) { draw_search(fb); unlock_draw(); return; }
-    if (s_view == LAYOUT) { draw_layout_menu(fb); unlock_draw(); return; }
-    if (s_view == TAP_ZONES) { draw_tap_zones(fb); unlock_draw(); return; }
-    if (s_view == TOC && s_text) { draw_toc(ctx, fb); unlock_draw(); return; }
+    if (s_image_open) { draw_image(fb); goto finished; }
+    if (s_view == SEARCH) { draw_search(fb); goto finished; }
+    if (s_view == LAYOUT) { draw_layout_menu(fb); goto finished; }
+    if (s_view == TAP_ZONES) { draw_tap_zones(fb); goto finished; }
+    if (s_view == TOC && s_text) { draw_toc(ctx, fb); goto finished; }
     if (s_view == READING && s_text) {
         draw_reader(fb, s_page);
         if (s_ended) draw_ended(fb);
@@ -1030,6 +1054,8 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
             draw_control(fb, ui_row_rect(1, 2, 620, UI_BTN_H), "继续阅读", 701);
         }
     }
+finished:
+    finish_reader_frame(ctx, fb);
     unlock_draw();
 }
 static bool present(app_ctx_t* ctx, app_redraw_t redraw) {
@@ -1038,8 +1064,10 @@ static bool present(app_ctx_t* ctx, app_redraw_t redraw) {
     if (redraw == APP_REDRAW_PAGE || redraw == APP_REDRAW_FULL) render(ctx, ctx->fb);
     // 初次进正文也提交真实黑白帧，避免入口灰阶与后续DU目标不同。
     // Body entries also commit actual black/white frames so entry gray never differs from subsequent DU targets.
-    if (s_view == READING && s_text && !s_image_open && !s_toolbar && !s_clear_confirm && !s_quote_selecting && !s_ended && reader_direct_enabled())
+    if (s_view == READING && s_text && !s_image_open && !s_toolbar && !s_clear_confirm && !s_quote_selecting && !s_ended && reader_direct_enabled()) {
         display_prepare_direct_frame(ctx->fb, epd_width(), epd_height(), app_settings_book_night());
+        s_reader_target_binary = true;
+    }
     bool prep = kick_prep();
     int64_t drawn = esp_timer_get_time();
     enum EpdDrawError err;
@@ -1064,11 +1092,19 @@ static bool present(app_ctx_t* ctx, app_redraw_t redraw) {
         if (s_text_turn) {
             s_text_turn = false;
             bool direct = reader_direct_enabled();
+            if (direct) s_reader_target_binary = true;
             err = direct ? update_display_text_direct(ctx->hl, app_settings_book_night()) : update_display_text_turn(ctx->hl, app_settings_book_night());
-        } else err = update_display_area_with(ctx->hl, &E0470_WAVEFORM, s_mode, s_area);
+        } else {
+            // 阅读控件使用原灰阶表但不进入通用整页周期，字号重绘也不算翻页。
+            // Reader controls retain their gray table outside generic page counting; size redraws never count as turns.
+            const EpdWaveform* waveform = &E0470_WAVEFORM;
+            if ((s_mode & 0xF) == MODE_GL16 && s_view == READING && s_text)
+                waveform = s_reader_target_night ? &E0470_TEXTTURN_NIGHT_WAVEFORM : &E0470_TEXTTURN_WAVEFORM;
+            err = update_display_area_with(ctx->hl, waveform, s_mode, s_area);
+        }
     }
     else if (APP_PAGE_REFRESH_MODE == MODE_GL16)
-        err = update_display_with(ctx->hl, &E0470_NAVIGATION_WAVEFORM, MODE_GL16);
+        err = update_display_with(ctx->hl, s_reader_target_night ? &E0470_TEXTTURN_NIGHT_WAVEFORM : &E0470_NAVIGATION_WAVEFORM, MODE_GL16);
     else err = update_display_mode(ctx->hl, APP_PAGE_REFRESH_MODE);
     int64_t displayed = esp_timer_get_time();
     if (prep) xSemaphoreTake(s_prep_done, portMAX_DELAY);
@@ -1089,7 +1125,7 @@ static bool present(app_ctx_t* ctx, app_redraw_t redraw) {
     s_mode = MODE_GL16;
     return true;
 }
-static app_redraw_t paint_reading(app_ctx_t* ctx, enum EpdDrawMode mode) {
+static app_redraw_t paint_reading(app_ctx_t* ctx, enum EpdDrawMode mode, bool body_turn) {
     int64_t started = esp_timer_get_time();
     lock_draw();
     bool cached = !s_toolbar && !s_clear_confirm && s_next_fb && s_next_page == (int)s_page;
@@ -1101,23 +1137,28 @@ static app_redraw_t paint_reading(app_ctx_t* ctx, enum EpdDrawMode mode) {
         ui_clear_rect_fast(ctx->fb, ui_bar_rect(0, 1));
         draw_reader_footer(ctx->fb, s_page);
     }
+    finish_reader_frame(ctx, ctx->fb);
     unlock_draw();
     ESP_LOGI(TAG, "paint cached=%d ms=%lld", cached, (esp_timer_get_time() - started) / 1000);
-    // 正文、图片和页码共同推送；整屏面积交给 present 的文字转页出口。
-    // Present text, illustrations and page numbers together; the full-screen area goes through present's text-turn path.
+    // 正文、图片和页码共同推送；只有实际翻页进入正文计数，字号或延迟定稿只走控件出口。
+    // Present body, illustrations and page numbers together; only actual turns count as body turns, while size changes and delayed settles use the control path.
     s_area = (EpdRect){0, 0, UI_LOCK_WIDTH, UI_LOCK_HEIGHT};
     s_mode = mode;
-    s_text_turn = true;
+    s_text_turn = body_turn;
     return APP_REDRAW_AREA;
 }
 static void loading_detail(app_ctx_t* ctx, const char* text, const char* detail) {
     lock_draw();
+    reader_patch_t patch = reader_patch_begin(ctx);
     EpdRect r = {UI_MARGIN, UI_BAR_TOP + 8, ui_bar_rect(0, 1).width, 80};
     ui_clear_rect_fast(ctx->fb, r);
     ui_text(ctx->fb, r.x, r.y, UI_PX_CAPTION, text, EPD_DRAW_ALIGN_LEFT, false);
     if (detail) ui_text(ctx->fb, r.x, r.y + 36, UI_PX_CAPTION, detail, EPD_DRAW_ALIGN_LEFT, false);
+    reader_patch_end(ctx, patch);
     unlock_draw();
-    guard_draw_result(ctx->hl, update_display_area_with(ctx->hl, &E0470_WAVEFORM, MODE_DU, r));
+    guard_draw_result(ctx->hl, update_display_area_with(
+        ctx->hl, patch.night ? &E0470_TEXTTURN_NIGHT_WAVEFORM : &E0470_WAVEFORM,
+        patch.night ? MODE_GL16 : MODE_DU, r));
 }
 static void loading(app_ctx_t* ctx, const char* text) { loading_detail(ctx, text, NULL); }
 static app_redraw_t open_image(app_ctx_t* ctx, size_t block_index) {
@@ -1643,9 +1684,9 @@ static app_redraw_t turn_page(app_ctx_t* ctx, int dir) {
     if (s_unsaved < 8) ++s_unsaved;
     if (s_unsaved >= 8 && !s_save_failed) save_progress();
     ESP_LOGI(TAG, "turn chapter=%u page=%u/%u pct=%u", (unsigned)s_chapter, (unsigned)s_page + 1, (unsigned)book_layout_page_count(), percent(s_page));
-    // 正文与页脚一次 GL16，不触发周期黑闪。
-    // Present body/footer once with GL16 without periodic black flashes.
-    return paint_reading(ctx, MODE_GL16);
+    // 正文与页脚单次呈现；日间保持，夜间由显示层按用户周期清理。
+    // Present body/footer once; day retains its profile and display owns the user-selected night cleanup interval.
+    return paint_reading(ctx, MODE_GL16, true);
 }
 static app_redraw_t resize_text(app_ctx_t* ctx, int dir) {
     int next = s_px + dir * BOOK_PX_STEP;
@@ -1673,7 +1714,7 @@ static app_redraw_t resize_text(app_ctx_t* ctx, int dir) {
     app_settings_set_book_px(s_px);
     save_progress();
     s_size_settle_ms = ctx->now_ms + BOOK_SIZE_SETTLE_MS;
-    return paint_reading(ctx, MODE_GL16);
+    return paint_reading(ctx, MODE_GL16, false);
 }
 static void goto_font(app_ctx_t* ctx) {
     const app_desc_t* app = app_by_id(OS_APP_FONTS);
@@ -2237,6 +2278,9 @@ static bool book_sleep_prepare(void) {
     return !s_save_failed;
 }
 static void on_enter(app_ctx_t* ctx) {
+    // 外部页/全屏导航带来日间帧；后续完整绘制才发布阅读目标主题。
+    // External pages/full-screen navigation supply a day frame; the next complete draw publishes the reader target theme.
+    s_reader_target_night = s_reader_target_binary = false;
     s_presented_valid = false;
     s_presented_reading_overlay = false;
     s_text_turn = false;
@@ -2745,7 +2789,7 @@ static app_redraw_t on_tick(app_ctx_t* ctx) {
     }
     if (s_size_settle_ms && ctx->now_ms >= s_size_settle_ms) {
         s_size_settle_ms = 0;
-        if (s_view == READING && !s_image_open) return paint_reading(ctx, MODE_GL16);
+        if (s_view == READING && !s_image_open) return paint_reading(ctx, MODE_GL16, false);
     }
     if (s_view == READING && !s_image_open && s_text && !book_layout_complete() &&
         !s_toolbar && !(ctx->touch && ctx->touch->touched)) {
@@ -2777,12 +2821,18 @@ static app_redraw_t on_tick(app_ctx_t* ctx) {
         footer_status(status, sizeof(status));
         if (strcmp(status, s_footer_status)) {
             lock_draw();
+            reader_patch_t patch = reader_patch_begin(ctx);
             invalidate_prep();
             EpdRect footer = ui_bar_rect(0, 1);
             ui_clear_rect_fast(ctx->fb, footer);
             draw_reader_footer(ctx->fb, s_page);
+            reader_patch_end(ctx, patch);
             unlock_draw();
-            guard_draw_result(ctx->hl, update_display_area_quiet(ctx->hl, footer));
+            // 夜间只驱动变化，避免黑页脚未变像素经历日间定稿；此局推不计正文周期。
+            // Night drives changes only instead of day settling unchanged black footer pixels; this local push does not count as a body turn.
+            guard_draw_result(ctx->hl, patch.night
+                ? update_display_area_with(ctx->hl, &E0470_TEXTTURN_NIGHT_WAVEFORM, MODE_GL16, footer)
+                : update_display_area_quiet(ctx->hl, footer));
             copy_text(s_footer_status, sizeof(s_footer_status), status);
             return APP_REDRAW_DONE;
         }

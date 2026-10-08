@@ -3,6 +3,13 @@
 按日期和作者简述对用户可见的功能变化；详细实现历史见 Git。使用方法见 [README](../README.zh-CN.md)。
 User-visible changes by date and author; Git retains implementation history. See [README](../README.md) for usage.
 
+## 0.5.22 · 2026-10-08
+
+- 夜间阅读统一暗色正文、边距、页脚、工具条与阅读覆盖层/图片预览；目录、阅读设置等其它页面保留原配色。分页和辅助线网格不变，标准抗锯齿与直刷实际黑白目标保留。
+  Night reading darkens the body, margins, footer, tools and reading overlays/image previews together; TOC, reader settings and other pages retain their palette. Pagination/guide grids, standard antialiasing and actual binary direct targets remain.
+- 按用户选择，夜间两模式共用清残影周期：0关闭，第N次成功翻页用一次厂家GC16，失败不计数，成功布局/手动/故障GC重置；日间不周期。普通夜间GL49/DU21不改波形、不加推动，累积残影仍可手动清理，效果待真机对照。
+  Per user preference, both night profiles share the cleanup interval: 0 disables it, the Nth successful turn uses one vendor GC16, failures do not count, and successful layout/manual/recovery GC resets it. Day omits this schedule. Ordinary night GL49/DU21 keep their waveforms without added drive; accumulated ghosts remain manually cleanable and require device comparison.
+
 ## 0.5.21 · 2026-10-07
 
 - 标准日间恢复厂家完整GL49黑/灰定稿及真实整页差分，未变字芯不再直接跳过；白底保持。夜间仍选择性保持，避免黑底整屏亮闪。已获真机认可的黑白DU21与辅助线网格保持，标准字芯光学效果待复测。

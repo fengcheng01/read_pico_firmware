@@ -7,6 +7,8 @@
  * Frozen: Adapted pages only; presents record zero physical time and do not fabricate sensor values.
  * 冻结：布局入口同步设备的一次导航清理标志；普通重绘不重复，全程不模拟纸屏残影。
  * Frozen: Layout entries mirror the device's one-shot navigation cleanup marker; ordinary redraws do not repeat it, and panel ghosting is never modeled.
+ * 冻结：成功夜间正文翻页共用gc_every计数；整屏GC归零，普通控件、局推、页脚和日间翻页不计。
+ * Frozen: Successful night body turns share the gc_every count; full-screen GC resets it, and controls, local pushes, footers and day turns never count.
  */
 #include "preview_host.h"
 #include "display_pixels.h"
@@ -38,6 +40,8 @@ static int s_prev_ctx_leaf;
 static bool s_navigation_entry;
 static bool menu_open = true, white_exit;
 static int menu_leaf, unsupported = -1, asset = -1, refresh_mode, presents, gc_presents;
+static unsigned s_night_body_turns, body_presents, quiet_presents, night_area_presents;
+static int refresh_wave;
 static char font_path[TTF_FONT_PATH_MAX];
 void preview_home_fixture(int value);
 void preview_fixture(int value);
@@ -49,6 +53,8 @@ void preview_draw_lock_clock(uint8_t* framebuffer);
 const EpdWaveform E0470_WAVEFORM = {0}, E0470_FULL_WAVEFORM = {1}, E0470_GRAY8_WAVEFORM = {2};
 const EpdWaveform E0470_FOLLOW_WAVEFORM = {3};
 const EpdWaveform E0470_NAVIGATION_WAVEFORM = {4};
+const EpdWaveform E0470_TEXTTURN_NIGHT_WAVEFORM = {5};
+const EpdWaveform E0470_TEXTTURN_WAVEFORM = {7};
 
 int64_t esp_timer_get_time(void) {
     struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t);
@@ -81,13 +87,22 @@ enum EpdDrawError update_display_mode(EpdiyHighlevelState* state, enum EpdDrawMo
 void display_request_navigation_settle(void) { s_navigation_entry = true; }
 enum EpdDrawError update_display_with(EpdiyHighlevelState* state, const EpdWaveform* wave, enum EpdDrawMode mode) {
     (void)state;
+    refresh_wave = wave->unused;
     // 入口标志只在导航整页提交时提升一次；宿主记录模式，不模拟光学效果。
     // Promote a navigation page once per entry marker; the host records modes without modeling optics.
-    if (s_navigation_entry && wave == &E0470_NAVIGATION_WAVEFORM && (mode & 0xF) == MODE_GL16)
+    if (s_navigation_entry &&
+        (wave == &E0470_NAVIGATION_WAVEFORM || wave == &E0470_TEXTTURN_WAVEFORM ||
+         wave == &E0470_TEXTTURN_NIGHT_WAVEFORM) &&
+        (mode & 0xF) == MODE_GL16) {
         mode = (enum EpdDrawMode)((mode & ~0xF) | MODE_GC16);
+        refresh_wave = E0470_FULL_WAVEFORM.unused;
+    }
     enum EpdDrawError result = record_refresh(mode);
-    if (result == EPD_DRAW_SUCCESS && ((mode & 0xF) == MODE_GC16 || wave == &E0470_NAVIGATION_WAVEFORM))
+    if (result == EPD_DRAW_SUCCESS &&
+        ((mode & 0xF) == MODE_GC16 || wave == &E0470_NAVIGATION_WAVEFORM || wave == &E0470_TEXTTURN_WAVEFORM ||
+         wave == &E0470_TEXTTURN_NIGHT_WAVEFORM))
         s_navigation_entry = false;
+    if (result == EPD_DRAW_SUCCESS && (mode & 0xF) == MODE_GC16) s_night_body_turns = 0;
     return result;
 }
 enum EpdDrawError update_display_full(EpdiyHighlevelState* state) {
@@ -103,22 +118,36 @@ enum EpdDrawError update_display_from_white_with(EpdiyHighlevelState* state, con
     return result;
 }
 enum EpdDrawError update_display_area_with(EpdiyHighlevelState* state, const EpdWaveform* wave, enum EpdDrawMode mode, EpdRect area) {
-    (void)state; (void)wave; (void)area; return record_refresh(mode);
+    (void)state; (void)area; refresh_wave = wave->unused;
+    if (wave == &E0470_TEXTTURN_NIGHT_WAVEFORM) night_area_presents++;
+    return record_refresh(mode);
 }
 // 静默局推按 GL16 记账；验证时钟字带不触发全清与 DU。/ Quiet band push records GL16; clock bands stay off full cleans and DU.
 enum EpdDrawError update_display_area_quiet(EpdiyHighlevelState* state, EpdRect area) {
-    (void)state; (void)area; return record_refresh(MODE_GL16);
+    (void)state; (void)area; quiet_presents++; refresh_wave = -1; return record_refresh(MODE_GL16);
 }
 
-// 文字转页记录快速 GL16。/ Body turns record fast GL16.
+// 只记录成功正文出口和周期选择，不模拟厂家扫描或真实残影。
+// Record successful body calls and periodic mode selection without modeling vendor scans or physical ghosting.
+static enum EpdDrawError record_body(bool night, bool direct) {
+    unsigned every = night ? app_settings_gc_every() : 0;
+    bool clean = s_navigation_entry || (night && every && s_night_body_turns + 1 >= every);
+    refresh_wave = clean ? E0470_FULL_WAVEFORM.unused : direct ? 6 : night ? E0470_TEXTTURN_NIGHT_WAVEFORM.unused : 7;
+    enum EpdDrawError result = record_refresh(clean ? MODE_GC16 : MODE_GL16);
+    if (result == EPD_DRAW_SUCCESS) {
+        body_presents++;
+        s_navigation_entry = false;
+        if (clean) s_night_body_turns = 0;
+        else if (night) s_night_body_turns = every ? s_night_body_turns + 1 : 0;
+    }
+    return result;
+}
 enum EpdDrawError update_display_text_turn(EpdiyHighlevelState* state, bool white_on_black) {
-    (void)white_on_black;
-    (void)state; s_navigation_entry = false; return record_refresh(MODE_GL16);
+    (void)state; return record_body(white_on_black, false);
 }
 enum EpdDrawError update_display_text_direct(EpdiyHighlevelState* state, bool white_on_black) {
     display_prepare_direct_frame(state->front_fb, epd_width(), epd_height(), white_on_black);
-    s_navigation_entry = false;
-    return record_refresh(MODE_GL16);
+    return record_body(white_on_black, true);
 }
 
 static void present(app_redraw_t redraw) {
@@ -293,8 +322,8 @@ int main(int argc, char** argv) {
         if (!export_frame(argv[1])) { perror("frame export"); return 1; }
         static book_quote_t quote_snapshot[BOOK_QUOTES_MAX];
         size_t quote_count = book_quotes_list(quote_snapshot, BOOK_QUOTES_MAX);
-        printf("{\"page\":%d,\"menu\":%s,\"menu_leaf\":%d,\"leaf\":%d,\"asset\":%d,\"unsupported\":%d,\"refresh_mode\":%d,\"presents\":%d,\"gc_presents\":%d,\"reading\":%s,\"sync_starts\":%u,\"sync_job\":%d,\"quote_count\":%u,\"history_page\":%u,\"history_count\":%u}\n",
-               app_index_of(current), menu_open ? "true" : "false", menu_leaf, ctx.leaf, asset, unsupported, refresh_mode, presents, gc_presents,
+        printf("{\"page\":%d,\"menu\":%s,\"menu_leaf\":%d,\"leaf\":%d,\"asset\":%d,\"unsupported\":%d,\"refresh_mode\":%d,\"presents\":%d,\"gc_presents\":%d,\"refresh_wave\":%d,\"night_turns\":%u,\"body_presents\":%u,\"quiet_presents\":%u,\"night_area_presents\":%u,\"reading\":%s,\"sync_starts\":%u,\"sync_job\":%d,\"quote_count\":%u,\"history_page\":%u,\"history_count\":%u}\n",
+               app_index_of(current), menu_open ? "true" : "false", menu_leaf, ctx.leaf, asset, unsupported, refresh_mode, presents, gc_presents, refresh_wave, s_night_body_turns, body_presents, quiet_presents, night_area_presents,
                current == app_by_id(OS_APP_LIBRARY) && book_chapter_count() > 0 ? "true" : "false",
                preview_sync_starts(), preview_sync_job(), (unsigned)quote_count, book_home_snapshot()->recent_page, book_home_snapshot()->history_count);
         fflush(stdout);

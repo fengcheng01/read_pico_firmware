@@ -3,9 +3,11 @@
 # SPDX-License-Identifier: Apache-2.0
 """真实页面与灰度导出的集成检查。/ Integration checks for real pages and grayscale export."""
 import argparse
+import io
 import os
 import struct
 import unittest
+import zipfile
 import zlib
 
 from build import OUT, ROOT, build, metadata
@@ -211,6 +213,245 @@ class PreviewTests(unittest.TestCase):
 
     def page(self, symbol):
         return self.preview.command(f"page {self.indices[symbol]}")
+
+    def reader_display_settings(self):
+        self.preview.command("key 1")
+        self.preview.command("tap 136 1038")
+        self.preview.command("tap 342 224")
+
+    def reader_pixels(self):
+        frame = self.preview.frame.read_bytes()
+        header = b"P5\n684 1216\n255\n"
+        self.assertTrue(frame.startswith(header))
+        self.assertEqual(len(frame) - len(header), 684 * 1216)
+        return frame[len(header):]
+
+    def open_fixture_reader(self):
+        self.preview.command("fixture 1")
+        self.settle()
+        self.preview.command("tap 400 425")
+        self.settle()
+        self.assertTrue(self.state()["reading"])
+        # 先保存首帧进度，使主题往返比较不混入首次保存的页脚变化。
+        # Save the initial progress before comparing themes so the first footer save cannot affect the comparison.
+        self.reader_display_settings()
+        self.preview.command("tap 424 1140")
+
+    def assert_reader_dark_margins(self):
+        pixels = self.reader_pixels()
+        self.assertEqual(set(pixels[:684 * 24]), {0})
+        self.assertEqual(set(pixels[684 * 1192:]), {0})
+        self.assertEqual(set(pixels[::684]), {0})
+        self.assertEqual(set(pixels[683::684]), {0})
+
+    def test_reader_night_whole_frame_and_cached_turns(self):
+        self.open_fixture_reader()
+        day = self.reader_pixels()
+        self.reader_display_settings()
+        self.preview.command("tap 300 676")
+        # 设置保持日间，返回阅读后所有像素共同反色，包括边距和页脚。
+        # Settings stay day-themed; all reader pixels invert together on return, including margins and footer.
+        self.assertEqual(self.reader_pixels()[0], 255)
+        self.preview.command("tap 424 1140")
+        night = self.reader_pixels()
+        self.assertEqual(night, bytes(255 - value for value in day))
+        self.assert_reader_dark_margins()
+        for _ in range(2):
+            self.preview.command("key 2")
+            self.settle()
+            self.assertNotEqual(self.reader_pixels(), night)
+            self.assert_reader_dark_margins()
+            self.preview.command("key 0")
+            self.settle()
+            self.assertEqual(self.reader_pixels(), night)
+        self.reader_display_settings()
+        self.preview.command("tap 300 676")
+        self.preview.command("tap 424 1140")
+        self.assertEqual(self.reader_pixels(), day)
+
+    def test_reader_night_footer_and_size_updates_do_not_count_turns(self):
+        self.page("app_os_reading")
+        self.preview.command("tap 300 900")
+        self.preview.command("tap 300 966")
+        self.page("app_os_home")
+        self.open_fixture_reader()
+        self.reader_display_settings()
+        self.preview.command("tap 300 676")
+        self.preview.command("tap 424 1140")
+        self.preview.command("key 2")
+        self.settle()
+        before = self.reader_pixels()
+        state = self.state()
+        self.assertEqual(state["night_turns"], 1)
+        self.preview.command("time_step 60")
+        after = self.reader_pixels()
+        changed = [i for i, (a, b) in enumerate(zip(before, after)) if a != b]
+        self.assertTrue(changed)
+        self.assertTrue(all(1096 <= i // 684 < 1192 and 40 <= i % 684 < 548 for i in changed))
+        self.assertEqual(self.state()["night_turns"], 1)
+        self.assertEqual(self.state()["gc_presents"], state["gc_presents"])
+        self.assertEqual(self.state()["body_presents"], state["body_presents"])
+        self.assertEqual(self.state()["night_area_presents"], state["night_area_presents"] + 1)
+        self.assertEqual(self.state()["refresh_wave"], 5)
+        self.assert_reader_dark_margins()
+        self.preview.command("key 1")
+        self.preview.command("tap 544 944")
+        self.preview.command("tap 544 944")
+        self.preview.command("time_step 2")
+        self.assertEqual(self.state()["night_turns"], 1)
+        self.assertEqual(self.state()["body_presents"], state["body_presents"])
+        self.assertEqual(self.state()["gc_presents"], state["gc_presents"])
+        self.assertEqual(self.state()["refresh_wave"], 5)
+        self.assert_reader_dark_margins()
+
+    def test_reader_day_size_controls_keep_body_count_and_refresh_profile(self):
+        self.open_fixture_reader()
+        self.preview.command("key 1")
+        self.preview.command("tap 544 944")
+        state = self.state()
+        for _ in range(12):
+            self.preview.command("tap 544 944")
+            self.preview.command("tap 342 944")
+            self.preview.command("time_step 2")
+            self.assertEqual(self.state()["refresh_wave"], 7)
+            self.assertEqual(self.state()["body_presents"], state["body_presents"])
+            self.assertEqual(self.state()["gc_presents"], state["gc_presents"])
+            self.assertEqual(self.state()["night_turns"], 0)
+
+    def test_reader_night_period_and_menu_return(self):
+        self.open_fixture_reader()
+        self.reader_display_settings()
+        self.preview.command("tap 300 676")
+        # 默认5切到3：10、14、20、30、关、3。
+        # Cycle the fresh default 5 to 3 through 10, 14, 20, 30, off and 3.
+        for _ in range(6):
+            self.preview.command("tap 300 900")
+        self.preview.command("tap 424 1140")
+        for direct in (False, True):
+            if direct:
+                self.reader_display_settings()
+                self.preview.command("tap 300 1006")
+                self.preview.command("tap 424 1140")
+            state = self.state()
+            self.assertEqual(state["night_turns"], 0)
+            for turn in range(1, 7):
+                self.preview.command("key 2" if turn % 2 else "key 0")
+                self.settle()
+                self.assertEqual(self.state()["night_turns"], turn % 3)
+                self.assertEqual(self.state()["gc_presents"], state["gc_presents"] + turn // 3)
+                self.assertEqual(self.state()["refresh_mode"], 2 if turn % 3 == 0 else 5)
+                self.assert_reader_dark_margins()
+                if direct:
+                    self.assertEqual(set(self.reader_pixels()), {0, 255})
+            self.preview.command("key 2")
+            self.assertEqual(self.state()["night_turns"], 1)
+            before = self.reader_pixels()
+            cleans = self.state()["gc_presents"]
+            self.preview.command("menu")
+            self.preview.command("tap 650 1150")
+            self.assertFalse(self.state()["menu"])
+            self.assertEqual(self.state()["gc_presents"], cleans + 2)
+            self.assertEqual(self.state()["night_turns"], 0)
+            self.assertEqual(self.reader_pixels(), before)
+
+    def test_reader_night_disabled_cleaning_and_overlay(self):
+        self.open_fixture_reader()
+        self.reader_display_settings()
+        self.preview.command("tap 300 676")
+        # 默认5经10/14/20/30到关闭。
+        # Cycle the fresh default 5 through 10/14/20/30 to off.
+        for _ in range(5):
+            self.preview.command("tap 300 900")
+        self.preview.command("tap 424 1140")
+        cleans = self.state()["gc_presents"]
+        for _ in range(6):
+            for key in (2, 0):
+                self.preview.command(f"key {key}")
+                self.settle()
+                self.assertEqual(self.state()["gc_presents"], cleans)
+                self.assertEqual(self.state()["night_turns"], 0)
+        body = self.reader_pixels()
+        self.preview.command("hold 180 432")
+        self.assertNotEqual(self.reader_pixels(), body)
+        self.assert_reader_dark_margins()
+        self.assertEqual(self.state()["refresh_wave"], 5)
+        self.assertEqual(self.state()["gc_presents"], cleans)
+        self.preview.command("tap 190 974")
+        self.assertEqual(self.state()["gc_presents"], cleans + 1)
+        self.assertEqual(self.reader_pixels(), body)
+
+    def test_reader_night_illustrated_chapter_retains_gray(self):
+        self.preview.command("fixture 1")
+        self.preview.command("tap 220 1140")
+        self.settle()
+        self.preview.command("tap 300 650")
+        self.settle()
+        self.assertTrue(self.state()["reading"])
+        self.reader_display_settings()
+        self.preview.command("tap 424 1140")
+        day_body = self.reader_pixels()
+        self.reader_display_settings()
+        self.preview.command("tap 300 676")
+        self.preview.command("tap 300 1006")
+        self.preview.command("tap 424 1140")
+        night_body = self.reader_pixels()
+        self.assertEqual(night_body, bytes(255 - value for value in day_body))
+        self.assertGreater(len(set(night_body)), 2)
+        self.preview.command("key 2")
+        self.settle()
+        # 插图章节在直刷设置下仍使用灰阶。
+        # Illustrated chapters retain gray in direct settings.
+        self.assertEqual(self.state()["refresh_wave"], 5)
+        self.assertEqual(self.state()["night_turns"], 1)
+        self.assertGreater(len(set(self.reader_pixels())), 2)
+        self.assert_reader_dark_margins()
+
+    def test_reader_night_image_placeholder_preview(self):
+        # 已解码内嵌图直接绘制；缺失资源保留可点击占位，进入真实预览错误页。
+        # Decoded images draw inline; a missing resource keeps a tappable placeholder leading to the real preview error page.
+        path = OUT / "fx/f/封面之书.epub"
+        original = path.read_bytes()
+        self.addCleanup(path.write_bytes, original)
+        with zipfile.ZipFile(io.BytesIO(original)) as source, zipfile.ZipFile(path, "w") as target:
+            for info in source.infolist():
+                data = source.read(info)
+                if info.filename == "OEBPS/c1.xhtml":
+                    data = data.replace(b'src="cover.png"', b'src="missing.png"')
+                target.writestr(info, data)
+        self.preview.command("fixture 1")
+        self.preview.command("tap 220 1140")
+        self.settle()
+        self.preview.command("tap 300 650")
+        self.settle()
+        # 先完成夹具后台分页，避免页脚总数变化混入反色和预览返回比较。
+        # Complete fixture background pagination so changing footer totals cannot affect theme or preview-return comparisons.
+        for _ in range(64):
+            self.preview.command("tick")
+        self.reader_display_settings()
+        self.preview.command("tap 424 1140")
+        day_body = self.reader_pixels()
+        self.preview.command("tap 330 300")
+        day_image = self.reader_pixels()
+        self.assertNotEqual(day_image, day_body)
+        self.preview.command("tap 300 1140")
+        self.assertEqual(self.reader_pixels(), day_body)
+        self.reader_display_settings()
+        self.preview.command("tap 300 676")
+        self.preview.command("tap 424 1140")
+        night_body = self.reader_pixels()
+        self.assertEqual(night_body, bytes(255 - value for value in day_body))
+        state = self.state()
+        self.preview.command("tap 330 300")
+        self.assertEqual(self.reader_pixels(), bytes(255 - value for value in day_image))
+        self.assert_reader_dark_margins()
+        self.assertEqual(self.state()["refresh_wave"], 5)
+        self.assertEqual(self.state()["night_turns"], 0)
+        self.assertEqual(self.state()["body_presents"], state["body_presents"])
+        self.assertEqual(self.state()["night_area_presents"], state["night_area_presents"] + 1)
+        self.assertEqual(self.state()["gc_presents"], state["gc_presents"])
+        self.preview.command("tap 300 1140")
+        self.assertEqual(self.reader_pixels(), night_body)
+        self.assertEqual(self.state()["gc_presents"], state["gc_presents"] + 1)
 
     def test_registry_and_menu_navigation(self):
         self.assertEqual(self.preview.pages, metadata())

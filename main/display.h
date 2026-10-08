@@ -58,10 +58,11 @@ enum EpdDrawError update_display_full(EpdiyHighlevelState* hl);
 enum EpdDrawError update_display_with(
     EpdiyHighlevelState* hl, const EpdWaveform* waveform, enum EpdDrawMode mode
 );
-/// 标准正文：日间厂家GL16黑/灰定稿，夜间未变保持，两者不计清理周期。
-/// Standard body: vendor GL16 black/gray settling by day and unchanged-pixel hold at night, both outside cleanup counting.
+/// 标准正文：日间厂家GL16不计周期；夜间保持，与直刷共计成功翻页，按gc_every清理（0关）。
+/// Standard body: vendor GL16 by day without counting; night holds and shares successful-turn gc_every cleaning with direct (0 disables).
 enum EpdDrawError update_display_text_turn(EpdiyHighlevelState* hl, bool white_on_black);
-/// 可选厂家黑白DU直刷，实际二值目标、真实旧灰参考，不计周期GC16。/ Optional vendor black/white DU with actual binary targets and real prior gray references, outside scheduled GC16.
+/// 厂家黑白DU直刷，实际二值目标和真实旧灰参考；日间不计周期，夜间与标准共计成功翻页。
+/// Vendor black/white DU with actual binary targets and real prior grays; day never counts, night shares successful turns with standard.
 enum EpdDrawError update_display_text_direct(EpdiyHighlevelState* hl, bool white_on_black);
 /// 灰阶图还在屏上时置位：菜单盖上来或离页先刷白，避免从中间灰差分。
 /// Set while a gray image is still on panel: wipe to white before the menu or leave so the next update is not a mid-gray differential.

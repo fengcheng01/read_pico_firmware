@@ -52,6 +52,7 @@ enum EpdFontFlags { EPD_DRAW_BACKGROUND = 1, EPD_DRAW_ALIGN_LEFT = 2, EPD_DRAW_A
 extern const EpdWaveform E0470_WAVEFORM, E0470_FULL_WAVEFORM, E0470_GRAY8_WAVEFORM;
 extern const EpdWaveform E0470_FOLLOW_WAVEFORM;
 extern const EpdWaveform E0470_NAVIGATION_WAVEFORM;
+extern const EpdWaveform E0470_TEXTTURN_WAVEFORM, E0470_TEXTTURN_NIGHT_WAVEFORM;
 int epd_width(void);
 int epd_height(void);
 int epd_rotated_display_width(void);

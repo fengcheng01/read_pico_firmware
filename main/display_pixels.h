@@ -13,6 +13,9 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+/// 把完整实际4bit帧反色一次；不是幂等操作，调用方须区分日间规范帧与目标帧。/ Invert a complete actual 4-bit frame once; this is not idempotent, so the caller must distinguish day canonical and target frames.
+void display_invert_frame(uint8_t* fb, int width, int height);
+
 /// 按低于8为黑、其余为白转为0/15；扫描与提交同帧，日夜不翻转。/ Threshold below 8 to black and all others to white at 0/15; scan and commit the same frame without day/night inversion.
 void display_prepare_direct_frame(uint8_t* fb, int width, int height, bool white_on_black);
 

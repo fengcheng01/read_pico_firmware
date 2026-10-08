@@ -2,8 +2,8 @@
  * SPDX-FileCopyrightText: 2026 mindreset
  * SPDX-License-Identifier: Apache-2.0
  *
- * 中文：直刷转换真实黑白目标；历史掩码保留作诊断对照，产品不再调用。
- * English: Direct converts actual black/white targets; history masks remain a diagnostic reference, outside product updates.
+ * 中文：阅读完整帧反色和直刷真实黑白转换；历史掩码保留作诊断对照，产品不再调用。
+ * English: Whole-reader frame inversion and actual binary direct conversion; history masks remain a diagnostic reference, outside product updates.
  *
  * 冻结：用户本次明确优先无闪速度，直刷阈值量化为0/15而不保留灰阶抗锯齿；只改目标帧，不访问旧参考或硬件。
  * Frozen: The user now prioritizes flicker-free speed, thresholding direct targets to 0/15 without gray antialiasing; modify only the target frame, without accessing prior references or hardware.
@@ -11,6 +11,12 @@
 #include "display_pixels.h"
 #include <stddef.h>
 #include <string.h>
+
+void display_invert_frame(uint8_t* fb, int width, int height) {
+    if (!fb || width <= 0 || height <= 0 || (width & 1) || (size_t)width > SIZE_MAX / (size_t)height) return;
+    size_t bytes = (size_t)width * (size_t)height / 2;
+    for (size_t i = 0; i < bytes; ++i) fb[i] ^= 0xFF;
+}
 
 void display_prepare_direct_frame(uint8_t* fb, int width, int height, bool white_on_black) {
     if (!fb || width <= 0 || height <= 0 || (width & 1)) return;

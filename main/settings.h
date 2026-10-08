@@ -71,7 +71,8 @@ void app_settings_set_book_auto(uint8_t tier);
 /// 正文左右分区点击翻页，默认开。/ Body left/right tap-zone page turns, on by default.
 bool app_settings_book_tap(void);
 void app_settings_set_book_tap(bool on);
-/// 正文夜间模式（白字黑底），默认关。/ Body night mode (white on black), off by default.
+/// 阅读画面夜间模式：正文、边距、页脚及阅读覆盖层统一反色，默认关；目录/设置等其它页面不反色。
+/// Reader night mode inverts body, margins, footer and reading overlays together, off by default; TOC/settings and other pages keep their palette.
 bool app_settings_book_night(void);
 void app_settings_set_book_night(bool on);
 /// 锁屏样式 0=静态 1=时钟 2=日历 3=黄历，默认静态。/ Lock style 0=static 1=clock 2=calendar 3=almanac, initially static.
@@ -110,11 +111,14 @@ bool app_settings_set_lock_pin(const char* pin);
 /// Unlock challenge cadence: true verifies every unlock, false boot-only (light-sleep wake skips it). True by default.
 bool app_settings_lock_pin_wake(void);
 void app_settings_set_lock_pin_wake(bool on);
-/// 清残影周期：差分刷多少次后升一次全像素 GC16，0=关；档位 0/3/5/10/14/20/30，默认 14（原编译期档）。
-/// Ghost-cleanup period: promote one full-pixel GC16 after this many soft updates, 0=off; tiers 0/3/5/10/14/20/30, initially 14 (the old compile-time tier).
+/// 清残影周期：通用页及成功夜间正文翻页使用，日间正文/控件不计数；0=关，档位0/3/5/10/14/20/30，新装默认5。
+/// Cleanup interval for generic pages and successful night body turns, excluding day body/controls; 0=off, tiers 0/3/5/10/14/20/30, fresh default 5.
+/// 夜间两模式共用计数，第N次用厂家GC16；失败不计数，任何成功整屏GC或开机清白重置，关闭后的成功夜间翻页清除未完成周期。
+/// Both night profiles share a count and use vendor GC16 on turn N; failures do not count, any successful full-screen GC or boot white clear resets it, and successful disabled night turns clear an unfinished interval.
 uint8_t app_settings_gc_every(void);
 void app_settings_set_gc_every(uint8_t every);
-/// 可选正文八档灰阶直刷，默认关；图片章节保留标准GL16。/ Optional eight-gray direct body turns, off by default; image chapters retain standard GL16.
+/// 可选厂家黑白DU直刷，真实目标0/15、不保留灰阶抗锯齿，默认关；已解码图片章节保留标准GL16。
+/// Optional vendor black/white DU direct with actual targets 0/15 and no gray antialiasing, off by default; decoded-image chapters retain standard GL16.
 bool app_settings_book_direct(void);
 void app_settings_set_book_direct(bool on);
 
