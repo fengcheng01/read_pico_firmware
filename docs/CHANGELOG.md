@@ -3,6 +3,11 @@
 按日期和作者简述对用户可见的功能变化；详细实现历史见 Git。使用方法见 [README](../README.zh-CN.md)。
 User-visible changes by date and author; Git retains implementation history. See [README](../README.md) for usage.
 
+## 0.5.24 · 2026-10-08
+
+- 修复异常复位日志在非零启动时刻把时间锚定到零、导致后续显示额外加上启动耗时的问题；日志使用实际单调时间，写盘重试保留已有可信锚点与走时学习窗口。离线长期快慢仍取决于睡眠时钟、已保存补偿和重启时的PMU起点，需要真机对照。
+  Fix abnormal-reset logging anchoring time at zero after boot has progressed, which added boot elapsed time to later displays. Logs use the actual monotonic time and preserve trusted anchors and learning windows through write retries. Long-term offline drift still depends on the sleep clock, stored compensation and the PMU restart baseline, requiring device comparison.
+
 ## 0.5.23 · 2026-10-08
 
 - 夜间手动清残影、实际返回正文布局及周期到期时，先物理清白再用厂家GC16呈现保留的正文，针对设置轮廓残留；一次操作可能多次闪动且更慢，实际残影仍需真机复测。普通夜间翻页、日间、字体网格和触摸队列保持。

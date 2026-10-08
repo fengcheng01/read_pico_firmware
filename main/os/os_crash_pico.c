@@ -13,6 +13,8 @@
  * Frozen: Write /flash only through the format-free mount of
  * book_store_read_roots; failures keep the pending record for the next call
  * and never retry from other threads.
+ * 冻结：日志读取当前时间，不作废已有锚点或学习样本；异常开机已耗时，轮询必须使用真实单调时间。
+ * Frozen: Logs read current time without invalidating anchors or learning samples; abnormal boot takes time, so polling must use the actual monotonic clock.
  */
 #include "os_crash.h"
 
@@ -23,6 +25,7 @@
 #include "book_store.h"
 #include "esp_log.h"
 #include "esp_system.h"
+#include "esp_timer.h"
 #include "os_time.h"
 
 static const char* TAG = "os_crash";
@@ -60,8 +63,8 @@ void os_crash_flush(void) {
         fclose(file);
         if (len > OS_CRASH_LOG_MAX) len = OS_CRASH_LOG_MAX;
     }
-    os_time_invalidate();
-    os_time_poll(0);
+    os_time_force_poll();
+    os_time_poll(esp_timer_get_time() / 1000);
     char record[32];
     int reason = (int)esp_reset_reason();
     size_t record_len = os_crash_format_record(record, sizeof(record),

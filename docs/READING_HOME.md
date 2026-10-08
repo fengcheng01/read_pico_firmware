@@ -44,6 +44,8 @@ This branch rebuilds the product UI atop the existing drivers and reading engine
   Lock styles offer static/clock/calendar/almanac (in Sleep settings); clock/calendar/almanac use PMU RTC local time and fall back to the static image while uncalibrated. The almanac face shows the lunar day large plus the ganzhi year, zodiac, lunar month and solar date (`os_lunar` pure conversion over the public 1900–2100 table with Spring-Festival/Dragon-Boat/Mid-Autumn anchors; 宜读书 is fixed copy, never per-day do/don't data). The lock PIN is 4 digits and blocks at boot before the loop (no menu bypass); Settings can change or clear it, and light-sleep wakes also require the PIN, transitioning directly from the lock face.
 - 异常重启记录：开机读复位原因，panic/看门狗/掉电类复位在内置 FAT 的 `crash.log` 追加一行（时间戳可能为 0=未校时），有界 4 KiB 裁尾；存储页显示条数与最近原因。IDF v6 未公开 panic 钩子，记录不含反栈；日志只写内置存储，不写 TF 卡。
   Abnormal-reset log: boot reads the reset reason and appends one line for panic/watchdog/brownout resets to `crash.log` on the internal FAT (timestamps may read 0 while uncalibrated), bounded to 4 KiB with line-boundary trimming; the Storage page shows the count and latest reason. IDF v6 exposes no panic hook, so no backtrace is captured; the log never touches the TF card.
+  日志读取以实际单调时间轮询，不作废已有UTC锚点和走时学习样本；启动耗时或写盘重试不能额外推进显示时间。
+  Log reads poll at the actual monotonic time and retain UTC anchors and clock-learning samples; boot elapsed time and write retries must not advance displayed time again.
 - 传书页主视图换为产品页眉与连接/状态两张卡片；配网、二维码与停止语义不变。新增“进度同步”入口（kosync 协议，兼容 KOReader 与各 kosync 服务器）：服务器/用户名/密码用传书页键盘输入，密码仅以 MD5 保存与传输；手动“上传进度/下载进度”作用于最后一本读过的书，或开启每次已有 WiFi 会话自动上传一次。文档标识为 KOReader 部分 MD5（12 个偏移各 1024 字节），EPUB 优先以真实章节/叶节点路径、text()[N]及Unicode偏移和 KOReader 双向同步，提示“文本位置”（旧记录为“段落位置”）；TXT 和不支持的 EPUB 结构保留 rp1，同格式同文件大小精确恢复；无法解析的外部位置仍按百分比近似并明确提示。传书与阅读设置中的上传/下载按需自动连接已保存 WiFi，https 校验证书不自跳过；自建服务器可用 http。
   The transfer home uses the product header with connection/status cards; provisioning, QR and stop semantics are unchanged. A new progress-sync entry (kosync protocol, compatible with KOReader and kosync servers) edits server/username/password through the transfer keyboard, with the password stored and sent only as MD5; manual push/pull act on the last-read book, or auto-push once per STA session. Document identity is KOReader's partial MD5 (1024 bytes at 12 offsets); EPUB prefers real chapter/leaf-node paths, text()[N] and Unicode offsets for bidirectional KOReader sync, with a text-location notice (paragraph location for legacy records); TXT and unsupported EPUB structures retain exact rp1 restoration for matching file sizes. Unresolved external locations use percentage fallback with an explicit notice. Transfer/reader push and pull connect saved WiFi on demand, https verifies certificates without skipping, and self-hosted servers may use http.
 
@@ -90,12 +92,16 @@ The Metalio E-ink 4 Plus has no developer sources available here yet; no flashab
 
 ```sh
 python3 tools/run_os_home_tests.py
+python3 tools/clock_crash_host_test.py --verify-regression
 python3 tools/book_ui_host_test.py
 python3 tools/book_guide_host_test.py
 python3 tools/preview/verify.py --sanitize
 bash tools/run_app_loop_host_tests.sh
 python3 tools/test_sd_media_guard.py
 ```
+
+崩溃/时间联测编译真实设备桥，替换PMU、网络与存储边界，覆盖非零启动时刻、失败重试及学习窗口；`--verify-regression`仅在临时夹具恢复旧处理，确认两条路径均能检出时间错误，不修改源码。主机模型不测量物理离线走时。
+The crash/time integration test compiles real device bridges with PMU, network and storage boundaries replaced, covering nonzero boot time, failed retries and learning windows. `--verify-regression` restores the former handling only in a temporary fixture to confirm both paths detect the time error without modifying sources. Host models do not measure physical offline drift.
 
 电脑预览与设备**共享同一份产品源码**（含完整阅读器 `app_book`、阅读引擎、设置/进度/统计、同步协议与搜索），仅由 `esp_host.c` 仿真 NVS/FreeRTOS/内存堆等 ESP-IDF 边界；`parity.py` 强制两侧源码清单一致，设备专属桥与显式替身必须登记。夹具书为真实文件，扫描/打开/进度/删除路径全走真实代码。不挂载卡、不读 NVS，不据此验收 TXT/EPUB 文件生命周期、持久进度、删除或上传。这些测试不等于 ESP-IDF 构建、PSRAM/并发、波形、休眠或真机验收。旧 macOS 测试 SDK 不匹配时仅为当次命令选择当前 Xcode SDK。
 
