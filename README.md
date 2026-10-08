@@ -31,6 +31,10 @@ Agent-facing layout, `app_desc_t` contract, glossary and comment style are in
 
 The refined toolbar exposes TOC/bookmarks, Add Bookmark, a size subpanel, More Settings, Clean and Library. Settings group typography, turns/display and progress sync. Bookmark deletion requires confirmation. Sync runs in a worker, confirms pulled positions before applying, excludes uploads/deletions during sync and cancels on exit. Reader Clean closes tools/settings before cleaning the body; Home avoids a permanent font notice; the reader offers a full-font entry only when glyphs are missing.
 
+Version **0.5.28-20261008.1** persists EPUB cover thumbnails and TXT indexes in the SD-only `.read-pico-cache` directory, capped at 128 entries/8 MiB. Source identities and cache checksums prevent accidental reuse after same-name replacements; damaged or unwritable caches fall back without affecting books or progress. TXT hits still read the source sequentially to verify identity, but skip chapter-index parsing. Missing ⋯ glyphs reuse the same font's … only when needed. Phase-queue counters and bounded anomaly logs help diagnose scanning faults without changing normal refreshes.
+
+Sleep-clock rates now carry a model identity. This upgrade stops using legacy untagged compensation; sync once, remain booted through at least an hour of lock sleep, then obtain a second trusted sync to relearn. Matching records survive later upgrades. RTC restores validate the epoch and time-write verification rejects failed or short reads. This does not replace the PMU's internal oscillator with Murphy M4's independent RX8010. Device feedback confirms that Crossmux night turns still accumulate dark-background ghosts; this release retains the selected profile/cleanup interval and does not claim to fix optical ghosting.
+
 
 TF also supports **USB computer connection**: Settings → Storage → USB connection. Confirm to reboot into disk mode; safely eject on the computer before exiting/restarting the device. Reading/transfer pause, and the flashing serial port returns after exit. See [USB disk usage](docs/USB_SD.md).
 

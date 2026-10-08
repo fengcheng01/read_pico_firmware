@@ -172,7 +172,7 @@ def build(sanitize=False):
                 "tools/preview/today_port.c", "tools/preview/transfer_port.c", "tools/preview/device_port.c", "tools/preview/miniz_host.c",
                 "main/asset_pack.c", "main/display_pixels.c", "main/settings.c", "main/book/book_progress.c", "main/book/book_stats.c", "main/book/book_stats_store.c",
                 "main/book/book_entry.c", "main/book/book_layout.c", "main/book/book_source.c", "main/book/book_home.c", "main/book/book_cover.c", "main/book/book_cover_job.c", "main/book/book_marks.c", "main/book/book_quotes.c",
-                "main/book/book_txt.c", "main/book/gbk.c", "main/book/book_epub.c", "main/book/zip_reader.c",
+                "main/book/book_txt.c", "main/book/book_cache.c", "main/book/gbk.c", "main/book/book_epub.c", "main/book/zip_reader.c",
                 "main/book/html_text.c", "main/book/book_xpointer.c", "main/book/book_image.c", "main/book/vendor/tjpgd.c",
                 "components/read_pico_search/read_pico_search.c", "main/os/os_time.c", "main/os/os_device_pico.c", "main/os/os_sync.c", "main/os/os_sync_http.c", "managed_components/espressif__cjson/cJSON/cJSON.c", "main/os/os_lunar.c", "main/os/os_crash.c",
                 "main/app/app_sleep_hooks.c",

@@ -10,6 +10,10 @@
  * Frozen: Device feedback rejects the 0.5.25 night experiment; never read or write the legacy bk_ngclean key, while retaining saved night, direct and interval choices.
  * 冻结：用户要求可真机对照Crossmux Pico刷新策略，独立bk_ngprofile默认当前方案，不自动改旧选择；这不是整套固件移植。
  * Frozen: The user requests an on-device comparison of Crossmux Pico refresh policy; independent bk_ngprofile defaults to current behavior without changing saved choices, and is not a whole-firmware transplant.
+ * 冻结：睡眠补偿只接受匹配时钟源、采样周期和算法标识的完整blob；不再读取旧sl_clk_ppm，不擦其它设置。
+ * Frozen: Accept sleep correction only from a complete blob matching clock source, calibration cycles and algorithm identities; ignore legacy sl_clk_ppm without erasing other settings.
+ * 修订原因：用户离线锁屏数小时走快且旧补偿为+4410ppm；旧键缺少模型身份，重新实测而非硬编码反向补偿。
+ * Revision: The user's offline lock clock gains time over hours with legacy +4410ppm; the old key lacks model identity, so remeasure instead of hard-coding an opposite correction.
  */
 
 #include "settings.h"
@@ -18,6 +22,11 @@
 #include <string.h>
 
 #include "os_sync.h"
+#include "os_clock_rate.h"
+
+#ifdef ESP_PLATFORM
+#include "sdkconfig.h"
+#endif
 
 #include "esp_log.h"
 #include "nvs.h"
@@ -56,6 +65,7 @@
 #define NVS_KEY_GC_EVERY "gc_every"
 #define NVS_KEY_BOOK_DIRECT "bk_direct"
 #define NVS_KEY_BOOK_NIGHT_PROFILE "bk_ngprofile"
+#define NVS_KEY_SLEEP_CLOCK "sl_clk_v1"
 #define FONT_PATH_MAX 160
 
 static app_sleep_mode_t s_sleep = APP_SLEEP_DEEP;
@@ -93,6 +103,58 @@ static uint8_t s_gc_every = 5;
 static bool s_book_direct;
 static uint8_t s_book_night_profile = BOOK_NIGHT_PROFILE_CURRENT;
 
+typedef struct {
+    uint32_t magic;
+    uint32_t model;
+    uint32_t source;
+    uint32_t cycles;
+    uint32_t calibration;
+    int32_t ppm;
+    uint32_t checksum;
+} sleep_clock_record_t;
+
+_Static_assert(sizeof(sleep_clock_record_t) == 28, "sleep clock record layout");
+
+// 配置身份来自真实设备构建；宿主无硬件配置时用独立0身份，不冒充设备模型。
+// Derive identity from the actual device build; hosts without hardware configuration use distinct identity zero.
+static uint32_t sleep_clock_source(void) {
+#if defined(CONFIG_RTC_CLK_SRC_INT_8MD256) && CONFIG_RTC_CLK_SRC_INT_8MD256
+    return 3;
+#elif defined(CONFIG_RTC_CLK_SRC_EXT_CRYS) && CONFIG_RTC_CLK_SRC_EXT_CRYS
+    return 2;
+#elif defined(CONFIG_RTC_CLK_SRC_EXT_OSC) && CONFIG_RTC_CLK_SRC_EXT_OSC
+    return 4;
+#elif defined(CONFIG_RTC_CLK_SRC_INT_RC) && CONFIG_RTC_CLK_SRC_INT_RC
+    return 1;
+#else
+    return 0;
+#endif
+}
+
+static uint32_t sleep_clock_cycles(void) {
+#ifdef CONFIG_RTC_CLK_CAL_CYCLES
+    return CONFIG_RTC_CLK_CAL_CYCLES;
+#else
+    return 0;
+#endif
+}
+
+static uint32_t sleep_clock_checksum(const sleep_clock_record_t* record) {
+    const uint8_t* bytes = (const uint8_t*)record;
+    uint32_t checksum = 2166136261u;
+    for (size_t i = 0; i < offsetof(sleep_clock_record_t, checksum); ++i)
+        checksum = (checksum ^ bytes[i]) * 16777619u;
+    return checksum;
+}
+
+static bool sleep_clock_record_valid(const sleep_clock_record_t* record) {
+    return record->magic == 0x31434c53u && record->model == OS_CLOCK_RATE_MODEL_VERSION &&
+           record->source == sleep_clock_source() && record->cycles == sleep_clock_cycles() &&
+           record->calibration == OS_CLOCK_RATE_CALIBRATION_VERSION &&
+           record->ppm >= -10000 && record->ppm <= 10000 &&
+           record->checksum == sleep_clock_checksum(record);
+}
+
 static uint8_t valid_book_px(uint8_t px) {
     return px >= 36 && px <= 72 && (px - 36) % 4 == 0 ? px : 48;
 }
@@ -105,6 +167,8 @@ static bool gc_every_valid(uint8_t every) {
 
 void app_settings_init(void) {
     s_book_night_profile = BOOK_NIGHT_PROFILE_CURRENT;
+    s_sleep_clock_ppm = 0;
+    s_sleep_clock_valid = false;
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         nvs_flash_erase();
@@ -175,9 +239,11 @@ void app_settings_init(void) {
     uint8_t night_profile = BOOK_NIGHT_PROFILE_CURRENT;
     if (nvs_get_u8(h, NVS_KEY_BOOK_NIGHT_PROFILE, &night_profile) == ESP_OK &&
         night_profile <= BOOK_NIGHT_PROFILE_CROSSMUX) s_book_night_profile = night_profile;
-    uint32_t clock_ppm = 0;
-    if (nvs_get_u32(h, "sl_clk_ppm", &clock_ppm) == ESP_OK && clock_ppm <= 20000) {
-        s_sleep_clock_ppm = (int32_t)clock_ppm - 10000;
+    sleep_clock_record_t clock = {0};
+    size_t clock_len = sizeof(clock);
+    if (nvs_get_blob(h, NVS_KEY_SLEEP_CLOCK, &clock, &clock_len) == ESP_OK &&
+        clock_len == sizeof(clock) && sleep_clock_record_valid(&clock)) {
+        s_sleep_clock_ppm = clock.ppm;
         s_sleep_clock_valid = true;
     }
     uint8_t clock_auto = 1;
@@ -573,9 +639,18 @@ void app_settings_set_sleep_clock_ppm(int32_t ppm) {
     if (ppm < -10000 || ppm > 10000 || (ppm == s_sleep_clock_ppm && s_sleep_clock_valid)) return;
     s_sleep_clock_ppm = ppm;
     s_sleep_clock_valid = false;
+    sleep_clock_record_t clock = {
+        .magic = 0x31434c53u,
+        .model = OS_CLOCK_RATE_MODEL_VERSION,
+        .source = sleep_clock_source(),
+        .cycles = sleep_clock_cycles(),
+        .calibration = OS_CLOCK_RATE_CALIBRATION_VERSION,
+        .ppm = ppm,
+    };
+    clock.checksum = sleep_clock_checksum(&clock);
     nvs_handle_t h;
     if (nvs_open(NVS_NS, NVS_READWRITE, &h) != ESP_OK) return;
-    if (nvs_set_u32(h, "sl_clk_ppm", (uint32_t)(ppm + 10000)) == ESP_OK && nvs_commit(h) == ESP_OK)
+    if (nvs_set_blob(h, NVS_KEY_SLEEP_CLOCK, &clock, sizeof(clock)) == ESP_OK && nvs_commit(h) == ESP_OK)
         s_sleep_clock_valid = true;
     nvs_close(h);
 }

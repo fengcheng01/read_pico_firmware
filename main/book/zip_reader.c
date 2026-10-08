@@ -252,6 +252,13 @@ const char* zip_entry_name(const zip_reader_t* z, int index) {
 
 size_t zip_entry_count(const zip_reader_t* z) { return z ? z->count : 0; }
 
+bool zip_directory_identity(const zip_reader_t* z, uint32_t* source_bytes,
+                            uint32_t* directory_bytes, uint32_t* directory_crc) {
+    if (!z || !z->names || !source_bytes || !directory_bytes || !directory_crc) return false;
+    *source_bytes = z->size; *directory_bytes = z->directory_size; *directory_crc = z->directory_crc;
+    return true;
+}
+
 size_t zip_entry_size(const zip_reader_t* z, int index) {
     return z && index >= 0 && index < z->count ? z->entries[index].unpacked : 0;
 }

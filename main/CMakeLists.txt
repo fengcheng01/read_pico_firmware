@@ -67,6 +67,7 @@ idf_component_register(
         "book/book_entry.c"
         "book/book_home.c"
         "book/book_cover.c"
+        "book/book_cache.c"
         "book/book_cover_job.c"
         "book/book_stats.c"
         "book/book_stats_store.c"

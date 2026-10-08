@@ -8,9 +8,10 @@
  * or coverless books return false so the UI falls back to typographic covers.
  * Each call is bounded (ZIP limits + decode budget); the UI polls a background worker.
  *
- * 冻结：不改 EPUB 文件、不缓存到磁盘；失败不阻塞书架，仅影响该卡片回退。
- * Frozen: Never modify EPUB files or cache on disk; failures never block the
- * shelf and only downgrade that card to the fallback.
+ * 冻结：不改 EPUB 文件；用户授权减少跨开机解码，允许 TF 卡独立可再生缩略图缓存。
+ * Frozen: Never modify EPUB files; user-authorized cold-start acceleration permits separate regenerable SD thumbnail caches.
+ * 缓存须核对 ZIP 内容身份、尺寸与完整性；失败沿原提取路径，不阻塞书架。
+ * Caches must match ZIP identity, dimensions and integrity; failures use normal extraction without blocking the shelf.
  */
 #pragma once
 #include <stdbool.h>

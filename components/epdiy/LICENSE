@@ -32,3 +32,5 @@ directory unless a file states otherwise. 上游文件头部的版权声明保�
 - src/epdiy.h：新增板级上电失败错误，不扫描或提交参考帧。/ Add a board-power failure error without scanning or committing reference frames.
 
 - src/highlevel.c、render.c、epd_highlevel.h、epdiy.h：源帧合并动作码与出现表，避免重读差分PSRAM；页专用选择码扫描与相同灰阶组快速保持，成功提交真实帧；非NULL白选择图仅作实验。/ Page-specific selectors and identical-gray fast holds commit actual frames only on success; non-NULL white selectors are experimental.
+
+- src/output_common/line_queue.*、render_context.*、epdiy.h：正常相位起点只读观测行队列残留，提供空闲时统计快照和异常日志；不清正常队列，不修改相位、波形或错误状态。/ Observe pending rows at normal phase entry with idle-time statistics and anomaly logs; do not reset normal queues or change phases, waveforms or error state.

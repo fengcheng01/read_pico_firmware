@@ -33,7 +33,8 @@ unit = r'''
 static stbtt_fontinfo font_info;
 static bool font_ready = true;
 '''
-unit += function('decode_utf8') + '\n' + function('measure_width') + '\n' + function('ttf_font_supports_text')
+unit += (function('decode_utf8') + '\n' + function('resolve_glyph_index') + '\n'
+         + function('measure_width') + '\n' + function('ttf_font_supports_text'))
 unit += r'''
 int main(int argc,char** argv) {
     for(int a=1;a<argc;++a) {

@@ -5,6 +5,11 @@
  * CW32 PMU 主机：64 字节带 CRC 的帧、序号恢复、超时后复位 I2C。
  *
  * CW32 PMU host: 64-byte CRC frames, sequence recovery, I2C reset on timeout.
+ *
+ * 冻结：TIME_GET只有本次完整成功响应才有效；失败不得以旧快照通过校时回读。
+ * Frozen: TIME_GET is valid only after this attempt's complete successful response; stale snapshots must not verify a time write.
+ * 修订原因：参考M4的RTC恢复校验，避免通信失败被旧秒数掩盖。
+ * Revision: Follow M4's verified RTC restore boundary so cached seconds cannot hide a failed read.
  */
 
 #include "read_pico_pmu.h"
@@ -262,6 +267,8 @@ static esp_err_t read_response_for(uint16_t seq, pmu_frame_t* resp) {
 // 发一帧命令。序号冲突或过期会话就恢复序号再试。
 // Send one command. Recover seq and retry on conflict or a stale session.
 esp_err_t read_pico_pmu_cmd(uint16_t code, const uint8_t* payload, uint8_t plen) {
+    // 保留旧秒数供诊断，但本次失败时禁止当作新鲜时间。/ Retain old seconds for diagnostics but never treat a failed attempt as fresh time.
+    if (code == PMU_CMD_TIME_GET) s_snap.time_ok = false;
     if (s_dev == NULL) return ESP_ERR_INVALID_STATE;
 
     pmu_frame_t req;
@@ -307,6 +314,10 @@ esp_err_t read_pico_pmu_cmd(uint16_t code, const uint8_t* payload, uint8_t plen)
     if (code == PMU_CMD_CONFIG_GET && resp.status == PMU_STATUS_OK) {
         parse_config(resp.payload);
     } else if (code == PMU_CMD_TIME_GET && resp.status == PMU_STATUS_OK) {
+        if (resp.payload_length < 8) {
+            s_snap.last_err = ESP_ERR_INVALID_RESPONSE;
+            return ESP_ERR_INVALID_RESPONSE;
+        }
         s_snap.unix_sec = rd32(&resp.payload[0]);
         s_snap.time_synced = resp.payload[6];
         s_snap.time_ok = true;

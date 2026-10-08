@@ -2,8 +2,8 @@
  * SPDX-License-Identifier: Apache-2.0
  * 中文：书源编码和章节解析，不依赖界面。
  * English: Source encoding and chapter parsing without UI dependencies.
- * 冻结：保留原文件偏移，无效编码替换，不写文件。
- * Frozen: Preserve original byte offsets, replace invalid encoding, never write files.
+ * 冻结：保留原文件偏移，无效编码替换，不修改源文件；允许独立可丢弃的 TXT 目录缓存。
+ * Frozen: Preserve source offsets, replace invalid encoding, never modify sources; permit separate discardable TXT index caches.
  */
 #pragma once
 #include "book_source.h"

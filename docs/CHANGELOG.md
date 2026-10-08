@@ -3,6 +3,17 @@
 按日期和作者简述对用户可见的功能变化；详细实现历史见 Git。使用方法见 [README](../README.zh-CN.md)。
 User-visible changes by date and author; Git retains implementation history. See [README](../README.md) for usage.
 
+## 0.5.28-20261008.1 · 2026-10-08
+
+- TF卡新增跨开机封面缩略图及TXT目录缓存，完整源身份和缓存校验通过才复用；损坏、满卡或断卡回退原路径，不改变阅读进度。TXT命中仍顺序校验原始内容，省去目录解析。
+  Add persistent SD cover thumbnails and TXT indexes, reused only after source identity and cache validation. Corruption, full cards or media loss fall back without changing progress. TXT hits still verify all source bytes while skipping index parsing.
+- 字体缺少⋯时借用同字体…，原字优先，测量、预热和绘制一致；原文及摘录保持。
+  When a font lacks ⋯, reuse its … glyph, retaining native glyph priority and consistent metrics, prewarm and painting without changing source text or excerpts.
+- 新增扫描相位队列残留统计及限频异常日志，不改变正常波形与队列。用户确认Crossmux夜间对照仍随翻页积累黑底残影；本版不宣称修复光学残影。
+  Add phase-queue residue counters and bounded anomaly logs without changing normal waveforms or queues. Device feedback confirms accumulated dark-background ghosts in the Crossmux night comparison; this version does not claim an optical fix.
+- 睡眠补偿改为带时钟模型身份的原子记录；升级不再应用旧的无标识比例，需重新取得两次可信校时学习，同模型后续升级保留。修复未校准RTC零值锁住锚点、失败或短TIME_GET响应被旧快照误判成功的问题。
+  Store sleep correction atomically with a clock-model identity. Upgrades stop applying untagged legacy rates and require two trusted samples to relearn; later upgrades retain matching models. Fix unset RTC values latching an anchor and stale snapshots falsely validating failed or short TIME_GET responses.
+
 ## 0.5.27-20261008.1 · 2026-10-08
 
 - 新增“更多设置→翻页显示→夜间方案：Crossmux”可选Pico对照，默认仍为当前方案并保留已有周期/翻页选择。纯文字夜间固定黑白DU20，已知参考入口GL37、周期及手动单次GC36；未知参考保留原完整恢复，日间/插图/控件不参加。仅对照波形和策略，保留本地扫描时序；宿主UI验证通过，残影、白度与闪烁仍待真机比较。

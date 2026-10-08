@@ -81,6 +81,15 @@ int IRAM_ATTR lq_read(LineQueue_t* queue, uint8_t* dst) {
     return 0;
 }
 
+int IRAM_ATTR lq_pending(const LineQueue_t* queue) {
+    if (queue->size <= 0) return 0;
+    // current 在停产窗口内固定，last 的单次原子读给出该时刻的占用量。
+    // current stays fixed while production is parked; one atomic last read gives occupancy at that instant.
+    int current = atomic_load_explicit(&queue->current, memory_order_acquire);
+    int last = atomic_load_explicit(&queue->last, memory_order_acquire);
+    return current >= last ? current - last : queue->size - last + current;
+}
+
 void IRAM_ATTR lq_reset(LineQueue_t* queue) {
     queue->current = 0;
     queue->last = 0;

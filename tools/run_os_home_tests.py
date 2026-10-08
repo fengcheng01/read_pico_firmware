@@ -26,7 +26,7 @@ with tempfile.TemporaryDirectory(prefix="rp-os.", dir="/tmp") as folder:
                           ("stats", ["tools/book_stats_host_test.c", "main/book/book_stats.c"]),
                           ("sleep", ["tools/app_sleep_hooks_host_test.c", "main/app/app_sleep_hooks.c"]),
                           ("sync", ["tools/os_sync_host_test.c", "main/os/os_sync.c", "managed_components/espressif__cjson/cJSON/cJSON.c"]),
-                          ("cover", ["tools/book_cover_host_test.c", "main/book/book_cover.c"]),
+                          ("cover", ["tools/book_cover_host_test.c", "main/book/book_cover.c", "main/book/book_cache.c"]),
                           ("cover_job", ["tools/book_cover_job_host_test.c", "main/book/book_cover_job.c", "main/app/app_sleep_hooks.c"]),
                           ("sync_device", ["tools/os_sync_device_host_test.c", "main/os/os_sync_pico.c", "main/os/os_sync.c", "main/os/os_sync_http.c", "managed_components/espressif__cjson/cJSON/cJSON.c"]),
                           ("usb_disk", ["tools/usb_disk_host_test.c"]),
@@ -41,6 +41,8 @@ with tempfile.TemporaryDirectory(prefix="rp-os.", dir="/tmp") as folder:
             target_flags = flags + ["-Wno-deprecated-declarations"]
         if name == "xpointer":
             target_includes = ["-Itools/book_epub_stubs", "-Imain/book"]
+        elif name == "cover":
+            target_includes = ["-Itools/book_epub_stubs", *includes]
         elif name == "usb_disk":
             target_includes = ["-Itools/usb_disk_stubs", "-Imain/os"]
             target_flags = flags + ["-Wno-unused-function"]

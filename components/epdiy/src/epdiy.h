@@ -555,6 +555,21 @@ int epd_last_leading_skip(void);
 void epd_lcd_set_prefill_lines(int lines);
 int epd_lcd_prefill_lines(void);
 
+/// LCD 相位起点的只读队列统计；不重置队列，不改变波形或错误状态。
+/// Read-only queue statistics at LCD phase entry; queues, waveforms and error state are unchanged.
+typedef struct {
+    uint32_t examined_phases; ///< 已观察相位数 / Examined phase entries
+    uint32_t stale_phases; ///< 存在待消费行的相位数 / Entries with pending rows
+    uint32_t max_pending_lines; ///< 两队列待消费行总量峰值 / Peak total pending rows across both queues
+    uint32_t last_pending_lines[2]; ///< 最近异常时各队列行数 / Per-queue rows at the latest nonempty entry
+} EpdPhaseQueueDiagnostics;
+
+/// 仅在没有刷新进行时取快照；NULL 无操作。/ Snapshot only between refreshes; NULL is a no-op.
+void epd_get_phase_queue_diagnostics(EpdPhaseQueueDiagnostics* out);
+
+/// 仅在没有刷新进行时清零统计；不清行队列。/ Reset statistics only between refreshes; do not clear line queues.
+void epd_reset_phase_queue_diagnostics(void);
+
 /** 作废上一次差分顺手做的 (from, to) 统计。算了差分却没接着扫描时调，免得被后面
  *  别的绘制误用；`epd_draw_base` 自己用完也会作废。 */
 void epd_leading_skip_discard(void);

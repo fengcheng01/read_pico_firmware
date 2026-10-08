@@ -2,9 +2,9 @@
  * SPDX-License-Identifier: Apache-2.0
  * 中文：TXT 与 EPUB 单实例书源分派，不依赖界面。
  * English: Singleton TXT and EPUB source dispatch without UI dependencies.
- * 冻结：TXT 保留源字节偏移，EPUB 采用累计 spine HTML 字节；兼容纯文本加载，不写文件。
+ * 冻结：TXT 保留源字节偏移，EPUB 采用累计 spine HTML 字节；兼容纯文本加载，不修改源文件。
  * 用户反馈后允许跨关闭保留一章和元数据，关闭文件并在复用前校验目录。
- * Frozen: TXT retains source offsets; EPUB uses cumulative spine HTML bytes; retain plain-text loading and never write files.
+ * Frozen: TXT retains source offsets; EPUB uses cumulative spine HTML bytes; retain plain-text loading and never modify source files.
  * User feedback permits a chapter/metadata cache across close, with handles closed and directory validation before reuse.
  */
 #include "book_source_internal.h"

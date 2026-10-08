@@ -61,6 +61,8 @@ const char* ttf_font_path(void);
 const char* ttf_font_display_name(void);
 bool ttf_font_ready(void);
 /// 仅检查驻留 cmap，不读字形轮廓；输入长度有界。/ Check resident cmap only, without outline IO, over bounded input.
+/// 原字优先；缺失的 ⋯ 可借同字体 …，与测量、预热和绘制一致，不改输入文本。
+/// Prefer native glyphs; absent ⋯ may borrow the same font's … consistently with metrics, prewarm and drawing, without rewriting input.
 bool ttf_font_supports_text(const char* text, size_t len);
 int ttf_ascender(int size);
 int ttf_ascender_px(int pixel_height);

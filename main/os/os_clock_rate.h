@@ -12,6 +12,12 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+/// 持久率模型标识；学习或应用算法改变时升级，普通固件更新保持。/ Persisted-rate model identity; bump for learning or application changes, retain for routine firmware updates.
+#define OS_CLOCK_RATE_MODEL_VERSION 1u
+/// 睡前采样包装器标识；当前仅把10周期提升到配置周期数，行为变化时升级。
+/// Pre-sleep calibration wrapper identity; currently extend only ten-cycle samples to the configured count, bump when behavior changes.
+#define OS_CLOCK_RATE_CALIBRATION_VERSION 1u
+
 /// 纯计算状态；比例单位ppm，累计修正保持亚毫秒精度。/ Pure computation state; rates are ppm and accumulated correction retains submillisecond precision.
 typedef struct {
     int32_t ppm;

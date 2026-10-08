@@ -5,6 +5,7 @@
  * English: EPUB cover discovery (container→OPF→manifest) with proportional scaling; reads ZIP entries only.
  */
 #include "book_cover.h"
+#include "book_cache.h"
 #include "book_image.h"
 #include "zip_reader.h"
 #include <stdlib.h>
@@ -177,6 +178,20 @@ bool book_cover_load(const char* path, uint8_t** gray_out) {
     uint8_t* pixels = NULL;
     bool ok = false;
     if (zip_open(path, &zip) != ESP_OK || !zip) return false;
+    uint32_t source_bytes, directory_bytes, directory_crc;
+    book_cache_identity_t identity = {0};
+    bool cacheable = zip_directory_identity(zip, &source_bytes, &directory_bytes, &directory_crc);
+    if (cacheable) {
+        identity = (book_cache_identity_t){.bytes = source_bytes, .digest = directory_bytes,
+            .crc = directory_crc, .variant = ((uint32_t)BOOK_COVER_W << 16) | BOOK_COVER_H};
+        void* cached = NULL; size_t bytes = 0;
+        if (book_cache_load(path, BOOK_CACHE_COVER, &identity, (size_t)BOOK_COVER_W * BOOK_COVER_H, &cached, &bytes)) {
+            if (bytes == (size_t)BOOK_COVER_W * BOOK_COVER_H) {
+                *gray_out = cached; zip_close(zip); return true;
+            }
+            free(cached);
+        }
+    }
     // container.xml → OPF 路径。/ container.xml → the OPF path.
     int opf_index = -1;
     char opf_path[256] = {0};
@@ -233,6 +248,8 @@ bool book_cover_load(const char* path, uint8_t** gray_out) {
                     scale_cover(pixels, width, height, cover);
                     *gray_out = cover;
                     ok = true;
+                    if (cacheable) (void)book_cache_save(path, BOOK_CACHE_COVER, &identity, cover,
+                                                       (size_t)BOOK_COVER_W * BOOK_COVER_H);
                 }
             }
         }

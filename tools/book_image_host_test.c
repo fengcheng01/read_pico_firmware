@@ -127,7 +127,11 @@ int main(int argc,char** argv) {
     book_chapter_load_inline_images(0, &text);
     html_text_free(&text);
     image_fail_after = 0;
-    assert(book_chapter_load_blocks(0, &text) == ESP_ERR_NO_MEM);
+    // 已缓存章节的深拷贝不分配解码堆；冷章节才覆盖真实解压分配失败。
+    // Cached chapter copies bypass the decode heap; a cold chapter exercises the actual inflate allocation failure.
+    assert(book_chapter_load_blocks(0, &text) == ESP_OK);
+    html_text_free(&text);
+    assert(book_chapter_load_blocks(1, &text) == ESP_ERR_NO_MEM);
     image_fail_after = -1;
     book_close();
     puts("image decode: JPEG/PNG, alpha, budget, corruption/OOM, on-demand loading and visited-chapter repeats passed");

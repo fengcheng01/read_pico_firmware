@@ -147,11 +147,14 @@ uint8_t app_settings_book_tap_zone(uint8_t zone_idx);
 void app_settings_set_book_tap_zone(uint8_t zone_idx, uint8_t action);
 void app_settings_reset_book_tap_zones_default(void);
 
-/// 联网实测的睡眠走时补偿ppm，默认0。/ Network-measured sleep correction in ppm, default zero.
+/// 当前时钟模型的联网实测睡眠补偿ppm，默认0；无模型身份的旧比例不加载。
+/// Network-measured sleep correction in ppm for the current clock model, default zero; legacy rates without model identity are not loaded.
 int32_t app_settings_sleep_clock_ppm(void);
-/// 保存可信测量，范围±10000ppm。/ Persist trusted measurements within ±10000ppm.
+/// 保存可信测量及模型身份到单一blob，范围±10000ppm；失败仍保留本次比例供重试。
+/// Persist a trusted rate and model identity in one blob within ±10000ppm; failure retains the in-session rate for retry.
 void app_settings_set_sleep_clock_ppm(int32_t ppm);
-/// 是否有成功持久化的实测比例，包括零补偿。/ Whether a measured rate was persisted successfully, including zero.
+/// 是否有成功持久化且匹配当前模型的实测比例，包括零补偿。
+/// Whether a successfully persisted measured rate matches the current model, including zero.
 bool app_settings_sleep_clock_valid(void);
 /// 动态锁屏低频联网维护走时，默认开启；仅使用已保存WiFi。/ Infrequent dynamic-lock clock maintenance, enabled by default using saved WiFi only.
 bool app_settings_clock_auto(void);

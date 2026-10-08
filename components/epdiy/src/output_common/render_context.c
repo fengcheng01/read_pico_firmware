@@ -10,6 +10,18 @@
 /// For waveforms without per-phase timing, the default hold time for each line is 12us
 const static int DEFAULT_FRAME_TIME = 120;
 
+// 仅由刷新控制任务更新；公开快照和清零须在刷新之间调用。
+// Only the render-control task updates these counters; public snapshots and resets run between refreshes.
+static EpdPhaseQueueDiagnostics s_phase_queue_diagnostics;
+
+void epd_get_phase_queue_diagnostics(EpdPhaseQueueDiagnostics* out) {
+    if (out != NULL) *out = s_phase_queue_diagnostics;
+}
+
+void epd_reset_phase_queue_diagnostics(void) {
+    memset(&s_phase_queue_diagnostics, 0, sizeof(s_phase_queue_diagnostics));
+}
+
 static inline int min(int x, int y) {
     return x < y ? x : y;
 }
@@ -68,6 +80,31 @@ void get_buffer_params(
 }
 
 void IRAM_ATTR prepare_context_for_next_frame(RenderContext_t* ctx) {
+    // LCD 调用方已汇合上一相位的生产者；本相位的通知尚未发出，只读队列而不隔离或清空。
+    // The LCD caller has joined prior producers and has not notified this phase; observe queues without isolating or clearing them.
+    uint32_t pending[NUM_RENDER_THREADS];
+    uint32_t total_pending = 0;
+    for (int i = 0; i < NUM_RENDER_THREADS; i++) {
+        pending[i] = (uint32_t)lq_pending(&ctx->line_queues[i]);
+        total_pending += pending[i];
+    }
+    s_phase_queue_diagnostics.examined_phases++;
+    if (total_pending != 0) {
+        s_phase_queue_diagnostics.stale_phases++;
+        if (total_pending > s_phase_queue_diagnostics.max_pending_lines)
+            s_phase_queue_diagnostics.max_pending_lines = total_pending;
+        for (int i = 0; i < NUM_RENDER_THREADS; i++)
+            s_phase_queue_diagnostics.last_pending_lines[i] = pending[i];
+        // 记录所有异常，但只打印前四次和后续二次幂，避免串口放大故障时延。
+        // Count every anomaly but log only the first four and later powers of two, limiting serial overhead during faults.
+        const uint32_t stale = s_phase_queue_diagnostics.stale_phases;
+        if (stale <= 4 || (stale & (stale - 1)) == 0)
+            ESP_LOGW("epdiy", "phase queue pending: frame=%d rows=%u/%u stale=%u/%u max=%u",
+                     ctx->current_frame, (unsigned)pending[0], (unsigned)pending[1],
+                     (unsigned)stale, (unsigned)s_phase_queue_diagnostics.examined_phases,
+                     (unsigned)s_phase_queue_diagnostics.max_pending_lines);
+    }
+
     int frame_time = DEFAULT_FRAME_TIME;
     if (ctx->phase_times != NULL) {
         frame_time = ctx->phase_times[ctx->current_frame];

@@ -15,6 +15,14 @@
  * Frozen: To address slow lock clocks, persist rates learned from two SNTP samples in one boot and apply them only to accumulated light sleep.
  * 修订原因：用户24小时慢钟测试缺少第二锚点；锁屏可用已保存WiFi低频完成学习并断网，可关闭。
  * Revision: The user's 24-hour slow-clock test lacked a second anchor; optional lock maintenance obtains it with saved WiFi and disconnects.
+ * 冻结：RTC通信成功不等于时间有效；只有支持范围内的UTC可成为启动锚点。
+ * Frozen: A successful RTC read does not imply valid time; only UTC in the supported range may seed a boot anchor.
+ * 修订原因：参考M4先验证RTC再恢复的边界，避免未校准的零值锁住后续有效读数。
+ * Revision: Follow M4's validate-before-restore boundary so an unset zero cannot block a later valid RTC read.
+ * 冻结：睡眠比例只恢复同一时钟模型的记录，旧无标识值需重新学习，不按反馈估算扣秒。
+ * Frozen: Restore rates only for the same clock model; relearn untagged legacy values rather than subtracting estimated drift.
+ * 修订原因：用户离线锁屏偏快且保存+4410ppm，补偿来源必须可核验。
+ * Revision: Offline lock time gains with a saved +4410ppm, so persisted compensation needs a verifiable model identity.
  */
 #include "os_time.h"
 #include "os_clock_rate.h"
@@ -108,7 +116,7 @@ void os_time_poll(int64_t now_ms) {
     s_last_poll_ms = now_ms;
     if (!read_pico_pmu_ready() || read_pico_pmu_refresh() != ESP_OK) return;
     const pmu_snapshot_t* pmu = read_pico_pmu_get();
-    if (!pmu->time_ok) return;
+    if (!pmu->time_ok || pmu->unix_sec < OS_TIME_UNIX_MIN || pmu->unix_sec >= OS_TIME_UNIX_MAX) return;
     seed_libc(pmu->unix_sec);
     if (s_anchored && !s_force_reanchor) {
         // 只记录偏差不追针：RTC 变快会体现在日志里，显式校时才重锚。

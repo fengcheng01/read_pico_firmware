@@ -1658,8 +1658,18 @@ static glyph_entry_t* cache_lookup(uint32_t codepoint, int size) {
     return NULL;
 }
 
-static glyph_entry_t* rasterize_glyph(uint32_t codepoint, int pixel_height) {
+static int resolve_glyph_index(uint32_t codepoint) {
     int gid = stbtt_FindGlyphIndex(&font_info, (int)codepoint);
+    if (gid != 0) return gid;
+
+    // 只在原字缺失时借同字体省略号；共享测量、预热和绘制，不改原文。
+    // Borrow the same font's ellipsis only when missing; share metrics, prewarm and drawing without changing text.
+    if (codepoint == 0x22ef) return stbtt_FindGlyphIndex(&font_info, 0x2026);
+    return 0;
+}
+
+static glyph_entry_t* rasterize_glyph(uint32_t codepoint, int pixel_height) {
+    int gid = resolve_glyph_index(codepoint);
     if (!pack_glyph_tree(gid)) return NULL;
 
     float scale = stbtt_ScaleForPixelHeight(&font_info, (float)pixel_height);
@@ -1750,7 +1760,7 @@ static void warm_text_io(int pixel_height, const char* text) {
         if (dup) continue;
         cps[seen++] = cp;
         if (cache_lookup(cp, pixel_height) != NULL) continue;
-        int gid = stbtt_FindGlyphIndex(&font_info, (int)cp);
+        int gid = resolve_glyph_index(cp);
         if (gid < 0 || gid >= num_glyphs) continue;
         io_touch(file_glyf_off + file_glyph_off(gid), file_glyph_len(gid));
         if (gvar_ready && current_weight != wght_def && gvar_glyph_off != NULL) {
@@ -1773,7 +1783,7 @@ static int measure_width(int pixel_height, const char* text) {
     while (*cursor != '\0') {
         uint32_t cp = decode_utf8(&cursor);
         int advance = 0, lsb = 0;
-        int gid = stbtt_FindGlyphIndex(&font_info, (int)cp);
+        int gid = resolve_glyph_index(cp);
         stbtt_GetGlyphHMetrics(&font_info, gid, &advance, &lsb);
         width += (int)lroundf(advance * scale);
     }
@@ -1791,7 +1801,7 @@ bool ttf_font_supports_text(const char* text, size_t len) {
         uint32_t cp = decode_utf8(&cursor);
         if (!cp) return false;
         at += (size_t)(cursor - unit);
-        if (cp >= 0x20 && stbtt_FindGlyphIndex(&font_info, (int)cp) == 0) return false;
+        if (cp >= 0x20 && resolve_glyph_index(cp) == 0) return false;
     }
     return true;
 }

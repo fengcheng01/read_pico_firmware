@@ -11,6 +11,7 @@
 #pragma once
 #include <stddef.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include "esp_err.h"
 
 #define ZIP_ENTRY_MAX 32768
@@ -27,6 +28,10 @@ void zip_close(zip_reader_t* reader);
 int zip_find(const zip_reader_t* reader, const char* name);
 /// 返回验证后的条目数量。/ Return the validated entry count.
 size_t zip_entry_count(const zip_reader_t* reader);
+/// 返回已验证且驻留的中央目录身份；超预算或内存不足时不可用于持久缓存。
+/// Return validated resident-directory identity; over-budget or allocation failures disable persistent reuse.
+bool zip_directory_identity(const zip_reader_t* reader, uint32_t* source_bytes,
+                            uint32_t* directory_bytes, uint32_t* directory_crc);
 /// 借用目录路径，下次查询路径或解压前有效；无效索引返回 NULL。/ Borrow entry path until the next path query or extraction; invalid indices return NULL.
 const char* zip_entry_name(const zip_reader_t* reader, int index);
 /// 返回解压大小，无效索引返回 0；合法条目也可能为空。/ Return output size, or zero for an invalid index or empty entry.

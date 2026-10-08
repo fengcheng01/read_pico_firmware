@@ -52,7 +52,7 @@ typedef struct {
     bool diag_ok;
     bool event_ok;
     bool config_ok;
-    bool time_ok;
+    bool time_ok; ///< 最近一次TIME_GET响应完整且成功；时间范围另行验证。/ Latest TIME_GET response was complete and successful; validate the epoch separately.
     bool alarm_ok;
 
     uint8_t proto_major;

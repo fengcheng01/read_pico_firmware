@@ -19,6 +19,9 @@ static const char* opf;
 static int extracts;
 esp_err_t zip_open(const char* path, zip_reader_t** out) {(void)path;*out=&reader;return ESP_OK;}
 void zip_close(zip_reader_t* z) {(void)z;}
+bool zip_directory_identity(const zip_reader_t* z,uint32_t* bytes,uint32_t* directory,uint32_t* crc) {
+    (void)z;(void)bytes;(void)directory;(void)crc;return false;
+}
 int zip_find(const zip_reader_t* z,const char* path) {
     (void)z;
     if (!strcmp(path,"META-INF/container.xml")) return 0;

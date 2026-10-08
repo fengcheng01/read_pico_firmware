@@ -93,6 +93,8 @@ void get_buffer_params(
  * Prepare the render context for drawing the next frame.
  *
  * (Reset counters, etc)
+ * 调用方须先汇合上一相位生产者，再通知本相位；队列残留只作观测。
+ * The caller must join prior producers before notifying this phase; pending rows are observed only.
  */
 void prepare_context_for_next_frame(RenderContext_t* ctx);
 

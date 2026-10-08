@@ -67,6 +67,7 @@ static esp_err_t nvs_get_u8(nvs_handle_t h,const char* key,uint8_t* out) {
 }
 static esp_err_t nvs_get_i8(nvs_handle_t h,const char* key,int8_t* out){(void)h;(void)key;(void)out;return ESP_ERR_NVS_NOT_FOUND;}
 static esp_err_t nvs_get_u32(nvs_handle_t h,const char* key,uint32_t* out){(void)h;(void)key;(void)out;return ESP_ERR_NVS_NOT_FOUND;}
+static esp_err_t nvs_get_blob(nvs_handle_t h,const char* key,void* out,size_t* cap){(void)h;(void)key;(void)out;(void)cap;return ESP_ERR_NVS_NOT_FOUND;}
 static esp_err_t nvs_get_str(nvs_handle_t h,const char* key,char* out,size_t* cap){(void)h;(void)key;(void)out;(void)cap;return ESP_ERR_NVS_NOT_FOUND;}
 static esp_err_t nvs_set_u8(nvs_handle_t h,const char* key,uint8_t value) {
     assert(h==1&&!strcmp(key,"bk_ngprofile"));
@@ -74,6 +75,7 @@ static esp_err_t nvs_set_u8(nvs_handle_t h,const char* key,uint8_t value) {
 }
 static esp_err_t nvs_set_i8(nvs_handle_t h,const char* key,int8_t value){(void)h;(void)key;(void)value;assert(false);return 1;}
 static esp_err_t nvs_set_u32(nvs_handle_t h,const char* key,uint32_t value){(void)h;(void)key;(void)value;assert(false);return 1;}
+static esp_err_t nvs_set_blob(nvs_handle_t h,const char* key,const void* value,size_t size){(void)h;(void)key;(void)value;(void)size;assert(false);return 1;}
 static esp_err_t nvs_set_str(nvs_handle_t h,const char* key,const char* value){(void)h;(void)key;(void)value;assert(false);return 1;}
 '''
 unit += source
