@@ -22,6 +22,13 @@ void display_prepare_direct_frame(uint8_t* fb, int width, int height, bool white
 /// 仅量化裁剪后的物理矩形为0/15；低半字节对应偶数列，奇边保留区外像素，调用方负责旋转。/ Quantize only the clipped physical rectangle to 0/15; low nibbles hold even columns, odd edges preserve outside pixels, and the caller owns rotation.
 void display_prepare_direct_area(uint8_t* fb, int width, int height, int x, int y, int w, int h);
 
+/// 夜间实验：只选实际旧帧非黑、本页已变纯黑的位置，1bit低位先；只读前后帧，返回像素数。
+/// Night experiment: select actual prior nonblack pixels now at pure black, one bit LSB-first; read frames only and return the pixel count.
+size_t display_night_erased_mask(const uint8_t* prior, const uint8_t* target, uint8_t* packed, int width, int height);
+/// 成功DU后将选择图展开成00动作/EE保持；目标非黑始终排除，不改实际帧，返回选中数。
+/// After successful DU, expand selections to 00 actions/EE holds; always exclude nonblack targets, leave real frames intact and return the selected count.
+size_t display_night_cleanup_selectors(const uint8_t* packed, const uint8_t* target, uint8_t* selectors, int width, int height);
+
 /// 诊断实验的墨迹预算，每像素2bit；产品已停用以避免白字累积。/ Diagnostic ink budgets, two bits per pixel; disabled in the product to avoid accumulating white glyphs.
 typedef struct {
     uint8_t* ages; ///< 调用方提供的零初始化存储。/ Caller-provided zeroed storage.

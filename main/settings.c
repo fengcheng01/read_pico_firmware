@@ -6,6 +6,9 @@
  *
  * NVS load/store. A failed open keeps the deep-sleep default; the
  * partition is not erased.
+ *
+ * 冻结：用户授权可切换的夜间残影测试版，新增实验项默认定向补黑；既有夜间、直刷及清理周期选项不变。
+ * Frozen: The user authorizes a switchable night-ghosting test build with black reinforcement as the new experiment default; existing night, direct and cleanup interval choices remain intact.
  */
 
 #include "settings.h"
@@ -51,6 +54,7 @@
 #define NVS_KEY_IDLE "idle_min"
 #define NVS_KEY_GC_EVERY "gc_every"
 #define NVS_KEY_BOOK_DIRECT "bk_direct"
+#define NVS_KEY_BOOK_NIGHT_CLEAN "bk_ngclean"
 #define FONT_PATH_MAX 160
 
 static app_sleep_mode_t s_sleep = APP_SLEEP_DEEP;
@@ -86,6 +90,7 @@ static uint8_t s_idle_lock;
 // 与 app_config.h 的原编译期档一致，保持升级无行为变化。/ Matches the old compile-time tier in app_config.h; upgrades keep behavior.
 static uint8_t s_gc_every = 5;
 static bool s_book_direct;
+static uint8_t s_book_night_cleanup = BOOK_NIGHT_CLEAN_BLACK;
 
 static uint8_t valid_book_px(uint8_t px) {
     return px >= 36 && px <= 72 && (px - 36) % 4 == 0 ? px : 48;
@@ -165,6 +170,10 @@ void app_settings_init(void) {
     if (nvs_get_u8(h, NVS_KEY_GC_EVERY, &gc_every) == ESP_OK && gc_every_valid(gc_every)) s_gc_every = gc_every;
     uint8_t direct = 0;
     if (nvs_get_u8(h, NVS_KEY_BOOK_DIRECT, &direct) == ESP_OK) s_book_direct = direct == 1;
+    uint8_t night_cleanup = BOOK_NIGHT_CLEAN_BLACK;
+    if (nvs_get_u8(h, NVS_KEY_BOOK_NIGHT_CLEAN, &night_cleanup) != ESP_OK ||
+        night_cleanup > BOOK_NIGHT_CLEAN_LOCAL) night_cleanup = BOOK_NIGHT_CLEAN_BLACK;
+    s_book_night_cleanup = night_cleanup;
     uint32_t clock_ppm = 0;
     if (nvs_get_u32(h, "sl_clk_ppm", &clock_ppm) == ESP_OK && clock_ppm <= 20000) {
         s_sleep_clock_ppm = (int32_t)clock_ppm - 10000;
@@ -480,6 +489,13 @@ void app_settings_set_book_direct(bool on) {
     if (s_book_direct == on) return;
     s_book_direct = on;
     nvs_put_u8_checked(NVS_KEY_BOOK_DIRECT, on);
+}
+
+uint8_t app_settings_book_night_cleanup(void) { return s_book_night_cleanup; }
+void app_settings_set_book_night_cleanup(uint8_t mode) {
+    if (mode > BOOK_NIGHT_CLEAN_LOCAL || s_book_night_cleanup == mode) return;
+    s_book_night_cleanup = mode;
+    nvs_put_u8_checked(NVS_KEY_BOOK_NIGHT_CLEAN, mode);
 }
 
 void app_settings_set_gc_every(uint8_t every) {

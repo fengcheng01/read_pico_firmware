@@ -20,3 +20,11 @@ cc -std=c11 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
     components/e0470_epaper_waveform/e0470_epaper_waveform.c \
     components/e0470_epaper_waveform/e0470_waveform_trim.c -o build/book-tests/navigation-waveform
 build/book-tests/navigation-waveform
+
+# 夜间实验表逐相核对厂家源表，仅00动作、其余保持。/ Check vendor phase order in night experiments, with actions only for 00.
+cc -std=c11 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
+    -Icomponents/e0470_epaper_waveform/include -Icomponents/e0470_epaper_waveform/waveforms \
+    -Itools/waveform_host_stubs -Icomponents/epdiy/include -Icomponents/epdiy/src tools/night_cleanup_waveform_host_test.c \
+    components/e0470_epaper_waveform/e0470_epaper_waveform.c \
+    components/e0470_epaper_waveform/e0470_waveform_trim.c -o build/book-tests/night-cleanup-waveform
+build/book-tests/night-cleanup-waveform

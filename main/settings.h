@@ -123,6 +123,17 @@ bool app_settings_book_direct(void);
 void app_settings_set_book_direct(bool on);
 
 enum {
+    BOOK_NIGHT_CLEAN_OFF = 0, ///< 关闭实验 / Experiment off
+    BOOK_NIGHT_CLEAN_BLACK = 1, ///< 旧白字定向补黑 / Targeted black reinforcement for old white glyphs
+    BOOK_NIGHT_CLEAN_LOCAL = 2, ///< 旧白字局部擦写 / Local erase and redraw for old white glyphs
+};
+/// 用户授权夜间残影实验，只作用于纯文字夜间黑白直刷；本测试版新装/升级默认定向补黑。
+/// User-authorized night ghosting experiment for text-only night binary direct turns; fresh installs/upgrades of this test build default to black reinforcement.
+uint8_t app_settings_book_night_cleanup(void);
+/// 保存实验档位，拒绝枚举外的值。/ Persist the experiment tier, rejecting values outside the enum.
+void app_settings_set_book_night_cleanup(uint8_t mode);
+
+enum {
     BOOK_TAP_ACTION_NONE = 0, ///< 无操作 / None
     BOOK_TAP_ACTION_PREV = 1, ///< 上一页 / Previous page
     BOOK_TAP_ACTION_NEXT = 2, ///< 下一页 / Next page

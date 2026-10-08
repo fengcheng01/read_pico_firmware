@@ -3,6 +3,11 @@
 按日期和作者简述对用户可见的功能变化；详细实现历史见 Git。使用方法见 [README](../README.zh-CN.md)。
 User-visible changes by date and author; Git retains implementation history. See [README](../README.md) for usage.
 
+## 0.5.25 · 2026-10-08
+
+- 新增可切换的夜间残影实验：关闭、定向补黑、局部擦写，本测试版缺省定向补黑；仅夜间纯文字黑白直刷，在正常DU成功后处理旧亮字已变黑的位置，保护新白字和其余黑底。局部擦写会轻闪并增加翻页耗时；到期整屏清理仍沿用原设置，标准灰阶、日间及插图不参加实验。实际残影改善需真机对照。
+  Add switchable night ghosting experiments: off, targeted black reinforcement and local erase/rewrite, defaulting to reinforcement in this test build. Only text-only binary night direct turns post-scan prior light glyphs now black after successful DU, protecting new white glyphs and the remaining black background. Local cleaning flashes briefly and slows turns; due full cleaning retains its saved interval, with standard gray, day and illustrations outside the experiment. Ghost improvement requires device comparison.
+
 ## 0.5.24 · 2026-10-08
 
 - 修复异常复位日志在非零启动时刻把时间锚定到零、导致后续显示额外加上启动耗时的问题；日志使用实际单调时间，写盘重试保留已有可信锚点与走时学习窗口。离线长期快慢仍取决于睡眠时钟、已保存补偿和重启时的PMU起点，需要真机对照。

@@ -21,6 +21,8 @@
  * Frozen: Cleaning from reader settings/tools first closes overlays, then cleans the current body instead of the menu.
  * 冻结：0.5.19实机退化后用户明确优先无闪速度，纯文字直刷改厂家黑白DU；标准及含图章节保留灰阶，夜间周期清理由显示层按用户档位执行。
  * Frozen: After 0.5.19 regressed on-device, the user prioritizes flash-free speed; text direct uses vendor black/white DU and standard/illustrated chapters retain gray, with display-owned night cleanup at the user's interval.
+ * 冻结：用户授权夜间残影实验版，翻页显示组新增关闭/定向补黑/局部擦写，菜单切换即时保存且保持打开；仅纯文字夜间直刷实验，日间、标准及插图原路径不变。
+ * Frozen: The user authorizes a night-ghosting test build with off/black reinforcement/local erase choices in display settings; changes save while keeping the menu open, and only text-only night direct turns experiment, retaining day, standard and image paths.
  * 冻结：0.5.20仍有布局残影，用户批准不同视图切换及已呈现覆盖层退出正文时请求一次入口清理；普通翻页、控件和后台重绘不追加入口请求。
  * Frozen: Layout ghosts remain on 0.5.20; the user authorizes one entry cleanup for distinct views and exits from presented overlays to the body, without additional entry requests on ordinary turns, controls or background redraws.
  * 实机残影修订：撤回未经校准的单向灰阶、统一擦白及三相入口推白；日间标准恢复厂家黑/灰定稿，夜间及直刷保持未变像素。
@@ -1755,6 +1757,14 @@ static EpdRect layout_tab_rect(int i) { return ui_row_rect(i, 3, 184, 80); }
 // Reader settings show sync actions only; account details stay in system settings, with shared paint and gesture bounds.
 static EpdRect sync_control_rect(int i) { return (EpdRect){UI_MARGIN, 292 + i * 112, ui_content_width(), 96}; }
 static EpdRect direct_rect(void) { return (EpdRect){UI_MARGIN, 970, ui_content_width(), 72}; }
+static EpdRect night_cleanup_rect(void) { return (EpdRect){UI_MARGIN, 1048, ui_content_width(), 48}; }
+static const char* night_cleanup_label(void) {
+    switch (app_settings_book_night_cleanup()) {
+        case BOOK_NIGHT_CLEAN_OFF: return "夜间实验：关闭";
+        case BOOK_NIGHT_CLEAN_LOCAL: return "夜间实验：局部擦写";
+        default: return "夜间实验：定向补黑";
+    }
+}
 static EpdRect layout_row_rect(int i) { return (EpdRect){UI_MARGIN, 292 + (i % 6) * 112, ui_content_width(), 96}; }
 static const char* layout_value(int row) {
     switch (row) {
@@ -1821,7 +1831,7 @@ static void draw_tap_zones(uint8_t* fb) {
 }
 static void draw_layout_menu(uint8_t* fb) {
     ui_clear_page(fb);
-    ui_product_header(fb, "更多设置", "排版与翻页分组，调整保留阅读位置");
+    ui_product_header(fb, "更多设置", s_layout_group == 1 ? "仅夜间直刷；局部擦写会轻闪" : "排版与翻页分组，调整保留阅读位置");
     for (int i = 0; i < 3; ++i) {
         EpdRect r = layout_tab_rect(i);
         if (i == s_layout_group) ui_draw_selected_round_rect(fb, r, UI_BTN_RADIUS);
@@ -1852,10 +1862,11 @@ static void draw_layout_menu(uint8_t* fb) {
         ui_text_vc(fb, r.x + r.width, r.y + r.height / 2, 24, value, EPD_DRAW_ALIGN_RIGHT, false);
         ui_hairline(fb, r.y + r.height, r.x, r.width, UI_GRAY_LIGHT);
     }
-    if (s_layout_group == 1)
+    if (s_layout_group == 1) {
         draw_control(fb, direct_rect(), app_settings_book_direct() ? "翻页效果：无闪直刷" : "翻页效果：标准灰阶", 850);
-    ui_product_title(fb, (EpdRect){UI_MARGIN, 1054, ui_content_width(), 38},
-                     s_layout_group == 2 ? s_title : s_layout_group == 1 ? "直刷保留灰阶边缘；插图用标准灰阶" : "调整即时保存并保持位置，返回阅读生效；* 为实验功能", 22, 1);
+        draw_control(fb, night_cleanup_rect(), night_cleanup_label(), 851);
+    } else ui_product_title(fb, (EpdRect){UI_MARGIN, 1054, ui_content_width(), 38},
+                            s_layout_group == 2 ? s_title : "调整即时保存并保持位置，返回阅读生效；* 为实验功能", 22, 1);
     draw_control(fb, ui_bar_rect(0, 2), "清残影", 810);
     draw_control(fb, ui_bar_rect(1, 2), "返回阅读", 811);
     ui_draw_menu_handle(fb, false);
@@ -1897,6 +1908,11 @@ static app_redraw_t clean_reading(void) {
 }
 
 static app_redraw_t layout_action(app_ctx_t* ctx, uint16_t x, uint16_t y) {
+    if (s_layout_group == 1 && ui_rect_hit(night_cleanup_rect(), x, y)) {
+        app_settings_set_book_night_cleanup((app_settings_book_night_cleanup() + 1) % 3);
+        invalidate_prep();
+        return APP_REDRAW_PAGE;
+    }
     if (s_layout_group == 1 && ui_rect_hit(direct_rect(), x, y)) {
         app_settings_set_book_direct(!app_settings_book_direct());
         invalidate_prep();
@@ -2542,6 +2558,8 @@ static int control_at(app_ctx_t* ctx, uint16_t x, uint16_t y, EpdRect* rect) {
         if (s_view == SHELF && s_save_failed && ui_rect_hit(*rect, x, y)) return 113;
     }
     if (s_view == LAYOUT) {
+        *rect = night_cleanup_rect();
+        if (s_layout_group == 1 && ui_rect_hit(*rect, x, y)) return 851;
         *rect = direct_rect();
         if (s_layout_group == 1 && ui_rect_hit(*rect, x, y)) return 850;
         if (s_layout_group == 2) for (int i = 0; i < 4; ++i) {
