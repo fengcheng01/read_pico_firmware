@@ -1,0 +1,42 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    /* Claude Design Tokens */
+    --claude-canvas: #faf9f5;
+    --claude-surface-soft: #f5f0e8;
+    --claude-surface-card: #efe9de;
+    --claude-surface-cream-strong: #e8e0d2;
+    --claude-surface-dark: #181715;
+    --claude-surface-dark-elevated: #252320;
+    --claude-surface-dark-soft: #1f1e1b;
+    --claude-primary: #cc785c;
+    --claude-primary-active: #a9583e;
+    --claude-primary-disabled: #e6dfd8;
+    --claude-ink: #141413;
+    --claude-body: #3d3d3a;
+    --claude-body-strong: #252523;
+    --claude-muted: #6c6a64;
+    --claude-muted-soft: #8e8b82;
+    --claude-hairline: #e6dfd8;
+    --claude-hairline-soft: #ebe6df;
+    --claude-on-primary: #ffffff;
+    --claude-on-dark: #faf9f5;
+    --claude-on-dark-soft: #a09d96;
+    --claude-accent-teal: #5db8a6;
+    --claude-accent-amber: #e8a55a;
+  }
+
+  body {
+    background-color: var(--claude-canvas);
+    color: var(--claude-ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+
+  /* Display Serif Headlines (Claude Voice: Tiempos / Copernicus / Garamond style) */
+  .font-claude-serif {
+    font-family: "Tiempos Headline", "Cormorant Garamond", "EB Garamond", Garamond, "Songti SC", "SimSun", serif;
+    font-weight: 400;
+    letter-spacing: -0.025em;
+  }
+}

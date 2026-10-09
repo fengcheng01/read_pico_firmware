@@ -1,0 +1,4 @@
+# Node / Web artifacts
+node_modules/
+web/node_modules/
+web/dist/
