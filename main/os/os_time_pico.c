@@ -215,9 +215,10 @@ void os_time_network(bool sta_uplink) {
         esp_sntp_config_t cfg = {0};
         cfg.start = true;
         cfg.wait_for_sync = true;
-        cfg.ip_event_to_renew = IP_EVENT_STA_GOT_IP;
-        cfg.num_of_servers = 2;
+        cfg.num_of_servers = 1;
         cfg.servers[0] = "ntp.aliyun.com";
+#if CONFIG_LWIP_SNTP_MAX_SERVERS > 1
+        cfg.num_of_servers = 2;
         cfg.servers[1] = "pool.ntp.org";
         if (esp_netif_sntp_init(&cfg) != ESP_OK) {
             ESP_LOGW(TAG, "sntp init failed");

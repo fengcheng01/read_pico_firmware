@@ -53,7 +53,7 @@ static esp_err_t start_disk(void) {
         .medium.card = s_card,
         .mount_point = TINYUSB_MSC_STORAGE_MOUNT_USB,
         .fat_fs = {
-            .base_path = "/usbcard",
+            .base_path = (char*)"/usbcard",
             .config = {.format_if_mount_failed = false, .max_files = 1},
             .do_not_format = true,
         },
