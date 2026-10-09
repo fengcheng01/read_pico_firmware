@@ -13,10 +13,8 @@
  * The user confirmed turn-only rule crossings, revising draw-only guides: text-only guides use one row grid and whole-slot paragraph gaps; disabling restores original layout.
  * 冻结：构建、绘制与命中共用同一网格；不得只固定辅助线而让文字跨线。图片章节保留原图文布局，不承诺跨页线位兼容。
  * Frozen: Build, drawing and hits share the grid; never fix rules while letting text cross them. Image chapters retain their original layout without cross-page rule compatibility.
- * 冻结：可选直刷细边只选择原始覆盖率黑白绘制，不改变测量、字体字重或分页；默认保留原灰阶绘制。
- * Frozen: Optional fine direct edges select raw-coverage binary drawing only without changing metrics, font weight or pagination; retain original gray drawing by default.
- * 修订：用户要求改善满意直刷的字缘，允许可关闭的绘制对照而保留原默认。
- * Revision: The user requests better edges for the accepted direct mode, permitting a reversible drawing comparison while retaining the original default.
+ * 实机修订：0.5.29细边阈值没有可见抗锯齿改善，撤回绘制选择，恢复原灰阶字形再由显示层生成黑白目标。
+ * Device revision: The 0.5.29 fine-edge threshold gives no visible antialiasing benefit; withdraw its drawing switch and restore gray glyphs with display-owned binary targets.
  */
 #include "book_layout.h"
 #include <limits.h>
@@ -51,7 +49,6 @@ static int s_para_tier;
 static int s_guide_style;
 static int s_guide_origin;
 static bool s_guide_binary;
-static bool s_direct_fine;
 static bool s_guide_grid;
 static int s_grid_height;
 static int s_grid_padding;
@@ -60,13 +57,6 @@ static int s_align;
 static const blk_t* s_blocks;
 static size_t s_block_count;
 
-// 仅正文绘制选择黑白覆盖率，字体缓存和所有度量仍共用原路径。
-// Only body drawing chooses binary coverage; font caches and all metrics keep the shared path.
-static void draw_body_text(uint8_t* fb, int x, int y, int px, const char* text,
-                           enum EpdFontFlags align, uint8_t fg, uint8_t bg) {
-    if (s_direct_fine) ttf_draw_text_px_bw(fb, x, y, px, text, align, fg, bg);
-    else ttf_draw_text_px(fb, x, y, px, text, align, fg, bg);
-}
 // 图片或失败占位保持原图文排版；纯文字章节才能共用跨页规则位置。
 // Images and failed placeholders retain original illustration layout; only text-only chapters share rule positions across pages.
 static bool guide_grid_requested(void) {
@@ -375,7 +365,7 @@ void book_layout_draw_page(uint8_t* fb, size_t page, EpdRect rect, int px) {
             // 对齐：居中整行居中；两端对齐只作用于段中行（段末行、标题与图片行保持左对齐）。
             // Alignment: center centers the whole line; justification covers mid-paragraph lines only.
             if (s_align == 1) {
-                draw_body_text(fb, rect.x + indent + (rect.width - indent - (int)width) / 2,
+                ttf_draw_text_px(fb, rect.x + indent + (rect.width - indent - (int)width) / 2,
                                       rect.y + (int)used + ttf_ascender_px(line_px), line_px,
                                       s_line, EPD_DRAW_ALIGN_LEFT, fg, bg);
             } else if (s_align == 2 && !paragraph_end && !heading && width < rect.width - indent) {
@@ -383,7 +373,7 @@ void book_layout_draw_page(uint8_t* fb, size_t page, EpdRect rect, int px) {
                 // Justified: draw glyph by glyph spreading the slack; tiny slack keeps whole-line draws.
                 int slack = rect.width - indent - (int)width;
                 if (slack < line_px / 2) {
-                    draw_body_text(fb, rect.x + indent, rect.y + (int)used + ttf_ascender_px(line_px),
+                    ttf_draw_text_px(fb, rect.x + indent, rect.y + (int)used + ttf_ascender_px(line_px),
                                           line_px, s_line, EPD_DRAW_ALIGN_LEFT, fg, bg);
                 } else {
                     size_t glyphs = 0;
@@ -401,14 +391,14 @@ void book_layout_draw_page(uint8_t* fb, size_t page, EpdRect rect, int px) {
                         char glyph[5];
                         memcpy(glyph, q, n);
                         glyph[n] = 0;
-                        draw_body_text(fb, x, rect.y + (int)used + ttf_ascender_px(line_px), line_px,
+                        ttf_draw_text_px(fb, x, rect.y + (int)used + ttf_ascender_px(line_px), line_px,
                                               glyph, EPD_DRAW_ALIGN_LEFT, fg, bg);
                         x += (int)ttf_text_width_px(line_px, glyph) + per_gap + (extra-- > 0 ? 1 : 0);
                         q += n;
                     }
                 }
             } else {
-                draw_body_text(fb, rect.x + indent, rect.y + (int)used + ttf_ascender_px(line_px), line_px,
+                ttf_draw_text_px(fb, rect.x + indent, rect.y + (int)used + ttf_ascender_px(line_px), line_px,
                                       s_line, EPD_DRAW_ALIGN_LEFT, fg, bg);
             }
             // 网格线固定在槽底，旧页线不进入新页文字带；图文回退沿用原行位置。
@@ -522,10 +512,6 @@ void book_layout_set_guide_origin(int y) {
 }
 void book_layout_set_guide_contrast(bool binary) {
     s_guide_binary = binary;
-}
-
-void book_layout_set_direct_fine(bool on) {
-    s_direct_fine = on;
 }
 
 void book_layout_set_align(int align) {

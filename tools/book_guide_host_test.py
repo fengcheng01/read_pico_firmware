@@ -76,12 +76,6 @@ void ttf_draw_text_px(uint8_t* fb, int x, int baseline, int px, const char* text
         if (baseline+y1>current_ink_bottom) current_ink_bottom=baseline+y1;
     }
 }
-// 二值与灰阶共用轮廓带；光栅覆盖率另由细边回归检查。
-// Binary and grayscale share outline bands; fine-edge regressions separately check raster coverage.
-void ttf_draw_text_px_bw(uint8_t* fb, int x, int baseline, int px, const char* text,
-                         enum EpdFontFlags align, uint8_t fg, uint8_t bg) {
-    ttf_draw_text_px(fb, x, baseline, px, text, align, fg, bg);
-}
 void epd_draw_pixel(int x, int y, uint8_t color, uint8_t* fb) {
     (void)color; (void)fb;
     assert(x>=body.x && x<body.x+body.width && y>=body.y && y<body.y+body.height);

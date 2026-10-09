@@ -121,15 +121,10 @@ void app_settings_set_gc_every(uint8_t every);
 /// Optional vendor black/white DU direct with actual targets 0/15 and no gray antialiasing, off by default; decoded-image chapters retain standard GL16.
 bool app_settings_book_direct(void);
 void app_settings_set_book_direct(bool on);
-/// 直刷正文可选原始覆盖率细边，不改变字号、字重、分页或DU波形；默认保持原样。
-/// Optional raw-coverage fine edges for direct body text without changing size, weight, pagination or DU waveforms; retain original edges by default.
-bool app_settings_book_direct_fine(void);
-void app_settings_set_book_direct_fine(bool on);
 
 enum {
     BOOK_NIGHT_PROFILE_CURRENT = 0, ///< 当前清理 / Current cleanup
     BOOK_NIGHT_PROFILE_CROSSMUX = 1, ///< Crossmux Pico 对照 / Crossmux Pico comparison
-    BOOK_NIGHT_PROFILE_BLACK_BASELINE = 2, ///< 真实黑基准双GC对照 / Actual black-baseline two-GC comparison
 };
 /// 夜间刷新方案，默认当前清理；Crossmux对照仅纯文字夜间使用黑白DU和周期单次GC，不移植其它固件功能。
 /// Night refresh profile defaults to current cleanup; the Crossmux comparison uses BW DU and one periodic GC for night text only, without transplanting other firmware features.

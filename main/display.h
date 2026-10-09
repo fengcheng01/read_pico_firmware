@@ -79,20 +79,6 @@ typedef enum {
 /// Unknown references retain physical-clear/full-GC48 recovery; commit counts only on success and never post-scan presented content.
 enum EpdDrawError update_display_night_crossmux(EpdiyHighlevelState* hl, display_crossmux_action_t action);
 
-typedef enum {
-    DISPLAY_BLACK_BASELINE_TURN, ///< 夜间翻页，计入保存周期 / Night turn counted toward the saved interval
-    DISPLAY_BLACK_BASELINE_ENTRY, ///< 实际暗色布局入口，双GC清理 / Actual dark-layout entry with dual-GC cleaning
-    DISPLAY_BLACK_BASELINE_CLEAN, ///< 手动双GC清理 / Manual dual-GC cleaning
-    DISPLAY_BLACK_BASELINE_REDRAW, ///< 同布局重绘，不计翻页 / Same-layout redraw excluded from turn counting
-} display_black_baseline_action_t;
-/// 夜间可选黑基准对照：已知参考清理先真实旧帧→黑，再黑→保留目标，各一次完整厂家GC48；普通页沿用当前GL49/DU21。
-/// Optional night black-baseline comparison: known-reference cleaning uses actual old→black, then black→retained target, each with full vendor GC48; ordinary pages retain current GL49/DU21.
-/// direct只量化目标，标准保留灰阶；未知参考仍清白恢复，失败不提交虚假黑帧或消费入口/周期；日间调用回退原日间正文路径。
-/// direct quantizes only the target, while standard retains gray; unknown references still recover through white, without false black commits or consuming entry/interval on failure; day calls fall back to original day body paths.
-enum EpdDrawError update_display_night_black_baseline(
-    EpdiyHighlevelState* hl, display_black_baseline_action_t action, bool direct
-);
-
 /// 灰阶图还在屏上时置位：菜单盖上来或离页先刷白，避免从中间灰差分。
 /// Set while a gray image is still on panel: wipe to white before the menu or leave so the next update is not a mid-gray differential.
 void display_hold_white_exit(bool hold);

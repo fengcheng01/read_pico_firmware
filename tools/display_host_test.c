@@ -36,7 +36,6 @@ static const EpdWaveform* last_waveform;
 int epd_width(void) { return 16; }
 int epd_height(void) { return 16; }
 uint8_t app_settings_gc_every(void) { return (uint8_t)cleanup_every; }
-bool app_settings_book_night(void) { return false; }
 // 仅测试保留的旧符号：撤回后真实显示路径不得读取旧实验档位。
 // Test-only legacy symbol: the withdrawn production display path must never read old experiment tiers.
 static uint8_t legacy_night_cleanup;

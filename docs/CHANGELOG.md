@@ -3,7 +3,12 @@
 按日期和作者简述对用户可见的功能变化；详细实现历史见 Git。使用方法见 [README](../README.zh-CN.md)。
 User-visible changes by date and author; Git retains implementation history. See [README](../README.md) for usage.
 
-## 0.5.29-20261009.1 · 2026-10-09
+## 0.5.30-20261009.1 · 2026-10-09
+
+- 实机确认黑基准清理后第一张仍有残影并亮闪、细边没有可见抗锯齿改善，撤回两项入口与分支；旧黑基准选择回当前方案，细边键忽略不擦。恢复原直刷及当前方案物理清白加完整GC，保留WiFi扫描、时钟学习与已有设置；不宣称夜间残影或灰阶直刷已解决。
+  Withdraw Black Baseline and Fine Edges after device feedback shows ghosts on the first cleaned page with flashing and no visible edge improvement. Legacy Black Baseline falls back to Current and fine-edge keys remain untouched. Restore original direct rendering and Current physical white/full-GC cleaning, retaining WiFi scans, clock learning and settings without claiming a night-ghost or gray-direct fix.
+
+## 0.5.29-20261009.1 · 2026-10-09 · 显示试验已撤回 / Display experiments withdrawn
 
 - 时间页区分首次联网样本、锁屏累计与自动校时失败；静态浅睡锁屏也按维护期限唤醒，不重画静态画面，静态深睡保持断电。未联网的准确起点不能替代可信样本，不按11小时快钟估算硬编码补偿。
   Distinguish the first trusted sync, accumulated lock sleep and maintenance failures. Static light-sleep locks service deadlines without repainting; static deep sleep still powers off. An apparently accurate offline starting time cannot replace a trusted sample or justify a fixed correction.

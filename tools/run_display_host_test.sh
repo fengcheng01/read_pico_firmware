@@ -23,6 +23,3 @@ build/book-tests/navigation-waveform
 
 # 独立固定SDK指纹检查对照表全部字节，并保证原模式不变。/ Check all comparison bytes against pinned SDK fingerprints and retain original modes.
 python3 tools/crossmux_waveform_host_test.py
-
-# 黑基准对照联合真实显示、高层提交及完整厂表，包含失败和伪参考负对照。/ Black-baseline tests combine actual display, high-level commits and complete vendor tables, including failures and a fictional-reference negative control.
-python3 tools/night_black_baseline_host_test.py

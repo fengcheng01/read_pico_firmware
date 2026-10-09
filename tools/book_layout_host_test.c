@@ -52,12 +52,6 @@ void ttf_draw_text_px(uint8_t* fb, int x, int y, int px, const char* text,
     assert(strlen(drawn) + strlen(text) < sizeof(drawn));
     strcat(drawn, text);
 }
-// 几何替身共享记录；真实二值覆盖率由细边回归验证。/ Geometry seams share records; fine-edge regressions verify real binary coverage.
-void ttf_draw_text_px_bw(uint8_t* fb, int x, int y, int px, const char* text,
-                         enum EpdFontFlags align, uint8_t fg, uint8_t bg) {
-    ttf_draw_text_px(fb, x, y, px, text, align, fg, bg);
-}
-
 int main(void) {
     // 小尺寸几何夹具关闭段首缩进，避免两字符缩进占满整行。/ Disable paragraph indent in tiny geometry fixtures so two ems do not consume the whole row.
     book_layout_set_indent(false);

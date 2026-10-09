@@ -15,7 +15,7 @@ def production_function(name):
     assert match, name
     end = source.index('\n}', match.end()) + 2
     return source[match.start():end]
-production = '\n'.join(production_function(name) for name in ('finish_reader_frame', 'reader_night_profile_enabled', 'reader_crossmux_enabled', 'reader_black_baseline_enabled', 'reader_direct_enabled', 'present'))
+production = '\n'.join(production_function(name) for name in ('finish_reader_frame', 'reader_crossmux_enabled', 'reader_direct_enabled', 'present'))
 harness = r'''
 #include <assert.h>
 #include <stdbool.h>
@@ -52,10 +52,6 @@ typedef int EpdWaveform;
 typedef enum {DISPLAY_CROSSMUX_TURN,DISPLAY_CROSSMUX_ENTRY,DISPLAY_CROSSMUX_CLEAN,DISPLAY_CROSSMUX_REDRAW} display_crossmux_action_t;
 #define BOOK_NIGHT_PROFILE_CURRENT 0
 #define BOOK_NIGHT_PROFILE_CROSSMUX 1
-#define BOOK_NIGHT_PROFILE_BLACK_BASELINE 2
-typedef enum {DISPLAY_BLACK_BASELINE_TURN,DISPLAY_BLACK_BASELINE_ENTRY,DISPLAY_BLACK_BASELINE_CLEAN,DISPLAY_BLACK_BASELINE_REDRAW} display_black_baseline_action_t;
-static unsigned black_calls,black_actions[4];
-static bool black_direct;
 static uint8_t night_profile;
 static unsigned crossmux_calls,crossmux_actions[4];
 static int E0470_WAVEFORM,E0470_NAVIGATION_WAVEFORM,E0470_TEXTTURN_WAVEFORM,E0470_TEXTTURN_NIGHT_WAVEFORM,E0470_DIRECT_WAVEFORM;
@@ -91,12 +87,6 @@ static enum EpdDrawError update_display_night_crossmux(int* h,display_crossmux_a
  assert(s_view==READING&&s_text&&night_setting&&!s_image_open&&!s_toolbar&&!s_clear_confirm&&!s_quote_selecting&&!s_ended);
  for(size_t i=0;i<s_block_count;++i)assert(!s_blocks[i].image);
  crossmux_calls++;crossmux_actions[action]++;return result();
-}
-static enum EpdDrawError update_display_night_black_baseline(int* h,display_black_baseline_action_t action,bool use_direct) {
- (void)h;assert(action>=DISPLAY_BLACK_BASELINE_TURN&&action<=DISPLAY_BLACK_BASELINE_REDRAW);
- assert(s_view==READING&&s_text&&night_setting&&!s_image_open&&!s_toolbar&&!s_clear_confirm&&!s_quote_selecting&&!s_ended);
- for(size_t i=0;i<s_block_count;++i)assert(!s_blocks[i].image);
- black_calls++;black_actions[action]++;black_direct=use_direct;return result();
 }
 static enum EpdDrawError update_display_full(int* h) {(void)h;fulls++;return result();}
 static enum EpdDrawError update_display_clean(int* h) {(void)h;fulls++;return result();}
@@ -287,35 +277,6 @@ int main(void) {
  present(&ctx,APP_REDRAW_PAGE);s_text_turn=true;present(&ctx,APP_REDRAW_AREA);assert(crossmux_calls==before_cross);
  night_profile=BOOK_NIGHT_PROFILE_CROSSMUX;s_presented_view=LAYOUT;
  present(&ctx,APP_REDRAW_PAGE);assert(crossmux_calls==before_cross+1&&s_reader_target_binary);
-
- // 黑基准对照保留标准灰阶，仅有效纯文字夜间接管；失败入口继续重试。
- // Black-baseline retains standard gray and owns only eligible night text; failed entries remain retryable.
- night_profile=BOOK_NIGHT_PROFILE_BLACK_BASELINE;night_setting=true;s_view=READING;
- s_blocks=NULL;s_block_count=0;s_toolbar=s_image_open=s_clear_confirm=s_quote_selecting=s_ended=false;
- for(int effect=0;effect<2;++effect) {
-   direct=effect;s_presented_view=LAYOUT;s_presented_reading_overlay=false;
-   unsigned before_black=black_calls,before_quantize=quantizes;
-   fail=true;present(&ctx,APP_REDRAW_PAGE);
-   assert(black_calls==before_black+1&&s_presented_view==LAYOUT&&black_direct==direct);
-   fail=false;present(&ctx,APP_REDRAW_PAGE);
-   assert(black_calls==before_black+2&&s_presented_view==READING&&s_reader_target_binary==direct);
-   assert(quantizes==before_quantize+(effect?2:0));
-   s_text_turn=true;present(&ctx,APP_REDRAW_AREA);assert(black_actions[DISPLAY_BLACK_BASELINE_TURN]==(unsigned)(effect+1));
-   present(&ctx,APP_REDRAW_PAGE);assert(black_actions[DISPLAY_BLACK_BASELINE_REDRAW]==(unsigned)(effect+1));
-   present(&ctx,APP_REDRAW_FULL);assert(black_actions[DISPLAY_BLACK_BASELINE_CLEAN]==(unsigned)(effect+1));
- }
- unsigned before_black=black_calls;
- s_blocks=image_blocks;s_block_count=2;direct=false;s_presented_view=LAYOUT;
- present(&ctx,APP_REDRAW_PAGE);s_text_turn=true;present(&ctx,APP_REDRAW_AREA);
- assert(black_calls==before_black&&!s_reader_target_binary);
- s_blocks=NULL;s_block_count=0;night_setting=false;s_presented_view=LAYOUT;
- present(&ctx,APP_REDRAW_PAGE);s_text_turn=true;present(&ctx,APP_REDRAW_AREA);
- assert(black_calls==before_black&&!s_reader_target_night);
- night_setting=true;s_toolbar=true;present(&ctx,APP_REDRAW_PAGE);
- assert(black_calls==before_black&&s_presented_reading_overlay);
- s_toolbar=false;present(&ctx,APP_REDRAW_PAGE);
- assert(black_calls==before_black+1&&!s_presented_reading_overlay);
- puts("reader present: black baseline routing, gray/DU distinction, failed entry retry, image/day/control exclusion and overlay exit PASS");
  puts("reader present: view/overlay-entry requests and failed retry, manual cleanup, preparation join, day/night binary direct frames before entry/redraw/turn, grayscale image fallback and ordinary-turn preservation PASS");
  puts("reader present: Crossmux ENTRY/TURN/CLEAN/REDRAW routing for night text, both page effects, binary frames, overlay retry, control/image/day exclusions and profile switching PASS");
 }

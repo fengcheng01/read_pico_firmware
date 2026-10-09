@@ -77,8 +77,6 @@ enum EpdDrawError update_display_text_turn(EpdiyHighlevelState* hl, bool white_o
 enum EpdDrawError update_display_text_direct(EpdiyHighlevelState* hl, bool white_on_black);
 typedef enum { DISPLAY_CROSSMUX_TURN, DISPLAY_CROSSMUX_ENTRY, DISPLAY_CROSSMUX_CLEAN, DISPLAY_CROSSMUX_REDRAW } display_crossmux_action_t;
 enum EpdDrawError update_display_night_crossmux(EpdiyHighlevelState* hl, display_crossmux_action_t action);
-typedef enum { DISPLAY_BLACK_BASELINE_TURN, DISPLAY_BLACK_BASELINE_ENTRY, DISPLAY_BLACK_BASELINE_CLEAN, DISPLAY_BLACK_BASELINE_REDRAW } display_black_baseline_action_t;
-enum EpdDrawError update_display_night_black_baseline(EpdiyHighlevelState* hl, display_black_baseline_action_t action, bool direct);
 enum EpdDrawError update_display_white(EpdiyHighlevelState* hl);
 enum EpdDrawError update_display_with(EpdiyHighlevelState*, const EpdWaveform*, enum EpdDrawMode);
 enum EpdDrawError update_display_from_white(EpdiyHighlevelState* hl);
