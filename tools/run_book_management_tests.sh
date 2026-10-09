@@ -7,14 +7,21 @@ set -euo pipefail
 bash tools/run_book_host_tests.sh
 python3 tools/test_book_images.py
 python3 tools/test_font_metrics.py
+python3 tools/book_direct_fine_host_test.py --verify-regression
 python3 tools/book_ui_host_test.py
 python3 tools/test_search.py
 flags=(-std=gnu11 -Wall -Wextra -Werror -g -fsanitize=address,undefined)
 gcc "${flags[@]}" -Icomponents/read_pico_search/include tools/transfer_host_test.c components/read_pico_search/read_pico_search.c -o build/book-tests/transfer
 build/book-tests/transfer
 python3 tools/test_transfer_font.py
-gcc "${flags[@]}" -Imanaged_components/espressif__cjson/cJSON tools/transfer_wifi_host_test.c managed_components/espressif__cjson/cJSON/cJSON.c -lm -o build/book-tests/transfer-wifi
+# macOS弃用警告只在第三方cJSON对象关闭，测试代码仍保留-Werror。
+# Disable macOS deprecation warnings only for the third-party cJSON object; test code keeps -Werror.
+vendor_flags=("${flags[@]}")
+if [[ "$(uname -s)" == Darwin ]]; then vendor_flags+=(-Wno-deprecated-declarations); fi
+gcc "${vendor_flags[@]}" -Imanaged_components/espressif__cjson/cJSON -c managed_components/espressif__cjson/cJSON/cJSON.c -o build/book-tests/cjson.o
+gcc "${flags[@]}" -Imanaged_components/espressif__cjson/cJSON tools/transfer_wifi_host_test.c build/book-tests/cjson.o -lm -o build/book-tests/transfer-wifi
 build/book-tests/transfer-wifi
+python3 tools/wifi_scan_lifecycle_host_test.py
 gcc "${flags[@]}" -Itools/transfer_ui_stubs -Icomponents/read_pico_transfer/include -Imain/os -Imain/ui/product -Imain/book -Imain/app -Imain tools/transfer_ui_host_test.c -o build/book-tests/transfer-ui
 build/book-tests/transfer-ui
 bash tools/run_app_loop_host_tests.sh

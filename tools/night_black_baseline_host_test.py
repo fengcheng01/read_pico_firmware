@@ -1,0 +1,71 @@
+#!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 mindreset
+# SPDX-License-Identifier: Apache-2.0
+# 中文：编译真实显示、高层提交及厂家表，并用负对照否定伪黑基准。/ English: Compile actual display, high-level commits and vendor tables, with a negative control rejecting fictional black references.
+from pathlib import Path
+import os
+import shlex
+import subprocess
+import tempfile
+
+ROOT = Path(__file__).resolve().parents[1]
+
+def build_and_run(out, source, suffix, expected_failure=False):
+    flags = shlex.split(os.environ.get("CC", "cc")) + [
+        "-std=gnu11", "-g", "-Wall", "-Wextra", "-Werror", "-fsanitize=address,undefined",
+        "-ffunction-sections", "-fdata-sections",
+        "-Wl,-dead_strip" if os.uname().sysname == "Darwin" else "-Wl,--gc-sections",
+        "-I" + str(out), "-I" + str(ROOT / "main"), "-I" + str(ROOT / "main/app"),
+        "-I" + str(ROOT / "components/epdiy/src"), "-I" + str(ROOT / "components/epdiy/include"),
+        "-I" + str(ROOT / "components/e0470_epaper_waveform/include"),
+        "-I" + str(ROOT / "components/e0470_epaper_waveform/waveforms"),
+        str(ROOT / "tools/night_black_baseline_host_test.c"), str(source),
+        str(ROOT / "main/display_pixels.c"), str(ROOT / "components/epdiy/src/highlevel.c"),
+        str(ROOT / "components/e0470_epaper_waveform/e0470_epaper_waveform.c"),
+        str(ROOT / "components/e0470_epaper_waveform/e0470_waveform_trim.c"),
+        "-o", str(out / suffix),
+    ]
+    subprocess.run(flags, check=True)
+    result = subprocess.run([str(out / suffix)], text=True, capture_output=True)
+    if expected_failure:
+        assert result.returncode != 0 and "Assertion" in result.stderr, (result.returncode, result.stdout, result.stderr)
+        print("negative control: fictional pre-scan black reference rejected PASS")
+    else:
+        print(result.stdout, end="")
+        if result.returncode:
+            print(result.stderr, end="")
+            raise subprocess.CalledProcessError(result.returncode, flags)
+
+with tempfile.TemporaryDirectory(prefix="pico-night-black-") as directory:
+    out = Path(directory)
+    headers = {
+        "esp_attr.h": "#pragma once\n#define IRAM_ATTR\n",
+        "esp_types.h": "#pragma once\n#include <stdint.h>\n",
+        "esp_err.h": "#pragma once\ntypedef int esp_err_t;\n",
+        "esp_log.h": "#pragma once\n#define ESP_LOGI(tag, ...) ((void)(tag))\n#define ESP_LOGW(tag, ...) ((void)(tag))\n",
+        "esp_timer.h": "#pragma once\n#include <stdint.h>\nstatic inline int64_t esp_timer_get_time(void) { return 0; }\n",
+        "xtensa/core-macros.h": "#pragma once\n",
+        "sdkconfig.h": "#pragma once\n#define CONFIG_IDF_TARGET_ESP32S3 1\n#define CONFIG_SPIRAM 1\n",
+        "esp_heap_caps.h": """#pragma once
+#include <stdlib.h>
+#define MALLOC_CAP_SPIRAM 1
+#define MALLOC_CAP_INTERNAL 2
+#define MALLOC_CAP_8BIT 4
+static inline void* heap_caps_aligned_alloc(size_t align, size_t size, int caps) {
+    (void)caps; void* p = NULL; return posix_memalign(&p, align, size) ? NULL : p;
+}
+static inline void heap_caps_free(void* p) { free(p); }
+""",
+    }
+    for name in ("read_pico_board.h", "read_pico_epd_timing.h"):
+        headers[name] = (ROOT / "tools/display_host_stubs" / name).read_text()
+    for name, content in headers.items():
+        path = out / name; path.parent.mkdir(parents=True, exist_ok=True); path.write_text(content)
+    build_and_run(out, ROOT / "main/display.c", "actual")
+    # 中文：只篡改被编译的临时副本，生产文件及厂表保持。/ English: Mutate only a compiled temporary copy, leaving production and vendor files intact.
+    source = (ROOT / "main/display.c").read_text()
+    original = "epd_leading_skip_discard();\n    EpdRect screen = epd_full_screen();"
+    assert source.count(original) == 1
+    mutated = source.replace(original, "memset(hl->back_fb, 0, pixels / 2);\n    " + original)
+    negative = out / "fictional_black.c"; negative.write_text(mutated)
+    build_and_run(out, negative, "negative", expected_failure=True)

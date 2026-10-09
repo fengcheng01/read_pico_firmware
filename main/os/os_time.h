@@ -85,8 +85,27 @@ bool os_time_recently_synced(void);
 void os_time_record_sleep(int64_t duration_us);
 /// 格式化实测走时状态，只读缓存；与联网对时成功分开显示。/ Format cached measured-rate status separately from network sync success.
 void os_time_clock_status(char* out, size_t cap);
-/// 动态锁屏维护是否到期：首轮一小时，已学习后六小时。/ Whether dynamic-lock maintenance is due: one hour initially, six hours after learning.
+/// 浅睡锁屏维护是否到期：无首样本立即到期，后续约一小时，已学习后六小时。/ Light-sleep lock maintenance is due immediately without a first sample, then about hourly or six-hourly after learning.
 bool os_time_maintenance_due(int64_t now_ms);
+/// 距下次走时维护的毫秒数；已到期返回零。/ Milliseconds until the next rate-maintenance session; zero when due.
+int64_t os_time_maintenance_delay_ms(int64_t now_ms);
+/// 自动校时的最近结果；只用于缓存状态展示，不代表物理走时精度。
+/// Last automatic-sync result, for cached status display rather than a claim of clock accuracy.
+typedef enum {
+    OS_TIME_LOCK_SYNC_IDLE = 0, ///< 尚未尝试 / Not attempted
+    OS_TIME_LOCK_SYNC_RUNNING, ///< 正在校时 / Synchronizing
+    OS_TIME_LOCK_SYNC_NO_WIFI, ///< 没有已保存网络 / No saved network
+    OS_TIME_LOCK_SYNC_BUSY, ///< 网络由其他功能占用 / Network owned elsewhere
+    OS_TIME_LOCK_SYNC_CONNECT_FAILED, ///< 启动连接失败 / Connection start failed
+    OS_TIME_LOCK_SYNC_FAILED, ///< 网络中断或校时超时 / Network ended or sync timed out
+    OS_TIME_LOCK_SYNC_CANCELLED, ///< 解锁取消 / Cancelled on unlock
+    OS_TIME_LOCK_SYNC_SUCCESS, ///< 本次校时完成 / Sync completed
+} os_time_lock_sync_state_t;
+/// UI任务记录自动校时结果；render仅读取已缓存文本。/ UI task records the maintenance result; render reads cached text only.
+void os_time_report_lock_sync(os_time_lock_sync_state_t state);
+/// 静态浅睡锁屏的维护等待；关闭自动校时返回零，不启动网络。
+/// Maintenance wait for a static light-sleep face; zero when automatic sync is disabled, without starting networking.
+int64_t os_time_lock_sync_delay_ms(int64_t now_ms);
 /// UI任务推进有界锁屏校时，返回是否仍在联网；仅自有会话。/ UI advances bounded lock sync; true means networking, with owned sessions only.
 bool os_time_lock_sync_tick(int64_t now_ms);
 /// 按键解锁或离开锁屏时收尾联网。/ Release maintenance networking on key unlock or lock exit.

@@ -282,7 +282,7 @@ static app_redraw_t network_ui_tick(app_ctx_t* ctx) {
     esp_err_t err = read_pico_transfer_scan_wifi(s_networks, &s_network_count);
     if (err != ESP_OK) {
         s_network_count = 0;
-        snprintf(s_network_message, sizeof(s_network_message), "扫描失败，请点重新扫描");
+        snprintf(s_network_message, sizeof(s_network_message), "扫描失败：%s", esp_err_to_name(err));
     }
     else if (!s_network_count) snprintf(s_network_message, sizeof(s_network_message), "未发现网络，请靠近路由器后重扫");
     else s_network_message[0] = 0;

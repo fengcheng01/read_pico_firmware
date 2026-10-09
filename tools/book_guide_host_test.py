@@ -49,7 +49,7 @@ static bool grid_active, binary, night;
 static size_t groups, solids, dashes, night_rules, day_rules, binary_rules, cases, pair_checks;
 static size_t image_pixels;
 '''
-UNIT += "\n".join(font_function(name) for name in ("clamp_px", "decode_utf8", "measure_width", "ttf_ascender_px"))
+UNIT += "\n".join(font_function(name) for name in ("clamp_px", "decode_utf8", "resolve_glyph_index", "measure_width", "ttf_ascender_px"))
 UNIT += r'''
 static int pitch(void) { return base_px + base_px/2 + base_px*leading/100; }
 static void set_band(uint64_t* mask, int top, int end) {
@@ -75,6 +75,12 @@ void ttf_draw_text_px(uint8_t* fb, int x, int baseline, int px, const char* text
         set_band(bands.ink,baseline+y0,baseline+y1);
         if (baseline+y1>current_ink_bottom) current_ink_bottom=baseline+y1;
     }
+}
+// 二值与灰阶共用轮廓带；光栅覆盖率另由细边回归检查。
+// Binary and grayscale share outline bands; fine-edge regressions separately check raster coverage.
+void ttf_draw_text_px_bw(uint8_t* fb, int x, int baseline, int px, const char* text,
+                         enum EpdFontFlags align, uint8_t fg, uint8_t bg) {
+    ttf_draw_text_px(fb, x, baseline, px, text, align, fg, bg);
 }
 void epd_draw_pixel(int x, int y, uint8_t color, uint8_t* fb) {
     (void)color; (void)fb;

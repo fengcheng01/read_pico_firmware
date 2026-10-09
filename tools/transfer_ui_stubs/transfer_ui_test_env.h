@@ -16,6 +16,7 @@ typedef int esp_err_t;
 #define ESP_OK 0
 #define ESP_FAIL -1
 #define ESP_ERR_INVALID_ARG 0x102
+#define ESP_ERR_WIFI_TIMEOUT 0x3006
 typedef struct { int x,y,width,height; } EpdRect;
 typedef enum { APP_REDRAW_NONE, APP_REDRAW_AREA, APP_REDRAW_PAGE, APP_REDRAW_FULL, APP_REDRAW_DONE } app_redraw_t;
 struct app_desc;
@@ -46,7 +47,7 @@ enum EpdDrawMode { MODE_DU,MODE_GL16,MODE_GC16 };
 static const int E0470_WAVEFORM = 0;
 static const int E0470_FOLLOW_WAVEFORM = 1;
 #define ESP_LOGI(tag,...) ((void)(tag))
-static inline const char* esp_err_to_name(int e) { (void)e; return "error"; }
+static inline const char* esp_err_to_name(int e) { return e==ESP_ERR_WIFI_TIMEOUT?"ESP_ERR_WIFI_TIMEOUT":e==ESP_FAIL?"ESP_FAIL":"error"; }
 static inline int ui_content_width(void) { return 604; }
 static inline EpdRect ui_row_rect(int i,int n,int y,int h) { int w=(604-(n-1)*12)/n; return (EpdRect){40+i*(w+12),y,w,h}; }
 static inline EpdRect ui_bar_rect(int i,int n) { int w=(508-(n-1)*12)/n; return (EpdRect){40+i*(w+12),1096,w,96}; }
@@ -70,6 +71,7 @@ static inline void display_set_bulk_io(bool b) {(void)b;}
 static inline int update_display_area_with(void* p,...) {(void)p;return 0;}
 static inline int update_display_white(void* p) {(void)p;return 0;}
 static inline int update_display_full(void* p) {(void)p;return 0;}
+static inline int update_display_mode(void* p,enum EpdDrawMode mode) {(void)p;(void)mode;return 0;}
 static inline void guard_draw_result(void* p,int e) {(void)p;(void)e;}
 static inline size_t heap_caps_get_free_size(int cap) {(void)cap;return 1000000;}
 typedef struct {char path[160];bool is_flash;} book_store_root_t;

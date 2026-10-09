@@ -16,6 +16,7 @@ void epd_lcd_set_prefill_lines(int lines);
 
 int epd_width(void);
 int epd_height(void);
+static inline EpdRect epd_full_screen(void) { return (EpdRect){0, 0, epd_width(), epd_height()}; }
 
 void epd_leading_skip_discard(void);
 enum EpdDrawError epd_draw_base(EpdRect, const uint8_t*, EpdRect, enum EpdDrawMode, int, const bool*, const uint8_t*, const EpdWaveform*);

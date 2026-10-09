@@ -57,6 +57,9 @@ void book_layout_set_guide(int style);
 void book_layout_set_guide_origin(int y);
 /// 辅助线用日间黑/夜间白以适配真黑白直刷；否则用原灰阶，只影响绘制。/ Use day-black/night-white guides for binary direct; otherwise retain gray guides; draw-only.
 void book_layout_set_guide_contrast(bool binary);
+/// 纯文字直刷的原始覆盖率细边，绘制时选黑白字形；度量、页表及图片保持。
+/// Raw-coverage fine edges for text direct choose binary glyph drawing only; retain metrics, pagination and illustrations.
+void book_layout_set_direct_fine(bool on);
 /// 正文对齐 0=左 1=居中 2=两端对齐；只影响 draw（断行不变），不需要重建。/ Body alignment 0=left 1=center 2=justified; draw-only (line breaks unchanged), no rebuild needed.
 void book_layout_set_align(int align);
 

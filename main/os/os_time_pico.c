@@ -23,6 +23,8 @@
  * Frozen: Restore rates only for the same clock model; relearn untagged legacy values rather than subtracting estimated drift.
  * 修订原因：用户离线锁屏偏快且保存+4410ppm，补偿来源必须可核验。
  * Revision: Offline lock time gains with a saved +4410ppm, so persisted compensation needs a verifiable model identity.
+ * 冻结：首个可信样本、实际睡眠累计和自动校时失败分别可见，不能把联网成功当作已学习。
+ * Frozen: Expose the first trusted sample, accumulated sleep and maintenance failures separately; successful sync is not a learned rate.
  */
 #include "os_time.h"
 #include "os_clock_rate.h"
@@ -35,6 +37,7 @@
 #include "settings.h"
 #include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
 #include <time.h>
 #include <sys/time.h>
 
@@ -64,6 +67,7 @@ static os_clock_rate_t s_rate;
 static bool s_rate_loaded;
 static bool s_rate_learned;
 static int64_t s_last_sync_ms = -1;
+static os_time_lock_sync_state_t s_lock_sync_state;
 static void load_rate(void) {
     if (!s_rate_loaded) {
         s_rate.ppm = app_settings_sleep_clock_ppm();
@@ -71,15 +75,36 @@ static void load_rate(void) {
     }
 }
 bool os_time_maintenance_due(int64_t now_ms) {
+    return os_time_maintenance_delay_ms(now_ms) == 0;
+}
+int64_t os_time_maintenance_delay_ms(int64_t now_ms) {
     load_rate();
-    return s_last_sync_ms < 0 || now_ms - s_last_sync_ms >= (s_rate_learned ? 21600000 : 3660000);
+    if (s_last_sync_ms < 0) return 0;
+    int64_t remaining = (s_rate_learned ? 21600000 : 3660000) - (now_ms - s_last_sync_ms);
+    return remaining > 0 ? remaining : 0;
+}
+void os_time_report_lock_sync(os_time_lock_sync_state_t state) {
+    s_lock_sync_state = state;
 }
 void os_time_clock_status(char* out, size_t cap) {
     load_rate();
     if (s_rate_learned) snprintf(out, cap, "睡眠补偿 %+ld ppm · %s", (long)s_rate.ppm,
         app_settings_sleep_clock_valid() ? "已保存" : "本次生效，保存待重试");
-    else snprintf(out, cap, "%s", s_rate.result == OS_CLOCK_OUTLIER ? "走时样本异常 · 下次重新测量" :
-        s_rate.result == OS_CLOCK_AWAKE ? "睡眠样本不足 · 锁屏后继续学习" : "走时待学习 · 需两次联网对时");
+    else if (s_rate.result == OS_CLOCK_OUTLIER) snprintf(out, cap, "%s", "走时样本异常 · 下次重新测量");
+    else if (s_rate.result == OS_CLOCK_AWAKE) snprintf(out, cap, "%s", "睡眠样本不足 · 锁屏后继续学习");
+    else if (s_rate.sampled) snprintf(out, cap, "走时学习中 · 锁屏已累计 %lld 分钟",
+        (long long)((s_rate.sleep_us - s_rate.sample_sleep_us) / 60000000));
+    else snprintf(out, cap, "%s", "走时待学习 · 先联网对时一次");
+    const char* note = s_lock_sync_state == OS_TIME_LOCK_SYNC_NO_WIFI ? "未配置 WiFi" :
+        s_lock_sync_state == OS_TIME_LOCK_SYNC_BUSY ? "网络正忙" :
+        s_lock_sync_state == OS_TIME_LOCK_SYNC_CONNECT_FAILED ? "自动连接失败" :
+        s_lock_sync_state == OS_TIME_LOCK_SYNC_FAILED ? "自动校时未完成" :
+        s_lock_sync_state == OS_TIME_LOCK_SYNC_CANCELLED ? "解锁取消校时" :
+        s_lock_sync_state == OS_TIME_LOCK_SYNC_RUNNING ? "正在自动校时" : NULL;
+    if (note && cap) {
+        size_t used = strlen(out);
+        if (used < cap) snprintf(out + used, cap - used, " · %s", note);
+    }
 }
 void os_time_record_sleep(int64_t duration_us) {
     load_rate();
@@ -244,6 +269,7 @@ void os_time_network(bool sta_uplink) {
         app_settings_set_sleep_clock_ppm(s_rate.ppm);
     } else if (s_rate_learned && !app_settings_sleep_clock_valid()) app_settings_set_sleep_clock_ppm(s_rate.ppm);
     s_last_sync_ms = tick_ms;
+    s_lock_sync_state = OS_TIME_LOCK_SYNC_SUCCESS;
     ESP_LOGI(TAG, "sleep clock result=%d ppm=%ld elapsed=%lldms sleep=%lldms error=%lldms saved=%d",
         s_rate.result, (long)s_rate.ppm, (long long)s_rate.window_ms, (long long)(s_rate.window_sleep_us / 1000),
         (long long)s_rate.error_ms, app_settings_sleep_clock_valid());

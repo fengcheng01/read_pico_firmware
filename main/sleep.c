@@ -13,6 +13,8 @@
  * and monotonic clock rather than repeatedly cold-booting through the PMU alarm.
  * 修订：用户要求修复长期慢钟；启用自动校时后，分钟唤醒可短暂连接已保存WiFi，电源键取消。
  * Revision: User-requested drift repair permits brief saved-WiFi sessions on minute wakes when enabled; the power key cancels them.
+ * 修订：静态浅睡锁屏按自动校时期限定时维护但不刷新画面，补齐整夜无第二锚点的缺口；静态深睡仍由PMU断电。
+ * Revision: Static light-sleep locks service automatic-sync deadlines without repainting, closing overnight missing-second-anchor coverage; static deep sleep still powers off through the PMU.
  */
 
 #include "sleep.h"
@@ -129,6 +131,15 @@ static void arm_minute_wake(void) {
         ? 60 - os_time_info()->unix_utc % 60 : 60;
     s_minute_deadline_ms = esp_timer_get_time() / 1000 + (int64_t)seconds * 1000;
     esp_sleep_enable_timer_wakeup((uint64_t)seconds * 1000000);
+}
+
+static void arm_lock_wake(void) {
+    if (app_settings_lock_style() != 0) { arm_minute_wake(); return; }
+    int64_t now_ms = esp_timer_get_time() / 1000;
+    int64_t delay_ms = os_time_lock_sync_delay_ms(now_ms);
+    if (!delay_ms) return;
+    s_minute_deadline_ms = now_ms + delay_ms;
+    esp_sleep_enable_timer_wakeup((uint64_t)delay_ms * 1000);
 }
 
 void app_sleep_disarm_minute_wake(void) {
@@ -483,7 +494,7 @@ void enter_lock_and_sleep(
             unsigned minutes = 0;
             for (;;) {
                 epd_poweroff();
-                if (app_settings_lock_style() != 0) arm_minute_wake();
+                arm_lock_wake();
                 app_wake_source_t wake = app_light_sleep_wait(acc);
                 if (wake != APP_WAKE_TIMER) break;
                 // 定时维护在浅睡之外进行，电源键可中止；不会把联网计入睡眠补偿。
@@ -495,6 +506,9 @@ void enter_lock_and_sleep(
                 os_time_lock_sync_cancel();
                 if (wake != APP_WAKE_TIMER) break;
                 os_time_poll(esp_timer_get_time() / 1000);
+                // 静态锁屏只维护时间；画面未改变，不重复推屏。
+                // Static locks maintain time only; their unchanged frame needs no extra presentation.
+                if (app_settings_lock_style() == 0) continue;
                 draw_lock_face(framebuffer);
                 const os_time_info_t* info = os_time_info();
                 uint8_t style = app_settings_lock_style();

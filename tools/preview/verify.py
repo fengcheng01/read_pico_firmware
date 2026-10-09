@@ -1382,7 +1382,85 @@ class PreviewTests(unittest.TestCase):
         self.reader_display_settings()
         self.assertEqual(self.preview.png, selected)
         self.preview.command("tap 643 1095")
+        self.assertNotEqual(self.preview.png, current)  # 新黑基准档 / New black-baseline profile
+        self.preview.command("tap 300 1072")
         self.assertEqual(self.preview.png, current)
+
+    def test_reader_direct_fine_edges_keep_du_and_page_geometry(self):
+        self.open_fixture_reader()
+        self.reader_display_settings()
+        self.preview.command("tap 300 1006")
+        self.preview.command("tap 424 1140")
+        body = lambda pixels: pixels[:1090 * 684]
+        original = self.reader_pixels()
+        self.assertEqual(set(original), {0, 255})
+        self.reader_display_settings()
+        self.preview.command("tap 480 1006")
+        fine_menu = self.preview.png
+        self.preview.command("tap 424 1140")
+        fine = self.reader_pixels()
+        self.assertEqual(set(fine), {0, 255})
+        self.assertNotEqual(fine, original)
+        self.preview.command("key 2")
+        self.settle()
+        self.assertEqual(self.state()["refresh_wave"], 6)
+        self.assertEqual(set(self.reader_pixels()), {0, 255})
+        self.preview.command("key 0")
+        self.settle()
+        self.assertEqual(body(self.reader_pixels()), body(fine))
+        self.page("app_os_home")
+        self.settle()
+        self.preview.command("tap 400 425")
+        self.settle()
+        self.assertEqual(body(self.reader_pixels()), body(fine))
+        self.reader_display_settings()
+        self.assertEqual(self.preview.png, fine_menu)
+        self.preview.command("tap 480 1006")
+        self.preview.command("tap 424 1140")
+        self.assertEqual(body(self.reader_pixels()), body(original))
+        self.reader_display_settings()
+        self.preview.command("tap 300 1006")
+        self.preview.command("tap 424 1140")
+        gray = self.reader_pixels()
+        self.assertGreater(len(set(gray)), 2)
+        self.reader_display_settings()
+        self.preview.command("tap 480 1006")
+        self.preview.command("tap 424 1140")
+        self.assertEqual(self.reader_pixels(), gray, "Fine mode does not change standard gray")
+
+    def test_reader_black_baseline_night_clean_points_keep_gray_and_du(self):
+        self.open_fixture_reader()
+        self.reader_display_settings()
+        self.preview.command("tap 300 1072")
+        self.preview.command("tap 300 1072")
+        self.preview.command("tap 300 676")
+        for _ in range(6):
+            self.preview.command("tap 300 900")  # 周期3页 / Three-page interval
+        before = self.state()
+        self.preview.command("tap 424 1140")
+        self.assertEqual(self.state()["black_baseline_action"], 1)
+        self.assertEqual(self.state()["gc_presents"], before["gc_presents"] + 2)
+        self.assertEqual(self.state()["physical_clears"], before["physical_clears"])
+        self.assertGreater(len(set(self.reader_pixels())), 2)
+        cleans = self.state()["gc_presents"]
+        for turn in range(1, 4):
+            self.preview.command("key 2")
+            self.settle()
+            self.assertEqual(self.state()["black_baseline_action"], 0)
+            self.assertEqual(self.state()["gc_presents"], cleans + (2 if turn == 3 else 0))
+        self.reader_display_settings()
+        self.preview.command("tap 300 1006")
+        self.preview.command("tap 424 1140")
+        self.assertEqual(set(self.reader_pixels()), {0, 255})
+        self.preview.command("key 2")
+        self.settle()
+        self.assertEqual(self.state()["refresh_wave"], 6)
+        self.reader_display_settings()
+        cleans = self.state()["gc_presents"]
+        self.preview.command("tap 150 1140")
+        self.assertEqual(self.state()["black_baseline_action"], 2)
+        self.assertEqual(self.state()["gc_presents"], cleans + 2)
+        self.assertEqual(set(self.reader_pixels()), {0, 255})
 
     def test_reader_crossmux_night_standard_uses_binary_turns_and_single_clean(self):
         self.open_fixture_reader()
@@ -1428,6 +1506,7 @@ class PreviewTests(unittest.TestCase):
         # 切回当前方案恢复原标准灰阶与入口物理清理；选择未被对照模式改写。
         # Returning to current restores standard grayscale and physical entry cleanup without changing the user's turn-effect choice.
         self.reader_display_settings()
+        self.preview.command("tap 300 1072")
         self.preview.command("tap 300 1072")
         before = self.state()
         self.preview.command("tap 424 1140")

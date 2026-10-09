@@ -43,6 +43,8 @@ static int menu_leaf, unsupported = -1, asset = -1, refresh_mode, presents, gc_p
 static unsigned s_night_body_turns, body_presents, quiet_presents, night_area_presents;
 static unsigned physical_clears, crossmux_presents;
 static int crossmux_action = -1;
+static unsigned black_baseline_presents;
+static int black_baseline_action = -1;
 static EpdRect refresh_area;
 static int refresh_wave;
 static char font_path[TTF_FONT_PATH_MAX];
@@ -178,6 +180,28 @@ enum EpdDrawError update_display_night_crossmux(EpdiyHighlevelState* state, disp
     enum EpdDrawError result = record_refresh(clean ? MODE_GC16 : entry ? MODE_GL16 : MODE_DU);
     if (result == EPD_DRAW_SUCCESS) {
         if (clean || entry) { s_night_body_turns = 0; s_navigation_entry = false; }
+        else if (turn) s_night_body_turns = every ? s_night_body_turns + 1 : 0;
+        if (turn) body_presents++;
+    }
+    return result;
+}
+
+// 记录黑基准对照的两次GC选择，预览不生成中间黑帧或模拟物理清理。
+// Record the black-baseline comparison's two GC selections without previewing its intermediate black frame or modeling physical cleaning.
+enum EpdDrawError update_display_night_black_baseline(EpdiyHighlevelState* state, display_black_baseline_action_t action, bool direct) {
+    if (direct) display_prepare_direct_frame(state->front_fb, epd_width(), epd_height(), true);
+    unsigned every = app_settings_gc_every();
+    bool entry = action == DISPLAY_BLACK_BASELINE_ENTRY || s_navigation_entry;
+    bool turn = action == DISPLAY_BLACK_BASELINE_TURN;
+    bool clean = entry || action == DISPLAY_BLACK_BASELINE_CLEAN || (turn && every && s_night_body_turns + 1 >= every);
+    refresh_area = (EpdRect){0, 0, 684, 1216};
+    refresh_wave = clean ? E0470_FULL_WAVEFORM.unused : direct ? 6 : E0470_TEXTTURN_NIGHT_WAVEFORM.unused;
+    black_baseline_action = action;
+    black_baseline_presents++;
+    enum EpdDrawError result = record_refresh(clean ? MODE_GC16 : MODE_GL16);
+    if (clean && result == EPD_DRAW_SUCCESS) result = record_refresh(MODE_GC16);
+    if (result == EPD_DRAW_SUCCESS) {
+        if (clean) { s_night_body_turns = 0; s_navigation_entry = false; }
         else if (turn) s_night_body_turns = every ? s_night_body_turns + 1 : 0;
         if (turn) body_presents++;
     }
@@ -356,11 +380,11 @@ int main(int argc, char** argv) {
         if (!export_frame(argv[1])) { perror("frame export"); return 1; }
         static book_quote_t quote_snapshot[BOOK_QUOTES_MAX];
         size_t quote_count = book_quotes_list(quote_snapshot, BOOK_QUOTES_MAX);
-        printf("{\"page\":%d,\"menu\":%s,\"menu_leaf\":%d,\"leaf\":%d,\"asset\":%d,\"unsupported\":%d,\"refresh_mode\":%d,\"presents\":%d,\"gc_presents\":%d,\"refresh_wave\":%d,\"night_turns\":%u,\"body_presents\":%u,\"quiet_presents\":%u,\"night_area_presents\":%u,\"reading\":%s,\"sync_starts\":%u,\"sync_job\":%d,\"quote_count\":%u,\"history_page\":%u,\"history_count\":%u,\"physical_clears\":%u,\"crossmux_presents\":%u,\"crossmux_action\":%d,\"refresh_area\":[%d,%d,%d,%d]}\n",
+        printf("{\"page\":%d,\"menu\":%s,\"menu_leaf\":%d,\"leaf\":%d,\"asset\":%d,\"unsupported\":%d,\"refresh_mode\":%d,\"presents\":%d,\"gc_presents\":%d,\"refresh_wave\":%d,\"night_turns\":%u,\"body_presents\":%u,\"quiet_presents\":%u,\"night_area_presents\":%u,\"reading\":%s,\"sync_starts\":%u,\"sync_job\":%d,\"quote_count\":%u,\"history_page\":%u,\"history_count\":%u,\"physical_clears\":%u,\"crossmux_presents\":%u,\"crossmux_action\":%d,\"black_baseline_presents\":%u,\"black_baseline_action\":%d,\"refresh_area\":[%d,%d,%d,%d]}\n",
                app_index_of(current), menu_open ? "true" : "false", menu_leaf, ctx.leaf, asset, unsupported, refresh_mode, presents, gc_presents, refresh_wave, s_night_body_turns, body_presents, quiet_presents, night_area_presents,
                current == app_by_id(OS_APP_LIBRARY) && book_chapter_count() > 0 ? "true" : "false",
                preview_sync_starts(), preview_sync_job(), (unsigned)quote_count, book_home_snapshot()->recent_page, book_home_snapshot()->history_count,
-               physical_clears, crossmux_presents, crossmux_action, refresh_area.x, refresh_area.y, refresh_area.width, refresh_area.height);
+               physical_clears, crossmux_presents, crossmux_action, black_baseline_presents, black_baseline_action, refresh_area.x, refresh_area.y, refresh_area.width, refresh_area.height);
         fflush(stdout);
         if (!fgets(command, sizeof(command), stdin)) break;
         int value, x, y, x1, y1;

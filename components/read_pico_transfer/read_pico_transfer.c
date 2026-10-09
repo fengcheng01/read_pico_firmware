@@ -12,6 +12,8 @@
  * Frozen: AP webpage or stopped-service device UI may provision without switching mode; one NVS blob holds secrets outside public status.
  * 冻结：用户实机反馈要求同步按需自动联网；仅联网 STA 不访问文件、不启动 HTTP，控制任务串行启动/停止。
  * Frozen: Hardware feedback requires on-demand sync networking; network-only STA never accesses files or starts HTTP and the owner serializes its lifecycle.
+ * 冻结：实机漏扫反馈要求完整驻留及一次空结果被动兜底；保留驱动国家策略，不由语言或时区修改地区。
+ * Frozen: Missing-network feedback requires full dwell and one passive retry on empty results; keep driver country policy, independent of language or timezone.
  */
 #include "read_pico_search.h"
 #include <stdbool.h>
@@ -419,34 +421,26 @@ esp_err_t read_pico_transfer_save_wifi(const char *ssid, const char *password) {
     clear_secret(&next, sizeof(next)); release_config(); return err;
 }
 
-esp_err_t read_pico_transfer_scan_wifi(read_pico_transfer_network_t out[READ_PICO_TRANSFER_SCAN_MAX], size_t *count) {
-    if (!out || !count) return ESP_ERR_INVALID_ARG;
-    memset(out, 0, sizeof(*out) * READ_PICO_TRANSFER_SCAN_MAX); *count = 0;
-    read_pico_transfer_status_t status;
-    read_pico_transfer_get_status(&status);
-    if (s_wifi || s_http || s_netif || status.state != READ_PICO_TRANSFER_STOPPED) return ESP_ERR_INVALID_STATE;
-    bool loop_owned = false, initialized = false, started = false;
-    esp_err_t err = esp_netif_init();
-    if (err != ESP_OK) return err;
-    err = esp_event_loop_create_default();
-    if (err == ESP_OK) loop_owned = true;
-    else if (err != ESP_ERR_INVALID_STATE) return err;
-    wifi_init_config_t init = WIFI_INIT_CONFIG_DEFAULT();
-    err = esp_wifi_init(&init); if (err != ESP_OK) goto cleanup;
-    initialized = true;
-    err = esp_wifi_set_storage(WIFI_STORAGE_RAM); if (err != ESP_OK) goto cleanup;
-    err = esp_wifi_set_mode(WIFI_MODE_STA); if (err != ESP_OK) goto cleanup;
-    // 仅驱动扫描，不创建STA网络接口或注册自动连接回调。/ Driver-only scan: no STA netif or automatic-connect callback.
-    err = esp_wifi_start(); if (err != ESP_OK) goto cleanup;
-    started = true;
-    wifi_scan_config_t scan = {.show_hidden = false, .scan_type = WIFI_SCAN_TYPE_ACTIVE,
-        .scan_time.active = {.min = 100, .max = 200}};
-    err = esp_wifi_scan_start(&scan, true); if (err != ESP_OK) goto cleanup;
+static esp_err_t scan_wifi_pass(const wifi_scan_config_t *scan,
+        read_pico_transfer_network_t out[READ_PICO_TRANSFER_SCAN_MAX], size_t *count) {
+    esp_err_t err = esp_wifi_scan_start(scan, true);
+    if (err != ESP_OK) {
+        ESP_LOGW("transfer", "wifi scan start type=%u result=%s", (unsigned)scan->scan_type, esp_err_to_name(err));
+        return err;
+    }
     uint16_t found = 0;
-    err = esp_wifi_scan_get_ap_num(&found); if (err != ESP_OK) goto cleanup;
+    err = esp_wifi_scan_get_ap_num(&found);
+    if (err != ESP_OK) {
+        ESP_LOGW("transfer", "wifi scan count result=%s", esp_err_to_name(err));
+        return err;
+    }
     for (uint16_t i = 0; i < found; ++i) {
         wifi_ap_record_t ap;
-        err = esp_wifi_scan_get_ap_record(&ap); if (err != ESP_OK) goto cleanup;
+        err = esp_wifi_scan_get_ap_record(&ap);
+        if (err != ESP_OK) {
+            ESP_LOGW("transfer", "wifi scan record index=%u result=%s", (unsigned)i, esp_err_to_name(err));
+            return err;
+        }
         read_pico_transfer_network_t item = {.rssi = ap.rssi, .authmode = (uint8_t)ap.authmode,
             .requires_password = ap.authmode != WIFI_AUTH_OPEN && ap.authmode != WIFI_AUTH_OWE};
         memcpy(item.ssid, ap.ssid, sizeof(item.ssid) - 1);
@@ -455,21 +449,74 @@ esp_err_t read_pico_transfer_scan_wifi(read_pico_transfer_network_t out[READ_PIC
             ap.authmode == WIFI_AUTH_WPA2_WPA3_PSK;
         scan_offer(out, count, &item);
     }
+    return ESP_OK;
+}
+
+esp_err_t read_pico_transfer_scan_wifi(read_pico_transfer_network_t out[READ_PICO_TRANSFER_SCAN_MAX], size_t *count) {
+    if (!out || !count) return ESP_ERR_INVALID_ARG;
+    memset(out, 0, sizeof(*out) * READ_PICO_TRANSFER_SCAN_MAX); *count = 0;
+    read_pico_transfer_status_t status;
+    read_pico_transfer_get_status(&status);
+    if (s_wifi || s_http || s_netif || status.state != READ_PICO_TRANSFER_STOPPED) {
+        ESP_LOGW("transfer", "wifi scan busy state=%u wifi=%u http=%u netif=%u",
+                 (unsigned)status.state, (unsigned)s_wifi, (unsigned)(s_http != NULL), (unsigned)(s_netif != NULL));
+        return ESP_ERR_INVALID_STATE;
+    }
+    bool loop_owned = false, initialized = false, started = false;
+    const char *stage = "netif-init";
+    esp_err_t err = esp_netif_init();
+    if (err != ESP_OK) goto cleanup;
+    stage = "event-loop";
+    err = esp_event_loop_create_default();
+    if (err == ESP_OK) loop_owned = true;
+    else if (err != ESP_ERR_INVALID_STATE) goto cleanup;
+    wifi_init_config_t init = WIFI_INIT_CONFIG_DEFAULT();
+    stage = "wifi-init";
+    err = esp_wifi_init(&init); if (err != ESP_OK) goto cleanup;
+    initialized = true;
+    stage = "storage";
+    err = esp_wifi_set_storage(WIFI_STORAGE_RAM); if (err != ESP_OK) goto cleanup;
+    stage = "mode";
+    err = esp_wifi_set_mode(WIFI_MODE_STA); if (err != ESP_OK) goto cleanup;
+    wifi_country_t country;
+    if (esp_wifi_get_country(&country) == ESP_OK)
+        ESP_LOGI("transfer", "wifi scan country=%.2s start=%u channels=%u policy=%u",
+                 country.cc, (unsigned)country.schan, (unsigned)country.nchan, (unsigned)country.policy);
+    // 仅驱动扫描，不创建STA网络接口或注册自动连接回调。/ Driver-only scan: no STA netif or automatic-connect callback.
+    stage = "wifi-start";
+    err = esp_wifi_start(); if (err != ESP_OK) goto cleanup;
+    started = true;
+    wifi_scan_config_t scan = {.show_hidden = false, .scan_type = WIFI_SCAN_TYPE_ACTIVE,
+        .scan_time = {.active = {.min = 0, .max = 200}, .passive = 360}};
+    // min为零才保证未获探测响应时仍驻留200ms；AUTO高信道仍遵守驱动被动规则。
+    // Zero min keeps the full 200ms without probe responses; AUTO high channels retain driver passive rules.
+    stage = "active-pass";
+    err = scan_wifi_pass(&scan, out, count); if (err != ESP_OK) goto cleanup;
+    if (!*count) {
+        // 仅空结果重试一次，靠信标发现不回应主动探测的热点；不扩大合法信道范围。
+        // Retry empty results once using beacons for APs ignoring probes, without extending legal channels.
+        stage = "clear-list";
+        err = esp_wifi_clear_ap_list(); if (err != ESP_OK) goto cleanup;
+        scan.scan_type = WIFI_SCAN_TYPE_PASSIVE;
+        stage = "passive-pass";
+        err = scan_wifi_pass(&scan, out, count);
+    }
 cleanup:
     if (started) { esp_wifi_scan_stop(); esp_wifi_clear_ap_list(); }
     if (started) {
         esp_err_t stop_err = esp_wifi_stop();
-        if (err == ESP_OK && stop_err != ESP_OK) err = stop_err;
+        if (err == ESP_OK && stop_err != ESP_OK) { err = stop_err; stage = "wifi-stop"; }
     }
     if (initialized) {
         esp_err_t deinit_err = esp_wifi_deinit();
-        if (err == ESP_OK && deinit_err != ESP_OK) err = deinit_err;
+        if (err == ESP_OK && deinit_err != ESP_OK) { err = deinit_err; stage = "wifi-deinit"; }
     }
     if (loop_owned) {
         esp_err_t loop_err = esp_event_loop_delete_default();
-        if (err == ESP_OK && loop_err != ESP_OK) err = loop_err;
+        if (err == ESP_OK && loop_err != ESP_OK) { err = loop_err; stage = "event-delete"; }
     }
     if (err != ESP_OK) { memset(out, 0, sizeof(*out) * READ_PICO_TRANSFER_SCAN_MAX); *count = 0; }
+    if (err != ESP_OK) ESP_LOGW("transfer", "wifi scan stage=%s result=%s", stage, esp_err_to_name(err));
     ESP_LOGI("transfer", "wifi scan result=%s count=%u", esp_err_to_name(err), (unsigned)*count);
     return err;
 }

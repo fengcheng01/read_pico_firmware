@@ -3,6 +3,17 @@
 按日期和作者简述对用户可见的功能变化；详细实现历史见 Git。使用方法见 [README](../README.zh-CN.md)。
 User-visible changes by date and author; Git retains implementation history. See [README](../README.md) for usage.
 
+## 0.5.29-20261009.1 · 2026-10-09
+
+- 时间页区分首次联网样本、锁屏累计与自动校时失败；静态浅睡锁屏也按维护期限唤醒，不重画静态画面，静态深睡保持断电。未联网的准确起点不能替代可信样本，不按11小时快钟估算硬编码补偿。
+  Distinguish the first trusted sync, accumulated lock sleep and maintenance failures. Static light-sleep locks service deadlines without repainting; static deep sleep still powers off. An apparently accurate offline starting time cannot replace a trusted sample or justify a fixed correction.
+- WiFi扫描失败显示实际错误码，补完整主动驻留及成功空列表的一次被动兜底，保持国家策略。Windows热点的实际失败原因仍需设备返回码确认。
+  Show actual WiFi scan errors, retain the full active dwell and retry successful empty lists once passively without changing country policy. The Windows hotspot failure still requires the device's returned error to identify its cause.
+- 阅读新增默认关闭的“字缘：细边”，仅有效黑白直刷正文使用原始覆盖率取墨，字号、字重、分页、标准灰阶及DU刷新保持；不是灰阶抗锯齿。
+  Add off-by-default Fine Edges for eligible binary direct body text using raw glyph coverage, retaining size, weight, pagination, standard gray and DU scans; this is not gray antialiasing.
+- 新增可选“夜间方案：黑基准”：周期、手动及布局入口先真实整屏黑，再完整厂家GC画回保留目标，两段成功才重置周期。普通翻页及两旧方案保持，仍会亮闪，残影改善须真机比较。
+  Add optional Black Baseline night cleanup: interval/manual/layout entry first physically refreshes to black, then uses full vendor GC to restore the retained target, resetting counts only after both succeed. Ordinary turns and older profiles remain; it flashes and ghost reduction requires device comparison.
+
 ## 0.5.28-20261008.1 · 2026-10-08
 
 - TF卡新增跨开机封面缩略图及TXT目录缓存，完整源身份和缓存校验通过才复用；损坏、满卡或断卡回退原路径，不改变阅读进度。TXT命中仍顺序校验原始内容，省去目录解析。

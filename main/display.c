@@ -20,6 +20,10 @@
  * Frozen: The user requests further Crossmux exploration; this test build optionally compares Pico DU20/entry GL37/due or manual GC36, with one known-baseline scan, full unknown recovery and unchanged original profiles.
  * 实机修订：0.5.25定向补黑和后置局部擦写未改善夜间残影，后者增加旧字闪动；撤回两实验，保留普通翻页与已有周期/手动完整清理。
  * Device revision: 0.5.25 black reinforcement and post-DU local cleaning failed to improve night ghosts, with local cleaning flashing old glyphs; withdraw both experiments and retain ordinary turns with existing interval/manual full cleaning.
+ * 冻结：用户继续探索夜间残影，可选黑基准档只在已知参考的到期、手动或暗色布局入口先完整GC到真实黑帧，再完整GC到保留目标；两段成功才消费清理，普通页和日间不改。
+ * Frozen: Continued night-ghost exploration permits an optional black-baseline profile: known-reference due/manual/dark-entry cleaning commits a real black frame through full GC, then the retained target through full GC; consume cleaning only after both succeed, without changing ordinary turns or daytime.
+ * 修订：该对照覆盖全部最终黑背景，不依赖一页旧字掩码或交换厂家动作；仍会亮闪，不能把相数或软件验证当作光学改善。
+ * Revision: This comparison covers every final black-background pixel without a one-page glyph mask or swapped vendor actions; it still flashes, and phase counts/software checks cannot establish optical improvement.
  */
 
 #include "display.h"
@@ -361,6 +365,63 @@ enum EpdDrawError update_display_night_crossmux(EpdiyHighlevelState* hl, display
     epd_hl_waveform(hl, &E0470_WAVEFORM);
     finish_update(waveform);
     return result;
+}
+
+// 清理第一段只构造真实旧灰→黑的动作图，前缓冲一直保留最终目标，不增加整帧内存。
+// The first cleanup stage builds actual prior-gray→black selectors, retaining the final front target without another full-frame allocation.
+static enum EpdDrawError night_black_baseline_clean(EpdiyHighlevelState* hl) {
+    use_scan_for(&E0470_FULL_WAVEFORM, MODE_GC16);
+    if (!power_ready()) return EPD_DRAW_POWER_NOT_READY;
+    epd_hl_waveform(hl, &E0470_FULL_WAVEFORM);
+    const int width = epd_width(), height = epd_height();
+    const size_t pixels = (size_t)width * height;
+    for (size_t p = 0; p < pixels; ++p)
+        hl->difference_fb[p] = (hl->back_fb[p / 2] >> ((p % 2) * 4)) & 15;
+    for (int y = 0; y < height; ++y) hl->dirty_lines[y] = true;
+    memset(hl->dirty_columns, 255, (size_t)width / 2);
+    // 新动作图不能沿用上一轮选择性差分的相位提示；完整厂家路径自行选相。
+    // The new selector image cannot inherit a previous selective-difference phase hint; use the complete vendor path's own selection.
+    epd_leading_skip_discard();
+    EpdRect screen = epd_full_screen();
+    enum EpdDrawError result = epd_draw_base(screen, hl->difference_fb, screen,
+        MODE_PACKING_1PPB_DIFFERENCE | MODE_GC16, 25,
+        hl->dirty_lines, hl->dirty_columns, &E0470_FULL_WAVEFORM);
+    if (result == EPD_DRAW_SUCCESS) {
+        // 只有整屏黑目标实际扫描成功后才提交黑参考；第二段对所有目标黑像素执行厂家0→0擦写。
+        // Commit black only after its whole-screen scan succeeds; the second stage applies vendor 0→0 conditioning to every final black pixel.
+        memset(hl->back_fb, 0, pixels / 2);
+        result = epd_hl_update_screen_full(hl, MODE_GC16, 25);
+    }
+    s_baseline_unknown = result != EPD_DRAW_SUCCESS;
+    if (result == EPD_DRAW_SUCCESS) {
+        s_navigation_entry = false;
+        s_night_body_turns = 0;
+        s_soft_refreshes = 0;
+    }
+    epd_hl_waveform(hl, &E0470_WAVEFORM);
+    finish_update(&E0470_FULL_WAVEFORM);
+    return result;
+}
+
+enum EpdDrawError update_display_night_black_baseline(
+    EpdiyHighlevelState* hl, display_black_baseline_action_t action, bool direct
+) {
+    // 接口边界也排除日间，沿用日间正文和已存在的导航标记，不启动黑基准清理。
+    // Exclude daytime at the API boundary too, retaining day body paths and existing navigation markers without black-baseline cleaning.
+    if (!app_settings_book_night())
+        return direct ? update_display_text_direct(hl, false) : update_display_text_turn(hl, false);
+    if (direct) display_prepare_direct_frame(hl->front_fb, epd_width(), epd_height(), true);
+    const bool turn = action == DISPLAY_BLACK_BASELINE_TURN;
+    const bool entry = action == DISPLAY_BLACK_BASELINE_ENTRY || s_navigation_entry;
+    const unsigned every = app_settings_gc_every();
+    const bool clean = action == DISPLAY_BLACK_BASELINE_CLEAN || entry ||
+        (turn && every && s_night_body_turns + 1 >= every);
+    if (clean && !s_baseline_unknown) return night_black_baseline_clean(hl);
+    // 未知物理状态仍沿用清白恢复；普通页沿用当前波形，成功恢复不额外计一次翻页。
+    // Unknown physical states keep white recovery; ordinary pages retain current waveforms, and successful recovery never adds a turn.
+    return update_display_with_profile(hl,
+        direct ? &E0470_DIRECT_WAVEFORM : &E0470_TEXTTURN_NIGHT_WAVEFORM,
+        MODE_GL16, turn, false);
 }
 
 // 分钟字带用产品GL16局推，保持灰阶且不计入整屏清理周期。

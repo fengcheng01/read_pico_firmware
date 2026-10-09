@@ -13,6 +13,7 @@
 static bool test_auto, test_sync_busy, test_sync_pending, test_start_ok=true;
 static int test_sync_starts, test_sync_cancels;
 static char test_sync_url[192], test_sync_user[64];
+void book_cover_join(void) {}
 const char* app_settings_sync_url(void) { return test_sync_url; }
 const char* app_settings_sync_user(void) { return test_sync_user; }
 const char* app_settings_sync_key(void) { return ""; }
@@ -180,11 +181,17 @@ int main(void) {
     test_scan_count = 0;
     tap(&ctx, network_control_rect(8));
     network_ui_tick(&ctx);
-    assert(!s_network_count && s_network_message[0]);
+    assert(!s_network_count && s_network_message[0] && !s_scan_pending);
     test_scan_error = ESP_FAIL;
     tap(&ctx, network_control_rect(8));
     network_ui_tick(&ctx);
-    assert(!s_network_count && s_network_message[0]);
+    assert(!s_network_count && strstr(s_network_message, esp_err_to_name(ESP_FAIL)) && !s_scan_pending);
+    assert(network_ui_tick(&ctx) == APP_REDRAW_NONE);
+    test_scan_error = ESP_ERR_WIFI_TIMEOUT;
+    tap(&ctx, network_control_rect(8));
+    assert(network_ui_tick(&ctx) == APP_REDRAW_PAGE);
+    assert(!s_network_count && !s_scan_pending && strstr(s_network_message, "ESP_ERR_WIFI_TIMEOUT"));
+    assert(network_ui_tick(&ctx) == APP_REDRAW_NONE);
     tap(&ctx, network_control_rect(6));
     assert(s_view == TRANSFER_HOME && s_start_pending && s_mode == READ_PICO_TRANSFER_MODE_STA);
     int stops_before = test_stop_count;

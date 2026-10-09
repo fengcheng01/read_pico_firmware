@@ -2,11 +2,15 @@
 # SPDX-License-Identifier: Apache-2.0
 """真实锁屏循环回归，替换睡眠/电源硬件。/ Real lock-loop regression with sleep/power hardware mocked."""
 from pathlib import Path
+import argparse
 import os
 import re
 import subprocess
 
 root = Path(__file__).resolve().parents[1]
+parser = argparse.ArgumentParser()
+parser.add_argument('--verify-regression', action='store_true')
+args = parser.parse_args()
 source = (root / 'main/sleep.c').read_text()
 def function(name):
     match = re.search(r'^(?:static )?[^\n]+\b' + name + r'\([^;]*?\) \{', source, re.M)
@@ -53,6 +57,7 @@ static info_t info;
 static int64_t now, key_at, timer_us, s_minute_deadline_ms;
 static int style, mode, cause, sleeps, delays, polls, bands, fulls, faces, disarms, alarms, prepare;
 static bool stuck, reject_sleep, spurious, maintenance_busy;
+static int64_t maintenance_delay = 3600000;
 static unsigned maintenance_ticks, maintenance_cancels;
 static unsigned painted[8];
 static uint8_t fb;
@@ -60,6 +65,7 @@ static jmp_buf powered_off;
 static int64_t esp_timer_get_time(void) { return now*1000; }
 static void os_time_record_sleep(int64_t us) { assert(us>0); }
 static bool os_time_lock_sync_tick(int64_t ms) {(void)ms;maintenance_ticks++;return maintenance_busy;}
+static int64_t os_time_lock_sync_delay_ms(int64_t ms) {(void)ms;return maintenance_delay;}
 static void os_time_lock_sync_cancel(void) {maintenance_busy=false;maintenance_cancels++;}
 static void os_time_poll(int64_t ms) { info=(info_t){OS_TIME_VALID,4,180+(unsigned)(ms/1000)}; }
 static const info_t* os_time_info(void) { return &info; }
@@ -109,14 +115,14 @@ static int update_display_area_quiet(int* hl,EpdRect r) {(void)hl;assert(r.y==26
 static bool app_settings_lock_pin_wake(void) {return false;}
 static bool app_lock_pin_challenge(int* hl,int tp) {(void)hl;(void)tp;return true;}
 '''
-production = '\n'.join(function(n) for n in ('arm_minute_wake', 'app_sleep_disarm_minute_wake', 'app_light_sleep_wait', 'enter_lock_and_sleep'))
+production = '\n'.join(function(n) for n in ('arm_minute_wake', 'arm_lock_wake', 'app_sleep_disarm_minute_wake', 'app_light_sleep_wait', 'enter_lock_and_sleep'))
 # NULL 是指针，仅在真实硬件上句柄为指针；测试桩以整数模拟。/ NULL is a pointer on device; these mocks use integer handles.
 production = production.replace('acc != NULL', 'acc != 0')
 tests = r'''
 static void reset(void) {
     now=13000;key_at=-1;timer_us=s_minute_deadline_ms=0;
     style=1;mode=APP_SLEEP_DEEP;cause=sleeps=delays=polls=bands=fulls=faces=disarms=alarms=prepare=0;
-    stuck=reject_sleep=spurious=maintenance_busy=false;maintenance_ticks=maintenance_cancels=0;os_time_poll(now);
+    stuck=reject_sleep=spurious=maintenance_busy=false;maintenance_ticks=maintenance_cancels=0;maintenance_delay=3600000;os_time_poll(now);
 }
 int main(void) {
     reset();arm_minute_wake();assert(timer_us==47000000);assert(app_light_sleep_wait(0)==APP_WAKE_TIMER);assert(now==60000 && !timer_us && !s_minute_deadline_ms);
@@ -131,8 +137,14 @@ int main(void) {
     reset();maintenance_busy=true;key_at=61000;enter_lock_and_sleep(&hl,0,0,0);
     assert(now==61000&&maintenance_ticks>1&&maintenance_cancels==1&&!maintenance_busy&&faces==1);
     reset();style=0;mode=APP_SLEEP_LIGHT;key_at=14000;enter_lock_and_sleep(&hl,0,0,0);assert(bands==0 && faces==1 && !timer_us);
+    reset();style=0;mode=APP_SLEEP_LIGHT;key_at=11LL*3600000+13001;enter_lock_and_sleep(&hl,0,0,0);
+    assert(maintenance_ticks==11 && faces==1 && bands==0 && fulls==1 && !timer_us);
+    reset();style=0;mode=APP_SLEEP_LIGHT;maintenance_delay=0;key_at=11LL*3600000+13001;enter_lock_and_sleep(&hl,0,0,0);
+    assert(maintenance_ticks==0 && sleeps==1 && faces==1 && bands==0 && fulls==1 && !timer_us);
+    reset();style=0;mode=APP_SLEEP_DEEP;if(!setjmp(powered_off)) {enter_lock_and_sleep(&hl,0,0,0);assert(0);}
+    assert(sleeps==0 && maintenance_ticks==0 && !timer_us && alarms==1);
     reset();mode=APP_SLEEP_OFF;if(!setjmp(powered_off)) {enter_lock_and_sleep(&hl,0,0,0);assert(0);}assert(sleeps==0 && !timer_us && alarms==1);
-    puts("lock sleep: minute alignment, deep-setting dynamic clock, two ticks, key priority, stale GPIO, rejected/spurious sleep and power-off PASS");
+    puts("lock sleep: minute alignment, static 11h maintenance without repaint, auto-off/static-deep isolation, key priority, rejected/spurious sleep and power-off PASS");
 }
 '''
 out = root / 'build-host/lock-sleep-test'
@@ -140,3 +152,11 @@ out.mkdir(parents=True, exist_ok=True)
 (out / 'test.c').write_text(harness + production + tests)
 subprocess.run([os.environ.get('CC', 'cc'), '-std=c11', '-Wall', '-Wextra', '-Werror', '-fsanitize=address,undefined', str(out / 'test.c'), '-o', str(out / 'test')], check=True)
 subprocess.run([str(out / 'test')], check=True)
+if args.verify_regression:
+    old = production.replace('                arm_lock_wake();', '                if (app_settings_lock_style() != 0) arm_lock_wake();')
+    assert old != production
+    (out / 'negative.c').write_text(harness + old + tests)
+    subprocess.run([os.environ.get('CC', 'cc'), '-std=c11', '-Wall', '-Wextra', '-Werror', '-fsanitize=address,undefined', str(out / 'negative.c'), '-o', str(out / 'negative')], check=True)
+    result = subprocess.run([str(out / 'negative')], capture_output=True, text=True)
+    assert result.returncode != 0 and 'maintenance_ticks==11' in result.stderr, result.stderr
+    print('negative control: prior static-only timer omission fails the 11h maintenance assertion PASS')
