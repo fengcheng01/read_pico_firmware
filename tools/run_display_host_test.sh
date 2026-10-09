@@ -23,3 +23,10 @@ build/book-tests/navigation-waveform
 
 # 独立固定SDK指纹检查对照表全部字节，并保证原模式不变。/ Check all comparison bytes against pinned SDK fingerprints and retain original modes.
 python3 tools/crossmux_waveform_host_test.py
+
+# 灰边档逐相复用厂家DU/8灰GL，保持EE及中性尾，不把数字一致性当作光学通过。
+# Gray edges reuse each vendor DU/8-gray GL phase with held EE and neutral tails, without treating digital equality as optical success.
+python3 tools/gray_direct_waveform_host_test.py
+
+# 三轮真实清白后直绘与失败恢复。/ Actual three-round white-clear repaint and failure recovery.
+python3 tools/night_white_repaint_host_test.py

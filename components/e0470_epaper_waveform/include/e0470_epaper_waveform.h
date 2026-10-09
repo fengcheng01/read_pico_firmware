@@ -72,6 +72,15 @@ extern const EpdWaveform E0470_NAVIGATION_ENTRY_WAVEFORM;
 #define E0470_DIRECT_FRAMES (E0470_FULL_DU_FRAMES + 1)
 extern const EpdWaveform E0470_DIRECT_WAVEFORM;
 
+/// 可选灰边直刷：0/15目标复制完整厂家DU20，中间目标复制完整8灰GL30，末尾一相中性；所有对角线保持。
+/// Optional gray-edge direct: 0/15 targets copy complete vendor DU20, intermediate targets copy complete 8-gray GL30, followed by one neutral phase; every diagonal holds.
+/// 真实目标可保留0/4/10/15等灰码；必须配真实旧灰及EE选择性整页API，不得先二值化再提交灰参考。
+/// Actual targets may retain gray codes such as 0/4/10/15; use truthful old grays and the selective EE page API, without thresholding targets before committing gray references.
+/// 最多31相，慢于原DU21；变化灰边有厂家反向动作，局部闪动及光学改善需要实机验证。
+/// Up to 31 phases, slower than original DU21; changed gray edges retain vendor reverse drive, so local flashing and optical improvement require device validation.
+#define E0470_GRAY_DIRECT_FRAMES (E0470_GRAY8_GL16_FRAMES + 1)
+extern const EpdWaveform E0470_GRAY_DIRECT_WAVEFORM;
+
 /// 用户授权的Crossmux Pico夜间对照：逐字节复现0x1abin/freeink-sdk@96de1be默认DU20/GC36/GL37。
 /// User-authorized Crossmux Pico night reference: reproduce 0x1abin/freeink-sdk@96de1be default DU20/GC36/GL37 byte for byte.
 /// DU沿用目标阈值与真实旧灰；GC/GL按11/5/0/3右对齐裁剪，GL另含其15→15单相白动作，不改厂家源或本地原档位。

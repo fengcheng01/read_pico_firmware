@@ -1348,6 +1348,84 @@ class PreviewTests(unittest.TestCase):
         pixels = self.preview.frame.read_bytes()[len(b"P5\n684 1216\n255\n"):]
         self.assertGreater(len(set(pixels)), 2)
 
+    def test_reader_gray_edges_retain_actual_levels_and_original_direct(self):
+        self.open_fixture_reader()
+        self.reader_display_settings()
+        self.preview.command("tap 200 1006")
+        self.preview.command("tap 500 1006")
+        gray_menu = self.preview.png
+        self.preview.command("tap 424 1140")
+        self.assertGreater(len(set(self.reader_pixels())), 2)
+        before = self.state()
+        self.preview.command("key 2")
+        self.settle()
+        self.assertEqual(self.state()["refresh_wave"], 9)
+        self.assertEqual(self.state()["gc_presents"], before["gc_presents"])
+        self.assertEqual(self.state()["night_turns"], 0)
+        gray_page = self.reader_pixels()
+        self.reader_display_settings()
+        self.assertEqual(self.preview.png, gray_menu)
+        self.preview.command("tap 500 1006")
+        self.preview.command("tap 424 1140")
+        self.assertEqual(set(self.reader_pixels()), {0, 255})
+        self.assertNotEqual(self.reader_pixels(), gray_page)
+        self.preview.command("key 0")
+        self.settle()
+        self.assertEqual(self.state()["refresh_wave"], 6)
+        self.assertEqual(set(self.reader_pixels()), {0, 255})
+
+    def test_reader_white_repaint_entry_period_and_manual_from_settings(self):
+        self.open_fixture_reader()
+        self.reader_display_settings()
+        self.preview.command("tap 300 1072")
+        self.preview.command("tap 300 1072")
+        self.preview.command("tap 300 676")
+        # 原默认5档再走六档回3；仅成功正文翻页计数。
+        # Cycle six tiers from default five back to three; only successful body turns count.
+        for _ in range(6):
+            self.preview.command("tap 300 900")
+        before = self.state()
+        self.preview.command("tap 424 1140")
+        self.assert_reader_dark_margins()
+        self.assertEqual(self.state()["physical_clears"], before["physical_clears"] + 1)
+        self.assertEqual(self.state()["gc_presents"], before["gc_presents"])
+        self.assertEqual(self.state()["refresh_wave"], 1)
+        for turn in range(1, 7):
+            self.preview.command("key 2" if turn % 2 else "key 0")
+            self.settle()
+            self.assertEqual(self.state()["night_turns"], turn % 3)
+            self.assertEqual(self.state()["physical_clears"], before["physical_clears"] + 1 + turn // 3)
+            self.assertEqual(self.state()["refresh_wave"], 1 if turn % 3 == 0 else 5)
+            self.assertEqual(self.state()["gc_presents"], before["gc_presents"])
+        body = self.reader_pixels()
+        self.reader_display_settings()
+        before = self.state()
+        self.preview.command("tap 164 1140")
+        self.assertEqual(self.reader_pixels(), body)
+        self.assertEqual(self.state()["physical_clears"], before["physical_clears"] + 1)
+        self.assertEqual(self.state()["gc_presents"], before["gc_presents"])
+        self.assertEqual(self.state()["night_turns"], 0)
+        self.assertEqual(self.state()["refresh_wave"], 1)
+
+    def test_reader_white_repaint_binary_and_gray_cleanup_modes(self):
+        self.open_fixture_reader()
+        self.reader_display_settings()
+        self.preview.command("tap 200 1006")
+        self.preview.command("tap 300 1072")
+        self.preview.command("tap 300 1072")
+        self.preview.command("tap 300 676")
+        self.preview.command("tap 424 1140")
+        self.assertEqual(self.state()["refresh_mode"], 1)
+        self.assertEqual(self.state()["refresh_wave"], 1)
+        self.assertEqual(set(self.reader_pixels()), {0, 255})
+        self.reader_display_settings()
+        self.preview.command("tap 500 1006")
+        self.preview.command("tap 164 1140")
+        self.assertEqual(self.state()["refresh_mode"], 5)
+        self.assertEqual(self.state()["refresh_wave"], 1)
+        self.assertGreater(len(set(self.reader_pixels())), 2)
+        self.assertEqual(self.state()["night_turns"], 0)
+
     def test_reader_crossmux_selection_gestures_persist_without_changing_day(self):
         self.open_fixture_reader()
         day = self.reader_pixels()
@@ -1381,6 +1459,8 @@ class PreviewTests(unittest.TestCase):
         self.settle()
         self.reader_display_settings()
         self.assertEqual(self.preview.png, selected)
+        self.preview.command("tap 643 1095")
+        self.assertNotEqual(self.preview.png, current)
         self.preview.command("tap 643 1095")
         self.assertEqual(self.preview.png, current)
 
@@ -1428,6 +1508,7 @@ class PreviewTests(unittest.TestCase):
         # 切回当前方案恢复原标准灰阶与入口物理清理；选择未被对照模式改写。
         # Returning to current restores standard grayscale and physical entry cleanup without changing the user's turn-effect choice.
         self.reader_display_settings()
+        self.preview.command("tap 300 1072")
         self.preview.command("tap 300 1072")
         before = self.state()
         self.preview.command("tap 424 1140")

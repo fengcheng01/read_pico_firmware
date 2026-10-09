@@ -60,6 +60,7 @@ const EpdWaveform E0470_TEXTTURN_NIGHT_WAVEFORM = {5};
 const EpdWaveform E0470_TEXTTURN_WAVEFORM = {7};
 const EpdWaveform E0470_DIRECT_WAVEFORM = {6};
 const EpdWaveform E0470_CROSSMUX_WAVEFORM = {8};
+const EpdWaveform E0470_GRAY_DIRECT_WAVEFORM = {9};
 static int64_t s_time_bias_ms;
 
 int64_t esp_timer_get_time(void) {
@@ -163,6 +164,12 @@ enum EpdDrawError update_display_text_direct(EpdiyHighlevelState* state, bool wh
     return record_body(white_on_black, true);
 }
 
+enum EpdDrawError update_display_text_gray_direct(EpdiyHighlevelState* state, bool night) {
+    (void)state; enum EpdDrawError result = record_body(night, false);
+    if (refresh_mode == MODE_GL16) refresh_wave = E0470_GRAY_DIRECT_WAVEFORM.unused;
+    return result;
+}
+
 // 只记录真实reader选择的对照出口、周期与模式；不模拟波形或光学残影。
 // Record the production reader's comparison call, interval and mode without simulating waveforms or optical ghosts.
 enum EpdDrawError update_display_night_crossmux(EpdiyHighlevelState* state, display_crossmux_action_t action) {
@@ -178,6 +185,26 @@ enum EpdDrawError update_display_night_crossmux(EpdiyHighlevelState* state, disp
     enum EpdDrawError result = record_refresh(clean ? MODE_GC16 : entry ? MODE_GL16 : MODE_DU);
     if (result == EPD_DRAW_SUCCESS) {
         if (clean || entry) { s_night_body_turns = 0; s_navigation_entry = false; }
+        else if (turn) s_night_body_turns = every ? s_night_body_turns + 1 : 0;
+        if (turn) body_presents++;
+    }
+    return result;
+}
+
+// 清白直绘只记录实际出口与周期，不把预览像素当作面板洁净度证据。
+// White-clear repaint records actions and intervals only, never treating preview pixels as evidence of panel cleanliness.
+enum EpdDrawError update_display_night_white_repaint(EpdiyHighlevelState* state, display_crossmux_action_t action, bool direct, bool gray_direct) {
+    if (direct && !gray_direct) display_prepare_direct_frame(state->front_fb, epd_width(), epd_height(), true);
+    unsigned every = app_settings_gc_every();
+    bool turn = action == DISPLAY_CROSSMUX_TURN;
+    bool clean = s_navigation_entry || action == DISPLAY_CROSSMUX_ENTRY || action == DISPLAY_CROSSMUX_CLEAN ||
+                 (turn && every && s_night_body_turns + 1 >= every);
+    if (clean) physical_clears++;
+    refresh_area = (EpdRect){0, 0, 684, 1216};
+    refresh_wave = clean ? E0470_FULL_WAVEFORM.unused : gray_direct ? 9 : direct ? 6 : 5;
+    enum EpdDrawError result = record_refresh(clean && direct && !gray_direct ? MODE_DU : MODE_GL16);
+    if (result == EPD_DRAW_SUCCESS) {
+        if (clean) { s_night_body_turns = 0; s_navigation_entry = false; }
         else if (turn) s_night_body_turns = every ? s_night_body_turns + 1 : 0;
         if (turn) body_presents++;
     }

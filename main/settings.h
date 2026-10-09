@@ -113,21 +113,27 @@ bool app_settings_lock_pin_wake(void);
 void app_settings_set_lock_pin_wake(bool on);
 /// 清残影周期：通用页及成功夜间正文翻页使用，日间正文/控件不计数；0=关，档位0/3/5/10/14/20/30，新装默认5。
 /// Cleanup interval for generic pages and successful night body turns, excluding day body/controls; 0=off, tiers 0/3/5/10/14/20/30, fresh default 5.
-/// 夜间两模式共用计数，第N次用厂家GC16；失败不计数，任何成功整屏GC或开机清白重置，关闭后的成功夜间翻页清除未完成周期。
-/// Both night profiles share a count and use vendor GC16 on turn N; failures do not count, any successful full-screen GC or boot white clear resets it, and successful disabled night turns clear an unfinished interval.
+/// 夜间方案共用计数，第N次按所选方案清理；失败不计数，任何成功整屏GC或开机清白重置，关闭后的成功夜间翻页清除未完成周期。
+/// Night profiles share a count and clean on turn N using their selected policy; failures do not count, any successful full-screen GC or boot white clear resets it, and successful disabled night turns clear an unfinished interval.
 uint8_t app_settings_gc_every(void);
 void app_settings_set_gc_every(uint8_t every);
-/// 可选厂家黑白DU直刷，真实目标0/15、不保留灰阶抗锯齿，默认关；已解码图片章节保留标准GL16。
-/// Optional vendor black/white DU direct with actual targets 0/15 and no gray antialiasing, off by default; decoded-image chapters retain standard GL16.
+/// 可选直刷，默认关闭且使用厂家黑白DU；灰字缘由下述独立选项控制，已解码图片章节保留标准GL16。
+/// Optional direct, off by default with vendor binary DU; gray edges use the separate setting below, and decoded-image chapters retain standard GL16.
 bool app_settings_book_direct(void);
 void app_settings_set_book_direct(bool on);
+
+/// 直刷可选真实灰字缘，默认关；厂家黑白端点DU和中间灰GL组合扫描，较原DU慢且灰缘可能局部闪动。
+/// Optional actual gray direct edges, off by default; compose vendor DU endpoints with GL gray transitions, slower than original DU with possible local gray-edge flicker.
+bool app_settings_book_edge_gray(void);
+void app_settings_set_book_edge_gray(bool on);
 
 enum {
     BOOK_NIGHT_PROFILE_CURRENT = 0, ///< 当前清理 / Current cleanup
     BOOK_NIGHT_PROFILE_CROSSMUX = 1, ///< Crossmux Pico 对照 / Crossmux Pico comparison
+    BOOK_NIGHT_PROFILE_WHITE_REPAINT = 3, ///< 物理清白后直绘 / Repaint after physical white clearing
 };
-/// 夜间刷新方案，默认当前清理；Crossmux对照仅纯文字夜间使用黑白DU和周期单次GC，不移植其它固件功能。
-/// Night refresh profile defaults to current cleanup; the Crossmux comparison uses BW DU and one periodic GC for night text only, without transplanting other firmware features.
+/// 夜间默认当前清理；纯文字可选Crossmux黑白DU/单次GC，或实际清白后GL/DU直绘，不移植其它固件功能。
+/// Night defaults to current cleanup; text may select Crossmux BW DU/single GC or physical-white-clear/GL-DU repaint, without transplanting other firmware features.
 uint8_t app_settings_book_night_profile(void);
 /// 保存有效方案，拒绝未知值；独立于已撤回的实验设置。/ Persist a valid profile, rejecting unknown values; independent of the withdrawn experiment setting.
 void app_settings_set_book_night_profile(uint8_t profile);

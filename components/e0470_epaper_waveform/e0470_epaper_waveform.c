@@ -24,11 +24,16 @@
  * Frozen: The user requests further comparison with Crossmux Pico; an isolated reference reproduces freeink-sdk 96de1be default DU20/GC36/GL37 byte for byte, selected only by optional night paths without changing local defaults, daytime or vendor source tables.
  * 修订：此前只比较源码，没有交付完整Crossmux波形对照；本次复现其裁剪与白白单相动作，不增加新剂量，也不承诺光学改善。
  * Revision: Prior work compared source without delivering a complete Crossmux waveform reference; this reproduces its trimming and single white-to-white action without new doses or an optical-improvement claim.
+ * 冻结：用户要求继续改善直刷字缘；独立可选灰边档保留厂家DU20端点及完整8灰GL30中间目标，旧灰真实、未变保持，仅补一中性尾。
+ * Frozen: The user requests continued direct-text edge improvements; the optional gray-edge profile retains vendor DU20 endpoints and complete 8-gray GL30 intermediate targets, truthful old grays and held unchanged pixels, with one neutral tail only.
+ * 修订：阈值细边实机无可见改善；新档保留真实灰阶目标而非二值取墨，最多31相慢于原21相，变化灰边会局部擦写，不能宣称无闪或光学改善已验证。
+ * Revision: Threshold-based fine edges gave no visible device improvement; this profile retains actual gray targets instead of binary coverage, takes up to 31 phases versus the original 21, and locally erases changed gray edges without a flicker-free or device-proven optical claim.
  */
 
 #include "e0470_epaper_waveform.h"
 
 #include <assert.h>
+#include <stdbool.h>
 #include <string.h>
 
 #include "e0470_waveform_trim.h"
@@ -241,6 +246,42 @@ const EpdWaveform E0470_DIRECT_WAVEFORM = {
     .mode_data = e0470_direct_modes, .temp_intervals = e0470_intervals,
 };
 
+/* ---- 灰边直刷对照 / Gray-edge direct comparison ---- */
+// 黑白端点保持DU原20相位置，灰目标保持8灰GL原30相位置；两路同时扫描，不追加后置补画。
+// Keep the original 20 DU phase positions for black/white endpoints and 30 8-gray GL positions for gray targets; scan them together without a later correction pass.
+static uint8_t e0470_gray_direct_data[E0470_GRAY_DIRECT_FRAMES][16][4];
+static const EpdWaveformPhases e0470_gray_direct_phases = {
+    .phases = E0470_GRAY_DIRECT_FRAMES, .phase_times = NULL,
+    .luts = (const uint8_t*)e0470_gray_direct_data,
+};
+static const EpdWaveformPhases* e0470_gray_direct_ranges[] = { &e0470_gray_direct_phases };
+static const EpdWaveformMode e0470_gray_direct_mode = {
+    .type = 5, .temp_ranges = 1, .range_data = e0470_gray_direct_ranges,
+};
+static const EpdWaveformMode* e0470_gray_direct_modes[] = { &e0470_gray_direct_mode };
+const EpdWaveform E0470_GRAY_DIRECT_WAVEFORM = {
+    .num_modes = 1, .num_temp_ranges = 1,
+    .mode_data = e0470_gray_direct_modes, .temp_intervals = e0470_intervals,
+};
+
+static void e0470_gray_direct_build(void) {
+    memset(e0470_gray_direct_data, 0, sizeof(e0470_gray_direct_data));
+    for (int to = 0; to < 16; ++to) {
+        const bool endpoint = to == 0 || to == 15;
+        const int frames = endpoint ? E0470_FULL_DU_FRAMES : E0470_GRAY8_GL16_FRAMES;
+        for (int from = 0; from < 16; ++from) {
+            // EE是选择性未变保持码；灰对角线也必须全部保持，不能把背景纳入灰阶擦写。
+            // EE represents selective unchanged holds; every gray diagonal must hold as well, without admitting backgrounds to gray erasure.
+            if (to == from) continue;
+            for (int phase = 0; phase < frames; ++phase) {
+                const int action = endpoint ? lut_get(e0470_full_du_data, phase, to, from)
+                                            : lut_get(e0470_gray8_gl16_data, phase, to, from);
+                lut_set(e0470_gray_direct_data, phase, to, from, action);
+            }
+        }
+    }
+}
+
 /* ---- Crossmux Pico 对照 / Crossmux Pico reference ---- */
 // 来源：0x1abin/freeink-sdk@96de1be6ce08eb732909e6e8149af8f892b9a2c5，EpdiyLcd/src/e0470/e0470_epaper_waveform.c 默认装配。
 // Source: 0x1abin/freeink-sdk@96de1be6ce08eb732909e6e8149af8f892b9a2c5, EpdiyLcd/src/e0470/e0470_epaper_waveform.c default assembly.
@@ -356,6 +397,7 @@ void e0470_waveform_init(void) {
     e0470_follow_lut_build(E0470_FOLLOW_FRAMES, e0470_follow_data);
     e0470_complete_du_build();
     e0470_crossmux_build();
+    e0470_gray_direct_build();
     memset(e0470_settled_gl16_data, 0, sizeof(e0470_settled_gl16_data));
     memcpy(e0470_settled_gl16_data, e0470_full_gl16_data, sizeof(e0470_full_gl16_data));
     e0470_navigation_entry_build();

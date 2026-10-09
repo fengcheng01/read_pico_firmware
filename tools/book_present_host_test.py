@@ -15,7 +15,7 @@ def production_function(name):
     assert match, name
     end = source.index('\n}', match.end()) + 2
     return source[match.start():end]
-production = '\n'.join(production_function(name) for name in ('finish_reader_frame', 'reader_crossmux_enabled', 'reader_direct_enabled', 'present'))
+production = '\n'.join(production_function(name) for name in ('finish_reader_frame', 'reader_crossmux_enabled', 'reader_direct_enabled', 'reader_gray_direct_enabled', 'reader_white_repaint_enabled', 'present'))
 harness = r'''
 #include <assert.h>
 #include <stdbool.h>
@@ -52,6 +52,9 @@ typedef int EpdWaveform;
 typedef enum {DISPLAY_CROSSMUX_TURN,DISPLAY_CROSSMUX_ENTRY,DISPLAY_CROSSMUX_CLEAN,DISPLAY_CROSSMUX_REDRAW} display_crossmux_action_t;
 #define BOOK_NIGHT_PROFILE_CURRENT 0
 #define BOOK_NIGHT_PROFILE_CROSSMUX 1
+#define BOOK_NIGHT_PROFILE_WHITE_REPAINT 3
+static bool gray_edges;
+static unsigned gray_calls,white_calls,white_actions[4];
 static uint8_t night_profile;
 static unsigned crossmux_calls,crossmux_actions[4];
 static int E0470_WAVEFORM,E0470_NAVIGATION_WAVEFORM,E0470_TEXTTURN_WAVEFORM,E0470_TEXTTURN_NIGHT_WAVEFORM,E0470_DIRECT_WAVEFORM;
@@ -79,6 +82,7 @@ static bool kick_prep(void) {return prepare;}
 static void xSemaphoreTake(void* s,int wait) { (void)s;(void)wait;joins++; }
 static void footer_status(char* s,size_t cap) {(void)s;(void)cap;}
 static bool app_settings_book_direct(void) {return direct;}
+static bool app_settings_book_edge_gray(void) {return gray_edges;}
 static bool app_settings_book_night(void) {return night_setting;}
 static uint8_t app_settings_book_night_profile(void) {return night_profile;}
 static enum EpdDrawError result(void) {last_draw_serial=++serial;return fail?EPD_DRAW_FAILURE:EPD_DRAW_SUCCESS;}
@@ -87,6 +91,13 @@ static enum EpdDrawError update_display_night_crossmux(int* h,display_crossmux_a
  assert(s_view==READING&&s_text&&night_setting&&!s_image_open&&!s_toolbar&&!s_clear_confirm&&!s_quote_selecting&&!s_ended);
  for(size_t i=0;i<s_block_count;++i)assert(!s_blocks[i].image);
  crossmux_calls++;crossmux_actions[action]++;return result();
+}
+static enum EpdDrawError update_display_text_gray_direct(int* h,bool night) {(void)h;assert(gray_edges&&direct);last_direct_night=night;gray_calls++;return result();}
+static enum EpdDrawError update_display_night_white_repaint(int* h,display_crossmux_action_t action,bool bw,bool gray) {
+ (void)h;assert(s_view==READING&&s_text&&night_setting&&night_profile==3);
+ assert(!s_image_open&&!s_toolbar&&!s_clear_confirm&&!s_quote_selecting&&!s_ended);
+ for(size_t i=0;i<s_block_count;++i)assert(!s_blocks[i].image);
+ assert(bw==direct&&gray==(direct&&gray_edges));white_calls++;white_actions[action]++;return result();
 }
 static enum EpdDrawError update_display_full(int* h) {(void)h;fulls++;return result();}
 static enum EpdDrawError update_display_clean(int* h) {(void)h;fulls++;return result();}
@@ -277,6 +288,34 @@ int main(void) {
  present(&ctx,APP_REDRAW_PAGE);s_text_turn=true;present(&ctx,APP_REDRAW_AREA);assert(crossmux_calls==before_cross);
  night_profile=BOOK_NIGHT_PROFILE_CROSSMUX;s_presented_view=LAYOUT;
  present(&ctx,APP_REDRAW_PAGE);assert(crossmux_calls==before_cross+1&&s_reader_target_binary);
+ // 实际灰字缘不二值化，Crossmux仍固定黑白；新清白对照覆盖四动作且控件不计。
+ // Actual gray edges bypass binarization, Crossmux remains binary, and white-clear repaint covers four actions outside controls.
+ s_view=READING;s_blocks=NULL;s_block_count=0;s_text="body";s_presented_reading_overlay=false;
+ for(int night=0;night<2;++night)for(int effect=0;effect<2;++effect){
+   night_setting=night;direct=effect;gray_edges=true;night_profile=0;s_presented_view=SHELF;
+   unsigned q=quantizes,g=gray_calls;present(&ctx,APP_REDRAW_PAGE);
+   assert(quantizes==q&&!s_reader_target_binary);
+   s_text_turn=true;present(&ctx,APP_REDRAW_AREA);
+   assert(gray_calls==g+(effect?1:0)&&quantizes==q);
+ }
+ night_setting=true;direct=true;gray_edges=true;night_profile=1;s_text_turn=true;
+ unsigned q=quantizes;present(&ctx,APP_REDRAW_AREA);assert(quantizes==q+1&&s_reader_target_binary);
+ for(int effect=0;effect<2;++effect)for(int edge=0;edge<2;++edge){
+   direct=effect;gray_edges=edge;night_profile=3;s_presented_view=SHELF;s_presented_reading_overlay=false;
+   unsigned before=white_calls;unsigned q0=quantizes;
+   present(&ctx,APP_REDRAW_PAGE);assert(white_calls==before+1);
+   assert(s_reader_target_binary==(bool)(effect&&!edge));
+   assert(quantizes==q0+(effect&&!edge?1:0));
+   s_text_turn=true;present(&ctx,APP_REDRAW_AREA);assert(white_calls==before+2);
+   present(&ctx,APP_REDRAW_PAGE);assert(white_calls==before+3);
+   present(&ctx,APP_REDRAW_FULL);assert(white_calls==before+4);
+   present(&ctx,APP_REDRAW_AREA);assert(white_calls==before+4);
+   s_toolbar=true;present(&ctx,APP_REDRAW_PAGE);assert(white_calls==before+4);
+   s_toolbar=false;fail=true;present(&ctx,APP_REDRAW_PAGE);assert(s_presented_reading_overlay);
+   fail=false;present(&ctx,APP_REDRAW_PAGE);assert(!s_presented_reading_overlay&&white_calls==before+6);
+ }
+ for(unsigned i=0;i<4;++i)assert(white_actions[i]>=4);
+ puts("reader present: real gray target, unchanged Crossmux binary, new white clear four actions, overlay failure retries/control exclusions PASS");
  puts("reader present: view/overlay-entry requests and failed retry, manual cleanup, preparation join, day/night binary direct frames before entry/redraw/turn, grayscale image fallback and ordinary-turn preservation PASS");
  puts("reader present: Crossmux ENTRY/TURN/CLEAN/REDRAW routing for night text, both page effects, binary frames, overlay retry, control/image/day exclusions and profile switching PASS");
 }

@@ -67,6 +67,9 @@ enum EpdDrawError update_display_text_turn(EpdiyHighlevelState* hl, bool white_o
 /// 厂家黑白DU直刷，实际二值目标和真实旧灰参考；日间不计周期，夜间与标准共计成功翻页。
 /// Vendor black/white DU with actual binary targets and real prior grays; day never counts, night shares successful turns with standard.
 enum EpdDrawError update_display_text_direct(EpdiyHighlevelState* hl, bool white_on_black);
+/// 灰缘直刷保留目标灰码，端点使用厂家DU、灰边使用厂家灰阶迁移；日间不计周期，夜间按原正文周期清理。
+/// Gray-edge direct retains target gray codes with vendor DU endpoints and vendor gray transitions; day skips counting and night keeps existing body cleanup intervals.
+enum EpdDrawError update_display_text_gray_direct(EpdiyHighlevelState* hl, bool white_on_black);
 typedef enum {
     DISPLAY_CROSSMUX_TURN, ///< 夜间正文翻页，计入保存周期 / Night body turn counted toward the saved interval
     DISPLAY_CROSSMUX_ENTRY, ///< 反色或布局入口，单次GL并重置周期 / Inversion or layout entry with one GL and a reset interval
@@ -78,6 +81,14 @@ typedef enum {
 /// 未知参考仍先物理清白并完整GC48恢复；只在成功后提交计数，不执行内容呈现后的补扫。
 /// Unknown references retain physical-clear/full-GC48 recovery; commit counts only on success and never post-scan presented content.
 enum EpdDrawError update_display_night_crossmux(EpdiyHighlevelState* hl, display_crossmux_action_t action);
+
+/// 可选夜间白重画：入口、手动或到期保留三轮物理清白，再从真实白参考单次厂家GL灰阶或DU二值写回；普通翻页保持原迁移。
+/// Optional night white repaint: entry, manual or due cleaning retains three physical-white-clear rounds, then one vendor GL gray or DU binary repaint from actual white; ordinary turns retain existing transitions.
+/// 灰缘仅在直刷启用时保灰；失败后的未知参考仍用原完整GC恢复，成功清理才重置计数。
+/// Gray edges retain grays only with direct enabled; unknown references after failures keep original full-GC recovery, and only successful cleaning resets counters.
+enum EpdDrawError update_display_night_white_repaint(
+    EpdiyHighlevelState* hl, display_crossmux_action_t action, bool direct, bool gray_direct
+);
 
 /// 灰阶图还在屏上时置位：菜单盖上来或离页先刷白，避免从中间灰差分。
 /// Set while a gray image is still on panel: wipe to white before the menu or leave so the next update is not a mid-gray differential.

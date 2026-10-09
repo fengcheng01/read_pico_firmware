@@ -3,6 +3,15 @@
 按日期和作者简述对用户可见的功能变化；详细实现历史见 Git。使用方法见 [README](../README.zh-CN.md)。
 User-visible changes by date and author; Git retains implementation history. See [README](../README.md) for usage.
 
+## 0.5.31-20261009.1 · 2026-10-09
+
+- 针对锁屏后WiFi扫描ESP_ERR_NO_MEM，扫描和校时专用连接使用较小静态缓冲，完整传书配置保持；释放失败保留真实资源供重试，并记录内存及失败阶段。
+  Address post-lock WiFi scan ESP_ERR_NO_MEM with smaller static buffers for scanning/clock-only sessions, retaining full transfer configuration; preserve resources after failed teardown for retry and log heap/failure stages.
+- 新增独立可选“夜间方案：清白直绘”：实际物理清白后从白参考用厂家GL或DU绘制目标，省掉清白后的GC反转；保留成功翻页周期及原两方案，清理仍会闪，光学残影改善待真机。
+  Add optional White-Clear Repaint: physically clear to white then repaint the real target with vendor GL/DU from that baseline, omitting a subsequent GC reversal. Retain successful-turn intervals and older profiles; cleaning still flashes and optical improvement awaits device tests.
+- 直刷新增真实灰阶字缘，完整厂家灰迁移与原DU黑白端点共扫；原黑白无闪速度保留可选，灰缘较慢且可能局部闪动；旧失败的细边键和值2不复用，已保存走时模型保持。
+  Add actual gray direct edges by scanning complete vendor gray transitions alongside original DU endpoints. Original binary no-flash speed remains selectable; gray edges take longer and may flicker locally. Retired fine-edge keys/profile 2 are not reused, and saved clock models remain.
+
 ## 0.5.30-20261009.1 · 2026-10-09
 
 - 实机确认黑基准清理后第一张仍有残影并亮闪、细边没有可见抗锯齿改善，撤回两项入口与分支；旧黑基准选择回当前方案，细边键忽略不擦。恢复原直刷及当前方案物理清白加完整GC，保留WiFi扫描、时钟学习与已有设置；不宣称夜间残影或灰阶直刷已解决。

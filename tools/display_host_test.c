@@ -19,6 +19,7 @@
 const EpdWaveform E0470_WAVEFORM = {0}, E0470_FOLLOW_WAVEFORM = {1}, E0470_FULL_WAVEFORM = {2}, E0470_TEXTTURN_WAVEFORM = {3}, E0470_NAVIGATION_WAVEFORM = {4}, E0470_NAVIGATION_ENTRY_WAVEFORM = {7};
 const EpdWaveform E0470_DIRECT_WAVEFORM = {5}, E0470_WHITE_CLEANUP_WAVEFORM = {6}, E0470_TEXTTURN_NIGHT_WAVEFORM = {8};
 const EpdWaveform E0470_CROSSMUX_WAVEFORM = {9};
+const EpdWaveform E0470_GRAY_DIRECT_WAVEFORM = {10};
 static uint8_t target[FB_BYTES], presented[FB_BYTES];
 static uint8_t expected_old[FB_BYTES];
 static bool check_old_at_draw;
@@ -36,6 +37,7 @@ static const EpdWaveform* last_waveform;
 int epd_width(void) { return 16; }
 int epd_height(void) { return 16; }
 uint8_t app_settings_gc_every(void) { return (uint8_t)cleanup_every; }
+bool app_settings_book_night(void) { return true; }
 // 仅测试保留的旧符号：撤回后真实显示路径不得读取旧实验档位。
 // Test-only legacy symbol: the withdrawn production display path must never read old experiment tiers.
 static uint8_t legacy_night_cleanup;

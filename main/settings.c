@@ -16,6 +16,8 @@
  * Revision: The user's offline lock clock gains time over hours with legacy +4410ppm; the old key lacks model identity, so remeasure instead of hard-coding an opposite correction.
  * 冻结：0.5.29实机否定黑基准清理和细边，旧bk_ngprofile=2回当前方案，bk_fine不再读写；不擦旧键或已保存的时钟、WiFi、阅读选择。
  * Frozen: Device feedback rejects the 0.5.29 black-baseline cleanup and fine edges; legacy bk_ngprofile=2 falls back to Current and bk_fine stays unread/unwritten, without erasing old keys or saved clock, WiFi and reading choices.
+ * 冻结：继续优化采用独立值3清白直绘与bk_edgegray真实灰字缘，默认不改变既有选项；旧失败值2不得复用。
+ * Frozen: Continued optimization uses distinct profile 3 for white-clear repaint and bk_edgegray for actual gray edges, without changing existing defaults or reusing failed value 2.
  */
 
 #include "settings.h"
@@ -66,6 +68,7 @@
 #define NVS_KEY_IDLE "idle_min"
 #define NVS_KEY_GC_EVERY "gc_every"
 #define NVS_KEY_BOOK_DIRECT "bk_direct"
+#define NVS_KEY_BOOK_EDGE_GRAY "bk_edgegray"
 #define NVS_KEY_BOOK_NIGHT_PROFILE "bk_ngprofile"
 #define NVS_KEY_SLEEP_CLOCK "sl_clk_v1"
 #define FONT_PATH_MAX 160
@@ -103,6 +106,7 @@ static uint8_t s_idle_lock;
 // 与 app_config.h 的原编译期档一致，保持升级无行为变化。/ Matches the old compile-time tier in app_config.h; upgrades keep behavior.
 static uint8_t s_gc_every = 5;
 static bool s_book_direct;
+static bool s_book_edge_gray;
 static uint8_t s_book_night_profile = BOOK_NIGHT_PROFILE_CURRENT;
 
 typedef struct {
@@ -169,6 +173,7 @@ static bool gc_every_valid(uint8_t every) {
 
 void app_settings_init(void) {
     s_book_night_profile = BOOK_NIGHT_PROFILE_CURRENT;
+    s_book_edge_gray = false;
     s_sleep_clock_ppm = 0;
     s_sleep_clock_valid = false;
     esp_err_t err = nvs_flash_init();
@@ -238,9 +243,11 @@ void app_settings_init(void) {
     if (nvs_get_u8(h, NVS_KEY_GC_EVERY, &gc_every) == ESP_OK && gc_every_valid(gc_every)) s_gc_every = gc_every;
     uint8_t direct = 0;
     if (nvs_get_u8(h, NVS_KEY_BOOK_DIRECT, &direct) == ESP_OK) s_book_direct = direct == 1;
+    uint8_t edge_gray = 0;
+    if (nvs_get_u8(h, NVS_KEY_BOOK_EDGE_GRAY, &edge_gray) == ESP_OK) s_book_edge_gray = edge_gray == 1;
     uint8_t night_profile = BOOK_NIGHT_PROFILE_CURRENT;
     if (nvs_get_u8(h, NVS_KEY_BOOK_NIGHT_PROFILE, &night_profile) == ESP_OK &&
-        night_profile <= BOOK_NIGHT_PROFILE_CROSSMUX) s_book_night_profile = night_profile;
+        (night_profile <= BOOK_NIGHT_PROFILE_CROSSMUX || night_profile == BOOK_NIGHT_PROFILE_WHITE_REPAINT)) s_book_night_profile = night_profile;
     sleep_clock_record_t clock = {0};
     size_t clock_len = sizeof(clock);
     if (nvs_get_blob(h, NVS_KEY_SLEEP_CLOCK, &clock, &clock_len) == ESP_OK &&
@@ -560,9 +567,16 @@ void app_settings_set_book_direct(bool on) {
     nvs_put_u8_checked(NVS_KEY_BOOK_DIRECT, on);
 }
 
+bool app_settings_book_edge_gray(void) { return s_book_edge_gray; }
+void app_settings_set_book_edge_gray(bool on) {
+    if (s_book_edge_gray == on) return;
+    s_book_edge_gray = on;
+    nvs_put_u8_checked(NVS_KEY_BOOK_EDGE_GRAY, on);
+}
+
 uint8_t app_settings_book_night_profile(void) { return s_book_night_profile; }
 void app_settings_set_book_night_profile(uint8_t profile) {
-    if (profile > BOOK_NIGHT_PROFILE_CROSSMUX || s_book_night_profile == profile) return;
+    if ((profile > BOOK_NIGHT_PROFILE_CROSSMUX && profile != BOOK_NIGHT_PROFILE_WHITE_REPAINT) || s_book_night_profile == profile) return;
     s_book_night_profile = profile;
     nvs_put_u8_checked(NVS_KEY_BOOK_NIGHT_PROFILE, profile);
 }

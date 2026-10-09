@@ -23,6 +23,10 @@
  * Frozen: After 0.5.19 regressed on-device, the user prioritizes flash-free speed; text direct uses vendor black/white DU and current standard/all illustrated chapters retain gray, with display-owned night cleanup at the user's interval.
  * 实机修订：0.5.29黑基准清理后第一张仍有残影并亮闪，细边无可见改善；撤回两项入口与绘制分支，恢复原直刷及当前方案完整清白恢复。
  * Device revision: On 0.5.29 ghosts remain on the first page after black-baseline cleaning with a flash, and fine edges show no visible benefit; withdraw both controls and draw branches, restoring original direct text and current-profile physical white recovery.
+ * 冻结修订：用户要求继续改进，新增独立清白直绘对照；真实清白后从白参考绘制，避免再用GC反转，普通夜间按原周期。
+ * Frozen revision: The user requests continued improvement; add a distinct white-clear repaint comparison using the real white baseline without another GC reversal, retaining the saved night interval.
+ * 冻结修订：字缘可选真实灰阶，完整厂家灰迁移与黑白DU共扫；原黑白直刷保持可选，灰缘较慢且可能局部闪动，仅纯文字生效。
+ * Frozen revision: Edges may retain actual gray via complete vendor gray transitions alongside BW DU; original BW direct remains selectable, while gray edges are slower and may flicker locally, for text only.
  * 冻结：0.5.20仍有布局残影，用户批准不同视图切换及已呈现覆盖层退出正文时请求一次入口清理；普通翻页、控件和后台重绘不追加入口请求。
  * Frozen: Layout ghosts remain on 0.5.20; the user authorizes one entry cleanup for distinct views and exits from presented overlays to the body, without additional entry requests on ordinary turns, controls or background redraws.
  * 实机残影修订：撤回未经校准的单向灰阶、统一擦白及三相入口推白；日间标准恢复厂家黑/灰定稿，夜间及直刷保持未变像素。
@@ -300,6 +304,14 @@ static bool reader_direct_enabled(void) {
     for (size_t i = 0; i < s_block_count; ++i) if (s_blocks[i].image) return false;
     return true;
 }
+static bool reader_gray_direct_enabled(void) {
+    return reader_direct_enabled() && app_settings_book_edge_gray() && !reader_crossmux_enabled();
+}
+static bool reader_white_repaint_enabled(void) {
+    if (!app_settings_book_night() || app_settings_book_night_profile() != BOOK_NIGHT_PROFILE_WHITE_REPAINT) return false;
+    for (size_t i = 0; i < s_block_count; ++i) if (s_blocks[i].image) return false;
+    return true;
+}
 static EpdRect body_rect(void) {
     // 边距档每级 16px，只收窄正文，不动页脚与工具条。/ Margin tiers inset 16 px each, narrowing only the body.
     EpdRect body = ui_product_reader_body(s_font_notice);
@@ -318,7 +330,7 @@ static void apply_typography(void) {
     book_layout_set_paragraph(app_settings_book_para());
     book_layout_set_guide(app_settings_book_guide());
     book_layout_set_guide_origin(ui_product_reader_body(false).y);
-    book_layout_set_guide_contrast(reader_direct_enabled());
+    book_layout_set_guide_contrast(reader_direct_enabled() && !reader_gray_direct_enabled());
     book_layout_set_align(app_settings_book_align());
 }
 // 页脚状态串：时钟/电量按设置拼装；数据来自缓存快照，render 保持纯绘图。
@@ -1090,7 +1102,7 @@ static bool present(app_ctx_t* ctx, app_redraw_t redraw) {
     if (redraw == APP_REDRAW_PAGE || redraw == APP_REDRAW_FULL) render(ctx, ctx->fb);
     // 初次进正文也提交真实黑白帧，避免入口灰阶与后续DU目标不同。
     // Body entries also commit actual black/white frames so entry gray never differs from subsequent DU targets.
-    if (s_view == READING && s_text && !s_image_open && !s_toolbar && !s_clear_confirm && !s_quote_selecting && !s_ended && reader_direct_enabled()) {
+    if (s_view == READING && s_text && !s_image_open && !s_toolbar && !s_clear_confirm && !s_quote_selecting && !s_ended && reader_direct_enabled() && !reader_gray_direct_enabled()) {
         display_prepare_direct_frame(ctx->fb, epd_width(), epd_height(), app_settings_book_night());
         s_reader_target_binary = true;
     }
@@ -1105,15 +1117,19 @@ static bool present(app_ctx_t* ctx, app_redraw_t redraw) {
     bool overlay_exit = s_view == READING && s_text && s_presented_valid && s_presented_view == READING &&
         s_presented_reading_overlay && !reading_overlay;
     const bool crossmux_body = s_view == READING && s_text && !reading_overlay && reader_crossmux_enabled();
+    const bool white_repaint_body = s_view == READING && s_text && !reading_overlay && reader_white_repaint_enabled();
+    const bool gray_direct = reader_gray_direct_enabled();
     if (redraw == APP_REDRAW_FULL) {
         s_text_turn = false;
-        err = crossmux_body ? update_display_night_crossmux(ctx->hl, DISPLAY_CROSSMUX_CLEAN) :
+        err = white_repaint_body ? update_display_night_white_repaint(ctx->hl, DISPLAY_CROSSMUX_CLEAN, reader_direct_enabled(), gray_direct) :
+            crossmux_body ? update_display_night_crossmux(ctx->hl, DISPLAY_CROSSMUX_CLEAN) :
             s_reader_target_night ? update_display_clean(ctx->hl) : update_display_full(ctx->hl);
     }
     else if ((body_entry || view_entry || overlay_exit) && APP_PAGE_REFRESH_MODE == MODE_GL16) {
         s_text_turn = false;
         display_request_navigation_settle();
-        err = crossmux_body ? update_display_night_crossmux(ctx->hl, DISPLAY_CROSSMUX_ENTRY) :
+        err = white_repaint_body ? update_display_night_white_repaint(ctx->hl, DISPLAY_CROSSMUX_ENTRY, reader_direct_enabled(), gray_direct) :
+            crossmux_body ? update_display_night_crossmux(ctx->hl, DISPLAY_CROSSMUX_ENTRY) :
             update_display_with(ctx->hl, s_reader_target_night ? &E0470_TEXTTURN_NIGHT_WAVEFORM : &E0470_NAVIGATION_WAVEFORM, MODE_GL16);
     }
     else if (redraw == APP_REDRAW_AREA) {
@@ -1121,8 +1137,10 @@ static bool present(app_ctx_t* ctx, app_redraw_t redraw) {
         if (s_text_turn) {
             s_text_turn = false;
             bool direct = reader_direct_enabled();
-            if (direct) s_reader_target_binary = true;
-            err = crossmux_body ? update_display_night_crossmux(ctx->hl, DISPLAY_CROSSMUX_TURN) :
+            if (direct) s_reader_target_binary = !gray_direct;
+            err = white_repaint_body ? update_display_night_white_repaint(ctx->hl, DISPLAY_CROSSMUX_TURN, direct, gray_direct) :
+                crossmux_body ? update_display_night_crossmux(ctx->hl, DISPLAY_CROSSMUX_TURN) :
+                gray_direct ? update_display_text_gray_direct(ctx->hl, app_settings_book_night()) :
                 direct ? update_display_text_direct(ctx->hl, app_settings_book_night()) : update_display_text_turn(ctx->hl, app_settings_book_night());
         } else {
             // 阅读控件使用原灰阶表但不进入通用整页周期，字号重绘也不算翻页。
@@ -1135,6 +1153,8 @@ static bool present(app_ctx_t* ctx, app_redraw_t redraw) {
             s_search_fast = false;
         }
     }
+    else if (white_repaint_body)
+        err = update_display_night_white_repaint(ctx->hl, DISPLAY_CROSSMUX_REDRAW, reader_direct_enabled(), gray_direct);
     else if (crossmux_body)
         err = update_display_night_crossmux(ctx->hl, DISPLAY_CROSSMUX_REDRAW);
     else if (APP_PAGE_REFRESH_MODE == MODE_GL16)
@@ -1771,7 +1791,8 @@ static EpdRect layout_tab_rect(int i) { return ui_row_rect(i, 3, 184, 80); }
 // 阅读内只显示同步操作，账号详情留在系统设置；绘制与手势共用边界。
 // Reader settings show sync actions only; account details stay in system settings, with shared paint and gesture bounds.
 static EpdRect sync_control_rect(int i) { return (EpdRect){UI_MARGIN, 292 + i * 112, ui_content_width(), 96}; }
-static EpdRect direct_rect(void) { return (EpdRect){UI_MARGIN, 970, ui_content_width(), 72}; }
+static EpdRect direct_rect(void) { return (EpdRect){UI_MARGIN, 970, (ui_content_width() - 16) / 2, 72}; }
+static EpdRect edge_gray_rect(void) { EpdRect r = direct_rect(); r.x += r.width + 16; return r; }
 static EpdRect night_profile_rect(void) { return (EpdRect){UI_MARGIN, 1048, ui_content_width(), 48}; }
 static EpdRect layout_row_rect(int i) { return (EpdRect){UI_MARGIN, 292 + (i % 6) * 112, ui_content_width(), 96}; }
 static const char* layout_value(int row) {
@@ -1839,7 +1860,14 @@ static void draw_tap_zones(uint8_t* fb) {
 }
 static void draw_layout_menu(uint8_t* fb) {
     ui_clear_page(fb);
-    ui_product_header(fb, "更多设置", s_layout_group == 1 ? "Crossmux夜间用黑白；周期单次GC" : "排版与翻页分组，调整保留阅读位置");
+    const char* note = "排版与翻页分组，调整保留阅读位置";
+    if (s_layout_group == 1) {
+        if (app_settings_book_night_profile() == BOOK_NIGHT_PROFILE_CROSSMUX) note = "Crossmux夜间用黑白；周期单次GC";
+        else if (app_settings_book_direct() && app_settings_book_edge_gray()) note = "灰阶字缘较慢，可能局部闪动";
+        else if (app_settings_book_night_profile() == BOOK_NIGHT_PROFILE_WHITE_REPAINT) note = "清白后直绘；清理仍会闪烁";
+        else note = "夜间按周期清理；日间翻页不计数";
+    }
+    ui_product_header(fb, "更多设置", note);
     for (int i = 0; i < 3; ++i) {
         EpdRect r = layout_tab_rect(i);
         if (i == s_layout_group) ui_draw_selected_round_rect(fb, r, UI_BTN_RADIUS);
@@ -1871,8 +1899,10 @@ static void draw_layout_menu(uint8_t* fb) {
         ui_hairline(fb, r.y + r.height, r.x, r.width, UI_GRAY_LIGHT);
     }
     if (s_layout_group == 1) {
-        draw_control(fb, direct_rect(), app_settings_book_direct() ? "翻页效果：无闪直刷" : "翻页效果：标准灰阶", 850);
-        draw_control(fb, night_profile_rect(), app_settings_book_night_profile() == BOOK_NIGHT_PROFILE_CROSSMUX ? "夜间方案：Crossmux" : "夜间方案：当前", 852);
+        draw_control(fb, direct_rect(), app_settings_book_direct() ? (app_settings_book_edge_gray() ? "灰缘直刷" : "无闪直刷") : "标准灰阶", 850);
+        draw_control(fb, edge_gray_rect(), app_settings_book_edge_gray() ? "灰阶字缘·较慢" : "字缘：黑白", 853);
+        draw_control(fb, night_profile_rect(), app_settings_book_night_profile() == BOOK_NIGHT_PROFILE_WHITE_REPAINT ? "夜间方案：清白直绘" :
+                     app_settings_book_night_profile() == BOOK_NIGHT_PROFILE_CROSSMUX ? "夜间方案：Crossmux" : "夜间方案：当前", 852);
     } else ui_product_title(fb, (EpdRect){UI_MARGIN, 1054, ui_content_width(), 38},
                             s_layout_group == 2 ? s_title : "调整即时保存并保持位置，返回阅读生效；* 为实验功能", 22, 1);
     draw_control(fb, ui_bar_rect(0, 2), "清残影", 810);
@@ -1918,7 +1948,13 @@ static app_redraw_t clean_reading(void) {
 static app_redraw_t layout_action(app_ctx_t* ctx, uint16_t x, uint16_t y) {
     if (s_layout_group == 1 && ui_rect_hit(night_profile_rect(), x, y)) {
         app_settings_set_book_night_profile(app_settings_book_night_profile() == BOOK_NIGHT_PROFILE_CURRENT ?
-                                          BOOK_NIGHT_PROFILE_CROSSMUX : BOOK_NIGHT_PROFILE_CURRENT);
+                                          BOOK_NIGHT_PROFILE_CROSSMUX : app_settings_book_night_profile() == BOOK_NIGHT_PROFILE_CROSSMUX ?
+                                          BOOK_NIGHT_PROFILE_WHITE_REPAINT : BOOK_NIGHT_PROFILE_CURRENT);
+        invalidate_prep();
+        return APP_REDRAW_PAGE;
+    }
+    if (s_layout_group == 1 && ui_rect_hit(edge_gray_rect(), x, y)) {
+        app_settings_set_book_edge_gray(!app_settings_book_edge_gray());
         invalidate_prep();
         return APP_REDRAW_PAGE;
     }
@@ -2569,6 +2605,8 @@ static int control_at(app_ctx_t* ctx, uint16_t x, uint16_t y, EpdRect* rect) {
     if (s_view == LAYOUT) {
         *rect = night_profile_rect();
         if (s_layout_group == 1 && ui_rect_hit(*rect, x, y)) return 852;
+        *rect = edge_gray_rect();
+        if (s_layout_group == 1 && ui_rect_hit(*rect, x, y)) return 853;
         *rect = direct_rect();
         if (s_layout_group == 1 && ui_rect_hit(*rect, x, y)) return 850;
         if (s_layout_group == 2) for (int i = 0; i < 4; ++i) {

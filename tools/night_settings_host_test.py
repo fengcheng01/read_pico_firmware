@@ -33,7 +33,8 @@ static uint8_t stored_cleanup;
 static bool has_profile;
 static uint8_t stored_profile;
 static unsigned legacy_reads, fine_reads, writes, commits, erases;
-static uint8_t stored_fine = 1;
+static uint8_t stored_fine = 1, stored_edge;
+static bool has_edge;
 static int init_error, open_error;
 static size_t host_strlcpy(char* dst,const char* src,size_t cap) {
     size_t n=strlen(src);
@@ -57,6 +58,7 @@ static esp_err_t nvs_get_u8(nvs_handle_t h,const char* key,uint8_t* out) {
         return ESP_ERR_NVS_NOT_FOUND;
     }
     if(!strcmp(key,"bk_fine")) { ++fine_reads; *out=stored_fine; return ESP_OK; }
+    if(!strcmp(key,"bk_edgegray") && has_edge){*out=stored_edge;return ESP_OK;}
     if(!strcmp(key,"bk_ngprofile")) {
         if(has_profile){*out=stored_profile;return ESP_OK;}
         return ESP_ERR_NVS_NOT_FOUND;
@@ -72,8 +74,11 @@ static esp_err_t nvs_get_u32(nvs_handle_t h,const char* key,uint32_t* out){(void
 static esp_err_t nvs_get_blob(nvs_handle_t h,const char* key,void* out,size_t* cap){(void)h;(void)key;(void)out;(void)cap;return ESP_ERR_NVS_NOT_FOUND;}
 static esp_err_t nvs_get_str(nvs_handle_t h,const char* key,char* out,size_t* cap){(void)h;(void)key;(void)out;(void)cap;return ESP_ERR_NVS_NOT_FOUND;}
 static esp_err_t nvs_set_u8(nvs_handle_t h,const char* key,uint8_t value) {
-    assert(h==1&&!strcmp(key,"bk_ngprofile"));
-    has_profile=true;stored_profile=value;++writes;return ESP_OK;
+    assert(h==1);
+    if(!strcmp(key,"bk_ngprofile")){has_profile=true;stored_profile=value;}
+    else if(!strcmp(key,"bk_edgegray")){has_edge=true;stored_edge=value;}
+    else assert(false);
+    ++writes;return ESP_OK;
 }
 static esp_err_t nvs_set_i8(nvs_handle_t h,const char* key,int8_t value){(void)h;(void)key;(void)value;assert(false);return 1;}
 static esp_err_t nvs_set_u32(nvs_handle_t h,const char* key,uint32_t value){(void)h;(void)key;(void)value;assert(false);return 1;}
@@ -135,11 +140,12 @@ int main(int argc,char** argv) {
         check_existing_choices();
     }
     unsigned before=writes;
-    for(unsigned raw=2;raw<=255;++raw) app_settings_set_book_night_profile((uint8_t)raw);
+    for(unsigned raw=2;raw<=255;++raw) if(raw!=3) app_settings_set_book_night_profile((uint8_t)raw);
     assert(app_settings_book_night_profile()==BOOK_NIGHT_PROFILE_CROSSMUX&&writes==before);
     // 非法持久化值回当前方案，不修写旧键，所有其它阅读选择和旧键保持原样。
     // Invalid persisted values fall back to the current profile without repairing keys, preserving every other reader choice and the old key.
     for(unsigned raw=2;raw<=255;++raw) {
+        if(raw==3)continue;
         stored_profile=(uint8_t)raw;app_settings_init();
         assert(app_settings_book_night_profile()==BOOK_NIGHT_PROFILE_CURRENT&&stored_profile==raw&&writes==before);
         check_existing_choices();
@@ -154,9 +160,19 @@ int main(int argc,char** argv) {
         assert(stored_fine==fine&&!fine_reads&&writes==before);
         check_existing_choices();
     }
+    app_settings_set_book_night_profile(BOOK_NIGHT_PROFILE_WHITE_REPAINT);
+    assert(app_settings_book_night_profile()==3 && stored_profile==3 && writes==before+1);
+    app_settings_init();assert(app_settings_book_night_profile()==3);
+    app_settings_set_book_night_profile(3);assert(writes==before+1);
+    assert(!app_settings_book_edge_gray());
+    app_settings_set_book_edge_gray(true);assert(stored_edge==1&&writes==before+2);
+    app_settings_init();assert(app_settings_book_edge_gray());
+    app_settings_set_book_edge_gray(true);assert(writes==before+2);
+    app_settings_set_book_edge_gray(false);assert(writes==before+3);
+    for(unsigned raw=0;raw<256;++raw){stored_edge=raw;app_settings_init();assert(app_settings_book_edge_gray()==(raw==1));check_existing_choices();}
     assert(!legacy_reads&&!fine_reads&&!erases&&writes==commits);
     puts("0.5.29 withdrawal: saved black profile returns CURRENT without repair writes, all legacy fine values ignored, night/direct/10-page choices retained PASS");
-    puts("night profile: distinct bk_ngprofile defaults CURRENT, both tiers persist/reload, repeated saves skip, 254 invalid setter/stored values fall back safely and old experiment tiers never enable Crossmux PASS");
+    puts("night profile: distinct bk_ngprofile defaults CURRENT, three distinct tiers persist/reload, repeated saves skip, 253 invalid setter/stored values fall back safely and old experiment tiers never enable Crossmux PASS");
 }
 '''
 

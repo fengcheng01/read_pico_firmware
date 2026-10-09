@@ -63,9 +63,9 @@ typedef struct {
 
 /// 同一控制任务串行启动/停止；重复启动返回状态错误。/ Serialize start/stop on one owner task; repeated start fails.
 esp_err_t read_pico_transfer_start(const read_pico_transfer_cfg_t *cfg);
-/// 等待请求退出并释放本组件资源；可重复调用。/ Join requests and release owned resources; repeatable.
+/// 等待请求退出；释放失败保留资源并在状态中报告，可再次调用。/ Join requests; failed release retains resources and reports status for a later retry.
 void read_pico_transfer_stop(void);
-/// 原子拒绝文件操作期间的停止；成功则已停服，由同一控制任务调用。/ Atomically refuse stopping during file operations; true means stopped. Owner task only.
+/// 文件操作或释放失败则返回false；成功则已停服，由同一控制任务调用。/ Return false during file operations or failed release; true means stopped. Owner task only.
 bool read_pico_transfer_try_stop_if_idle(void);
 /// 跨任务复制一致状态快照。/ Copy a consistent snapshot across tasks.
 void read_pico_transfer_get_status(read_pico_transfer_status_t *out);
@@ -75,7 +75,8 @@ void read_pico_transfer_service_poll(void);
 esp_err_t read_pico_transfer_get_saved_wifi(char ssid[33], bool *configured);
 /// 仅热点或停止状态可遗忘；上传中拒绝。/ Forget only while AP or stopped; rejected during upload.
 esp_err_t read_pico_transfer_forget_wifi(void);
-/// 停服后同步扫描2.4GHz网络；最多16个去重SSID，按信号降序，所有临时资源均释放。/ Scan synchronously while stopped; up to 16 unique SSIDs by descending RSSI; release all temporary resources.
+/// 停服后小缓冲同步扫描2.4GHz网络；最多16个去重SSID，按信号降序；释放失败交给stop重试。
+/// Scan synchronously with small buffers while stopped; up to 16 unique SSIDs by RSSI; failed resource release is retried by stop.
 esp_err_t read_pico_transfer_scan_wifi(read_pico_transfer_network_t out[READ_PICO_TRANSFER_SCAN_MAX], size_t *count);
 /// 停服后保存设备输入的凭据，不自动连接；密码校验与网页相同。/ Save device-entered credentials while stopped without connecting; validation matches the webpage.
 esp_err_t read_pico_transfer_save_wifi(const char *ssid, const char *password);

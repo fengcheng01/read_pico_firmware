@@ -14,6 +14,8 @@
  * Frozen: Hardware feedback requires on-demand sync networking; network-only STA never accesses files or starts HTTP and the owner serializes its lifecycle.
  * 冻结：实机漏扫反馈要求完整驻留及一次空结果被动兜底；保留驱动国家策略，不由语言或时区修改地区。
  * Frozen: Missing-network feedback requires full dwell and one passive retry on empty results; keep driver country policy, independent of language or timezone.
+ * 冻结：锁屏后NO_MEM反馈要求扫描和仅联网使用较小静态缓冲；传书保留默认，释放失败不冒充已停止。
+ * Frozen: Post-lock NO_MEM feedback requires smaller static buffers for scans and network-only sessions; keep transfer defaults and retain ownership on failed release.
  */
 #include "read_pico_search.h"
 #include <stdbool.h>
@@ -421,6 +423,43 @@ esp_err_t read_pico_transfer_save_wifi(const char *ssid, const char *password) {
     clear_secret(&next, sizeof(next)); release_config(); return err;
 }
 
+static wifi_init_config_t wifi_init_for_session(bool network_only) {
+    wifi_init_config_t init = WIFI_INIT_CONFIG_DEFAULT();
+    if (!network_only) return init;
+    // IDF的静态收发缓冲各约1.6KiB；低流量会话不预留传书的16+16个缓冲。
+    // IDF static RX/TX buffers each use about 1.6 KiB; low-traffic sessions do not reserve the transfer's 16+16 buffers.
+    if (init.static_rx_buf_num > 6) init.static_rx_buf_num = 6;
+    if (init.static_tx_buf_num > 4) init.static_tx_buf_num = 4;
+    if (init.dynamic_rx_buf_num == 0 || init.dynamic_rx_buf_num > 12) init.dynamic_rx_buf_num = 12;
+    if (init.rx_ba_win > init.static_rx_buf_num) init.rx_ba_win = init.static_rx_buf_num;
+    if (init.cache_tx_buf_num > 4) init.cache_tx_buf_num = 4;
+    return init;
+}
+
+static void wifi_heap_log(const char *operation, const char *stage, esp_err_t result) {
+    unsigned internal = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+    unsigned dma = MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA;
+    ESP_LOGI("transfer", "wifi heap operation=%s stage=%s result=%s internal=%u largest=%u dma=%u dma_largest=%u",
+             operation, stage, esp_err_to_name(result),
+             (unsigned)heap_caps_get_free_size(internal), (unsigned)heap_caps_get_largest_free_block(internal),
+             (unsigned)heap_caps_get_free_size(dma), (unsigned)heap_caps_get_largest_free_block(dma));
+}
+
+static esp_err_t release_wifi_driver(bool *initialized, bool *started) {
+    if (*started) {
+        esp_wifi_scan_stop(); esp_wifi_clear_ap_list();
+        esp_err_t err = esp_wifi_stop();
+        if (err != ESP_OK && err != ESP_ERR_WIFI_NOT_INIT && err != ESP_ERR_WIFI_NOT_STARTED) return err;
+        *started = false;
+    }
+    if (*initialized) {
+        esp_err_t err = esp_wifi_deinit();
+        if (err != ESP_OK && err != ESP_ERR_WIFI_NOT_INIT) return err;
+        *initialized = false;
+    }
+    return ESP_OK;
+}
+
 static esp_err_t scan_wifi_pass(const wifi_scan_config_t *scan,
         read_pico_transfer_network_t out[READ_PICO_TRANSFER_SCAN_MAX], size_t *count) {
     esp_err_t err = esp_wifi_scan_start(scan, true);
@@ -457,7 +496,7 @@ esp_err_t read_pico_transfer_scan_wifi(read_pico_transfer_network_t out[READ_PIC
     memset(out, 0, sizeof(*out) * READ_PICO_TRANSFER_SCAN_MAX); *count = 0;
     read_pico_transfer_status_t status;
     read_pico_transfer_get_status(&status);
-    if (s_wifi || s_http || s_netif || status.state != READ_PICO_TRANSFER_STOPPED) {
+    if (s_wifi || s_http || s_netif || s_loop_owned || status.state != READ_PICO_TRANSFER_STOPPED) {
         ESP_LOGW("transfer", "wifi scan busy state=%u wifi=%u http=%u netif=%u",
                  (unsigned)status.state, (unsigned)s_wifi, (unsigned)(s_http != NULL), (unsigned)(s_netif != NULL));
         return ESP_ERR_INVALID_STATE;
@@ -470,8 +509,9 @@ esp_err_t read_pico_transfer_scan_wifi(read_pico_transfer_network_t out[READ_PIC
     err = esp_event_loop_create_default();
     if (err == ESP_OK) loop_owned = true;
     else if (err != ESP_ERR_INVALID_STATE) goto cleanup;
-    wifi_init_config_t init = WIFI_INIT_CONFIG_DEFAULT();
+    wifi_init_config_t init = wifi_init_for_session(true);
     stage = "wifi-init";
+    wifi_heap_log("scan", stage, ESP_OK);
     err = esp_wifi_init(&init); if (err != ESP_OK) goto cleanup;
     initialized = true;
     stage = "storage";
@@ -502,21 +542,33 @@ esp_err_t read_pico_transfer_scan_wifi(read_pico_transfer_network_t out[READ_PIC
         err = scan_wifi_pass(&scan, out, count);
     }
 cleanup:
-    if (started) { esp_wifi_scan_stop(); esp_wifi_clear_ap_list(); }
-    if (started) {
-        esp_err_t stop_err = esp_wifi_stop();
-        if (err == ESP_OK && stop_err != ESP_OK) { err = stop_err; stage = "wifi-stop"; }
+    if (err != ESP_OK) wifi_heap_log("scan-failed", stage, err);
+    {
+        esp_err_t release_err = release_wifi_driver(&initialized, &started);
+        if (release_err != ESP_OK) {
+            // 失败资源转交给持久生命周期，下一次停止可重试；不能遗失仍占内存的驱动。
+            // Transfer failed cleanup to persistent ownership for a later stop retry; never lose an allocated driver.
+            s_wifi = initialized; s_started = started; s_loop_owned = loop_owned;
+            portENTER_CRITICAL(&s_lock);
+            s_stopping = true; s_status.state = READ_PICO_TRANSFER_ERROR; s_status.last_error = release_err;
+            portEXIT_CRITICAL(&s_lock);
+            loop_owned = false;
+            if (err == ESP_OK) { err = release_err; stage = "wifi-release"; }
+        }
     }
-    if (initialized) {
-        esp_err_t deinit_err = esp_wifi_deinit();
-        if (err == ESP_OK && deinit_err != ESP_OK) { err = deinit_err; stage = "wifi-deinit"; }
-    }
-    if (loop_owned) {
+    if (loop_owned && !initialized) {
         esp_err_t loop_err = esp_event_loop_delete_default();
+        if (loop_err != ESP_OK) {
+            s_loop_owned = true;
+            portENTER_CRITICAL(&s_lock);
+            s_stopping = true; s_status.state = READ_PICO_TRANSFER_ERROR; s_status.last_error = loop_err;
+            portEXIT_CRITICAL(&s_lock);
+        }
         if (err == ESP_OK && loop_err != ESP_OK) { err = loop_err; stage = "event-delete"; }
     }
     if (err != ESP_OK) { memset(out, 0, sizeof(*out) * READ_PICO_TRANSFER_SCAN_MAX); *count = 0; }
     if (err != ESP_OK) ESP_LOGW("transfer", "wifi scan stage=%s result=%s", stage, esp_err_to_name(err));
+    wifi_heap_log("scan", stage, err);
     ESP_LOGI("transfer", "wifi scan result=%s count=%u", esp_err_to_name(err), (unsigned)*count);
     return err;
 }
@@ -955,18 +1007,27 @@ bool read_pico_transfer_try_stop_if_idle(void) {
     bool accepted = admission_stop(&s_stopping, s_upload_active);
     portEXIT_CRITICAL(&s_lock);
     if (accepted) read_pico_transfer_stop();
-    return accepted;
+    return accepted && !s_http && !s_started && !s_wifi && !s_netif && !s_loop_owned;
 }
 
 void read_pico_transfer_stop(void) {
     portENTER_CRITICAL(&s_lock); s_stopping = true; portEXIT_CRITICAL(&s_lock);
-    if (s_http) { httpd_stop(s_http); s_http = NULL; }
-    if (s_started) { esp_wifi_stop(); s_started = false; }
+    esp_err_t err = ESP_OK;
+    const char *stage = "http-stop";
+    if (s_http) {
+        err = httpd_stop(s_http); if (err != ESP_OK) goto failed;
+        s_http = NULL;
+    }
+    stage = "wifi-release";
+    err = release_wifi_driver(&s_wifi, &s_started); if (err != ESP_OK) goto failed;
     if (s_events) { esp_event_handler_instance_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, s_events); s_events = NULL; }
     if (s_ip_events) { esp_event_handler_instance_unregister(IP_EVENT, ESP_EVENT_ANY_ID, s_ip_events); s_ip_events = NULL; }
-    if (s_wifi) { esp_wifi_deinit(); s_wifi = false; }
     if (s_netif) { esp_netif_destroy_default_wifi(s_netif); s_netif = NULL; }
-    if (s_loop_owned) { esp_event_loop_delete_default(); s_loop_owned = false; }
+    if (s_loop_owned) {
+        stage = "event-delete";
+        err = esp_event_loop_delete_default(); if (err != ESP_OK) goto failed;
+        s_loop_owned = false;
+    }
     free(s_buffer); s_buffer = NULL;
     portENTER_CRITICAL(&s_lock);
     s_status.state = READ_PICO_TRANSFER_STOPPED; s_status.sta_count = 0;
@@ -974,6 +1035,13 @@ void read_pico_transfer_stop(void) {
     s_upload_active = false; s_stopping = false;
     memset(&s_connection, 0, sizeof(s_connection));
     portEXIT_CRITICAL(&s_lock);
+    return;
+failed:
+    portENTER_CRITICAL(&s_lock);
+    s_status.state = READ_PICO_TRANSFER_ERROR; s_status.last_error = err;
+    s_status.network_ready = false; s_status.url[0] = 0;
+    portEXIT_CRITICAL(&s_lock);
+    wifi_heap_log("stop", stage, err);
 }
 
 esp_err_t read_pico_transfer_start(const read_pico_transfer_cfg_t *cfg) {
@@ -982,7 +1050,7 @@ esp_err_t read_pico_transfer_start(const read_pico_transfer_cfg_t *cfg) {
         (cfg->root_dir && strlen(cfg->root_dir) >= sizeof(s_root)) ||
         (cfg->font_dir && (cfg->is_flash || !cfg->font_dir[0] || strlen(cfg->font_dir) >= sizeof(s_font_root))) ||
         (cfg->mode != READ_PICO_TRANSFER_MODE_AP && cfg->mode != READ_PICO_TRANSFER_MODE_STA)) return ESP_ERR_INVALID_ARG;
-    if (s_wifi || s_netif || s_http) return ESP_ERR_INVALID_STATE;
+    if (s_wifi || s_netif || s_http || s_loop_owned) return ESP_ERR_INVALID_STATE;
     s_cfg = *cfg; snprintf(s_root, sizeof(s_root), "%s", cfg->root_dir ? cfg->root_dir : ""); s_cfg.root_dir = s_root;
     snprintf(s_font_root, sizeof(s_font_root), "%s", cfg->font_dir ? cfg->font_dir : "");
     s_cfg.font_dir = s_font_root[0] ? s_font_root : NULL;
@@ -993,11 +1061,13 @@ esp_err_t read_pico_transfer_start(const read_pico_transfer_cfg_t *cfg) {
     portEXIT_CRITICAL(&s_lock);
     transfer_credentials_t saved = {0};
     wifi_config_t wifi = {0};
+    const char *stage = "credentials";
     esp_err_t err = load_credentials(&saved);
     if (err != ESP_OK && cfg->mode == READ_PICO_TRANSFER_MODE_STA) goto fail;
     publish_credentials(&saved);
     if (cfg->mode == READ_PICO_TRANSFER_MODE_STA && saved.version != 1) { err = ESP_ERR_NOT_FOUND; goto fail; }
     if (!cfg->network_only) {
+        stage = "storage-path";
         struct stat st;
         if (stat(cfg->root_dir, &st) || !S_ISDIR(st.st_mode)) { err = ESP_ERR_NOT_FOUND; goto fail; }
         unsigned removed = 0, restored = 0;
@@ -1011,18 +1081,24 @@ esp_err_t read_pico_transfer_start(const read_pico_transfer_cfg_t *cfg) {
     }
     if (removed || restored) ESP_LOGI("transfer", "cleanup removed=%u restored=%u", removed, restored);
     }
+    stage = "netif-init";
     err = esp_netif_init();
     if (err != ESP_OK) goto fail;
+    stage = "event-loop";
     err = esp_event_loop_create_default();
     if (err == ESP_OK) s_loop_owned = true;
     else if (err != ESP_ERR_INVALID_STATE) goto fail;
+    stage = "netif-create";
     s_netif = cfg->mode == READ_PICO_TRANSFER_MODE_AP ? esp_netif_create_default_wifi_ap() : esp_netif_create_default_wifi_sta();
     if (!s_netif) { err = ESP_ERR_NO_MEM; goto fail; }
-    wifi_init_config_t init = WIFI_INIT_CONFIG_DEFAULT();
+    wifi_init_config_t init = wifi_init_for_session(cfg->network_only);
+    stage = "wifi-init";
+    wifi_heap_log(cfg->network_only ? "network-only" : "transfer", "wifi-init", ESP_OK);
     err = esp_wifi_init(&init); if (err != ESP_OK) goto fail;
     s_wifi = true;
     if (cfg->mode == READ_PICO_TRANSFER_MODE_AP) {
         uint8_t mac[6];
+        stage = "read-mac";
         err = esp_read_mac(mac, ESP_MAC_WIFI_SOFTAP); if (err != ESP_OK) goto fail;
         snprintf((char *)wifi.ap.ssid, sizeof(wifi.ap.ssid), "ReadPico-%02X%02X", mac[4], mac[5]);
         strcpy((char *)wifi.ap.password, READ_PICO_TRANSFER_PASSWORD);
@@ -1036,26 +1112,34 @@ esp_err_t read_pico_transfer_start(const read_pico_transfer_cfg_t *cfg) {
         wifi.sta.pmf_cfg.capable = true;
         wifi.sta.sae_pwe_h2e = WPA3_SAE_PWE_BOTH;
     }
+    stage = "wifi-events";
     err = esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, wifi_event, NULL, &s_events);
     if (err != ESP_OK) goto fail;
     if (cfg->mode == READ_PICO_TRANSFER_MODE_STA) {
+        stage = "ip-events";
         err = esp_event_handler_instance_register(IP_EVENT, ESP_EVENT_ANY_ID, ip_event, NULL, &s_ip_events);
         if (err != ESP_OK) goto fail;
     }
+    stage = "wifi-storage";
     err = esp_wifi_set_storage(WIFI_STORAGE_RAM); if (err != ESP_OK) goto fail;
+    stage = "wifi-mode";
     err = esp_wifi_set_mode(cfg->mode == READ_PICO_TRANSFER_MODE_AP ? WIFI_MODE_AP : WIFI_MODE_STA); if (err != ESP_OK) goto fail;
+    stage = "wifi-config";
     err = esp_wifi_set_config(cfg->mode == READ_PICO_TRANSFER_MODE_AP ? WIFI_IF_AP : WIFI_IF_STA, &wifi); if (err != ESP_OK) goto fail;
     clear_secret(&wifi, sizeof(wifi)); clear_secret(&saved, sizeof(saved));
     if (!cfg->network_only) {
+        stage = "upload-buffer";
         s_buffer = heap_caps_malloc(16384, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
         if (!s_buffer) { err = ESP_ERR_NO_MEM; goto fail; }
     }
+    stage = "wifi-start";
     err = esp_wifi_start(); if (err != ESP_OK) goto fail;
     s_started = true;
     if (!cfg->network_only) {
         httpd_config_t http = HTTPD_DEFAULT_CONFIG();
         http.stack_size = 12288; http.max_uri_handlers = 10; http.recv_wait_timeout = 5;
         http.lru_purge_enable = true;
+        stage = "http-start";
         err = httpd_start(&s_http, &http); if (err != ESP_OK) goto fail;
         const httpd_uri_t routes[] = {
             { .uri = "/", .method = HTTP_GET, .handler = index_handler },
@@ -1069,6 +1153,7 @@ esp_err_t read_pico_transfer_start(const read_pico_transfer_cfg_t *cfg) {
             { .uri = "/wifi", .method = HTTP_POST, .handler = wifi_handler },
             { .uri = "/wifi", .method = HTTP_DELETE, .handler = wifi_handler },
         };
+        stage = "http-routes";
         for (size_t i = 0; i < sizeof(routes)/sizeof(*routes); ++i) {
             err = httpd_register_uri_handler(s_http, &routes[i]); if (err != ESP_OK) goto fail;
     }
@@ -1086,6 +1171,7 @@ esp_err_t read_pico_transfer_start(const read_pico_transfer_cfg_t *cfg) {
     }
     return ESP_OK;
 fail:
+    wifi_heap_log(cfg->network_only ? "network-failed" : "transfer-failed", stage, err);
     clear_secret(&wifi, sizeof(wifi)); clear_secret(&saved, sizeof(saved));
     read_pico_transfer_stop(); set_error(err); return err;
 }
