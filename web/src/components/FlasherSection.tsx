@@ -11,6 +11,8 @@ import {
   AlertTriangle,
   Layers,
   ShieldAlert,
+  Trash2,
+  X,
 } from 'lucide-react';
 
 interface FlasherSectionProps {
@@ -221,13 +223,25 @@ export const FlasherSection: React.FC<FlasherSectionProps> = ({ lang }) => {
               <div className="mx-auto w-12 h-12 rounded-[8px] bg-[#faf9f5] border border-[#e6dfd8] flex items-center justify-center text-[#cc785c] mb-4">
                 <UploadCloud className="w-6 h-6" />
               </div>
-
               {fileA ? (
-                <div>
+                <div className="flex flex-col items-center">
                   <div className="font-semibold text-base text-[#141413]">{fileA.file.name}</div>
                   <div className="text-xs text-[#6c6a64] mt-1 font-mono">
                     0x10000 · {(fileA.file.size / 1024 / 1024).toFixed(2)} MB
                   </div>
+                  <button
+                    type="button"
+                    disabled={isFlashing}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setFileA(null);
+                      if (fileInputRefA.current) fileInputRefA.current.value = '';
+                    }}
+                    className="mt-3 inline-flex items-center gap-1 px-3 py-1 text-xs text-[#c64545] hover:text-[#a93232] hover:bg-[#fce8e8] rounded-[4px] border border-[#edd2d2] transition-colors"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>{t.removeFile}</span>
+                  </button>
                 </div>
               ) : (
                 <div>
@@ -300,11 +314,24 @@ export const FlasherSection: React.FC<FlasherSectionProps> = ({ lang }) => {
                 </div>
 
                 {fileBMerged ? (
-                  <div>
+                  <div className="flex flex-col items-center">
                     <div className="font-semibold text-base text-[#141413]">{fileBMerged.file.name}</div>
                     <div className="text-xs text-[#6c6a64] mt-1 font-mono">
                       全量镜像：0x0000 · {(fileBMerged.file.size / 1024 / 1024).toFixed(2)} MB
                     </div>
+                    <button
+                      type="button"
+                      disabled={isFlashing}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setFileBMerged(null);
+                        if (fileInputRefMerged.current) fileInputRefMerged.current.value = '';
+                      }}
+                      className="mt-3 inline-flex items-center gap-1 px-3 py-1 text-xs text-[#c64545] hover:text-[#a93232] hover:bg-[#fce8e8] rounded-[4px] border border-[#edd2d2] transition-colors"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>{t.removeFile}</span>
+                    </button>
                   </div>
                 ) : (
                   <div>
@@ -321,10 +348,24 @@ export const FlasherSection: React.FC<FlasherSectionProps> = ({ lang }) => {
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div
                   onClick={() => !isFlashing && fileInputRefBoot.current?.click()}
-                  className={`border border-dashed rounded-[8px] p-4 text-center cursor-pointer transition-all ${
+                  className={`relative border border-dashed rounded-[8px] p-4 text-center cursor-pointer transition-all ${
                     fileBBoot ? 'border-[#cc785c] bg-[#fcf8f5]' : 'border-[#dcd4c9] bg-[#f5f0e8] hover:border-[#cc785c]'
                   }`}
                 >
+                  {fileBBoot && !isFlashing && (
+                    <button
+                      type="button"
+                      title={t.removeFile}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setFileBBoot(null);
+                        if (fileInputRefBoot.current) fileInputRefBoot.current.value = '';
+                      }}
+                      className="absolute top-2 right-2 p-1 text-[#6c6a64] hover:text-[#c64545] hover:bg-[#fce8e8] rounded-[4px] transition-colors"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                   <input
                     type="file"
                     ref={fileInputRefBoot}
@@ -345,10 +386,24 @@ export const FlasherSection: React.FC<FlasherSectionProps> = ({ lang }) => {
 
                 <div
                   onClick={() => !isFlashing && fileInputRefPart.current?.click()}
-                  className={`border border-dashed rounded-[8px] p-4 text-center cursor-pointer transition-all ${
+                  className={`relative border border-dashed rounded-[8px] p-4 text-center cursor-pointer transition-all ${
                     fileBPart ? 'border-[#cc785c] bg-[#fcf8f5]' : 'border-[#dcd4c9] bg-[#f5f0e8] hover:border-[#cc785c]'
                   }`}
                 >
+                  {fileBPart && !isFlashing && (
+                    <button
+                      type="button"
+                      title={t.removeFile}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setFileBPart(null);
+                        if (fileInputRefPart.current) fileInputRefPart.current.value = '';
+                      }}
+                      className="absolute top-2 right-2 p-1 text-[#6c6a64] hover:text-[#c64545] hover:bg-[#fce8e8] rounded-[4px] transition-colors"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                   <input
                     type="file"
                     ref={fileInputRefPart}
@@ -369,10 +424,24 @@ export const FlasherSection: React.FC<FlasherSectionProps> = ({ lang }) => {
 
                 <div
                   onClick={() => !isFlashing && fileInputRefApp.current?.click()}
-                  className={`border border-dashed rounded-[8px] p-4 text-center cursor-pointer transition-all ${
+                  className={`relative border border-dashed rounded-[8px] p-4 text-center cursor-pointer transition-all ${
                     fileBApp ? 'border-[#cc785c] bg-[#fcf8f5]' : 'border-[#dcd4c9] bg-[#f5f0e8] hover:border-[#cc785c]'
                   }`}
                 >
+                  {fileBApp && !isFlashing && (
+                    <button
+                      type="button"
+                      title={t.removeFile}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setFileBApp(null);
+                        if (fileInputRefApp.current) fileInputRefApp.current.value = '';
+                      }}
+                      className="absolute top-2 right-2 p-1 text-[#6c6a64] hover:text-[#c64545] hover:bg-[#fce8e8] rounded-[4px] transition-colors"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                   <input
                     type="file"
                     ref={fileInputRefApp}

@@ -75,6 +75,7 @@ export interface Translation {
     dropText: string;
     browseText: string;
     fileSelected: string;
+    removeFile: string;
     selectHint: string;
     startBtn: string;
     flashingBtn: string;
@@ -197,6 +198,7 @@ export const translations: Record<Lang, Translation> = {
       dropText: '将固件文件拖拽至此处，或',
       browseText: '点击选择文件',
       fileSelected: '已选固件',
+      removeFile: '移除文件',
       selectHint: '仅支持 .bin 格式固件文件',
       startBtn: '连接设备并开始烧录',
       flashingBtn: '正在烧录中…',
@@ -317,6 +319,7 @@ export const translations: Record<Lang, Translation> = {
       dropText: 'Drag and drop your firmware .bin file here, or',
       browseText: 'Browse File',
       fileSelected: 'Selected File',
+      removeFile: 'Remove File',
       selectHint: 'Only .bin files are supported',
       startBtn: 'Connect & Flash',
       flashingBtn: 'Flashing…',
