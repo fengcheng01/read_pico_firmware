@@ -5,7 +5,7 @@ import { FeaturesAndGallery } from './components/FeaturesAndGallery';
 import { SpecsAndFooter } from './components/SpecsAndFooter';
 import { DeviceMockup } from './components/DeviceMockup';
 import { Globe, ArrowRight, Code2 } from 'lucide-react';
-
+import readerHeroImg from './assets/screenshots/reader.png';
 export const App: React.FC = () => {
   const [lang, setLang] = useState<Lang>('zh');
   const t = translations[lang];
@@ -108,7 +108,7 @@ export const App: React.FC = () => {
 
         {/* Hero 右侧机身展示图 */}
         <div className="w-full max-w-md lg:max-w-sm flex justify-center">
-          <DeviceMockup imageSrc="./screenshots/reader.png" altText="Read Pico Hardware Mockup" />
+          <DeviceMockup imageSrc={readerHeroImg} altText="Read Pico Hardware Mockup" />
         </div>
       </section>
 

@@ -3,6 +3,15 @@ import { translations, type Lang } from '../utils/i18n';
 import { DeviceMockup } from './DeviceMockup';
 import { BookOpen, Library, Calendar, Wifi, Check } from 'lucide-react';
 
+import readerImg from '../assets/screenshots/reader.png';
+import wallpaperImg from '../assets/screenshots/wallpaper.png';
+import shelfImg from '../assets/screenshots/shelf.png';
+import homeImg from '../assets/screenshots/home.png';
+import journalTodayImg from '../assets/screenshots/journal_today.png';
+import journalMonthImg from '../assets/screenshots/journal_month.png';
+import journalQuotesImg from '../assets/screenshots/journal_quotes.png';
+import transferImg from '../assets/screenshots/transfer.png';
+
 interface ContentProps {
   lang: Lang;
 }
@@ -17,49 +26,49 @@ export const FeaturesAndGallery: React.FC<ContentProps> = ({ lang }) => {
 
   const galleryImages: Record<GalleryTab, { src: string; alt: string; label: string; desc: string }> = {
     reading: {
-      src: './screenshots/reader.png',
+      src: readerImg,
       alt: 'Read Pico Reading View',
       label: tGal.tabs.reading,
       desc: lang === 'zh' ? '真实图文正文排版 · 16 级灰阶抗锯齿字形与章节底栏' : 'Real illustrated prose layout with 16-level grayscale typography',
     },
     wallpaper: {
-      src: './screenshots/wallpaper.png',
+      src: wallpaperImg,
       alt: 'Read Pico Wallpaper Lock Screen View',
       label: tGal.tabs.wallpaper,
       desc: lang === 'zh' ? '自定义壁纸锁屏 · 0.5%/99.5% 自动色阶扩展对比度 + 16 级有序抖动，无残影高清定稿' : 'Custom photo wallpaper lock screen with 16-level dither and auto-level contrast boost',
     },
     shelf: {
-      src: './screenshots/shelf.png',
+      src: shelfImg,
       alt: 'Read Pico Bookshelf View',
       label: tGal.tabs.shelf,
       desc: lang === 'zh' ? '卡片书架展示 · 真实图书封面解析、内置/TF来源与精准进度' : 'Typographic cards with extracted covers, dual storage sources and progress',
     },
     home: {
-      src: './screenshots/home.png',
+      src: homeImg,
       alt: 'Read Pico Home View',
       label: tGal.tabs.home,
       desc: lang === 'zh' ? '首页正在读 · 最近阅读卡片、断点续读快捷入口' : 'Home screen with last-read book card and instant resume',
     },
     journal: {
-      src: './screenshots/journal_today.png',
+      src: journalTodayImg,
       alt: 'Read Pico Today Journal View',
       label: tGal.tabs.journal,
       desc: lang === 'zh' ? '手帐今日足迹 · 7天阅读走势柱状图、阅读时长大盘与打卡印章' : 'Today footprint: 7-day reading trend chart and focus duration stats',
     },
     calendar: {
-      src: './screenshots/journal_month.png',
+      src: journalMonthImg,
       alt: 'Read Pico Monthly Calendar View',
       label: tGal.tabs.calendar,
       desc: lang === 'zh' ? '手帐打卡月历 · 实心黑块标记达标阅读日、连续打卡天数统计' : 'Monthly calendar: stamped reading achievements and continuous streak days',
     },
     quotes: {
-      src: './screenshots/journal_quotes.png',
+      src: journalQuotesImg,
       alt: 'Read Pico Quotes & Notes View',
       label: tGal.tabs.quotes,
       desc: lang === 'zh' ? '手帐金句便签 · 正文长按精选句子生成便签卡片，点击直达原文' : 'Quotes & notes: clipped sentences with chapter references and instant jump',
     },
     transfer: {
-      src: './screenshots/transfer.png',
+      src: transferImg,
       alt: 'Read Pico Transfer View',
       label: tGal.tabs.transfer,
       desc: lang === 'zh' ? '局域网传书管理页 · 浏览器直接访问，支持图书/字体/锁屏壁纸拖拽上传与在线管理删除' : 'Web transfer interface: browser drag-and-drop for books, fonts and wallpapers with online management',
