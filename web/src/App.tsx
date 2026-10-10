@@ -73,10 +73,10 @@ export const App: React.FC = () => {
       {/* Hero 区域 (Claude 规范: 96px 间距，Copernicus/Tiempos 衬线大标，Coral 主色 CTA) */}
       <section className="pt-20 pb-24 px-4 sm:px-6 lg:px-8 max-w-[1200px] mx-auto flex flex-col lg:flex-row items-center justify-between gap-12 lg:gap-8">
         <div className="max-w-xl text-center lg:text-left">
-          {/* Claude 风格 badge-pill 标签 */}
+          {/* Claude 风格 badge-pill 标签 (带最新固件版本号) */}
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#efe9de] border border-[#e6dfd8] text-xs font-medium text-[#6c6a64] mb-6">
             <span className="w-1.5 h-1.5 rounded-full bg-[#cc785c]" />
-            <span>ESP32-S3 · 4.7" E-Paper · 16 Grayscale</span>
+            <span>ESP32-S3 · 4.7" E-Paper · Firmware v0.5.45</span>
           </div>
 
           <h1 className="text-4xl sm:text-6xl font-claude-serif text-[#141413] leading-[1.08] mb-6">

@@ -7,7 +7,7 @@ interface ContentProps {
   lang: Lang;
 }
 
-type GalleryTab = 'reading' | 'shelf' | 'home' | 'journal' | 'calendar' | 'quotes' | 'transfer';
+type GalleryTab = 'reading' | 'wallpaper' | 'shelf' | 'home' | 'journal' | 'calendar' | 'quotes' | 'transfer';
 
 export const FeaturesAndGallery: React.FC<ContentProps> = ({ lang }) => {
   const tFeat = translations[lang].features;
@@ -21,6 +21,12 @@ export const FeaturesAndGallery: React.FC<ContentProps> = ({ lang }) => {
       alt: 'Read Pico Reading View',
       label: tGal.tabs.reading,
       desc: lang === 'zh' ? '真实图文正文排版 · 16 级灰阶抗锯齿字形与章节底栏' : 'Real illustrated prose layout with 16-level grayscale typography',
+    },
+    wallpaper: {
+      src: './screenshots/wallpaper.png',
+      alt: 'Read Pico Wallpaper Lock Screen View',
+      label: tGal.tabs.wallpaper,
+      desc: lang === 'zh' ? '自定义壁纸锁屏 · 0.5%/99.5% 自动色阶扩展对比度 + 16 级有序抖动，无残影高清定稿' : 'Custom photo wallpaper lock screen with 16-level dither and auto-level contrast boost',
     },
     shelf: {
       src: './screenshots/shelf.png',
@@ -56,7 +62,7 @@ export const FeaturesAndGallery: React.FC<ContentProps> = ({ lang }) => {
       src: './screenshots/transfer.png',
       alt: 'Read Pico Transfer View',
       label: tGal.tabs.transfer,
-      desc: lang === 'zh' ? '无线传书与 USB 电脑挂载 · AP 热点与局域网 STA 双模秒级传书' : 'Wireless Wi-Fi & USB disk mode: AP hotspot and local LAN station sync',
+      desc: lang === 'zh' ? '局域网传书管理页 · 浏览器直接访问，支持图书/字体/锁屏壁纸拖拽上传与在线管理删除' : 'Web transfer interface: browser drag-and-drop for books, fonts and wallpapers with online management',
     },
   };
 
@@ -79,7 +85,7 @@ export const FeaturesAndGallery: React.FC<ContentProps> = ({ lang }) => {
     },
   ];
 
-  const tabList: GalleryTab[] = ['reading', 'shelf', 'home', 'journal', 'calendar', 'quotes', 'transfer'];
+  const tabList: GalleryTab[] = ['reading', 'wallpaper', 'shelf', 'home', 'journal', 'calendar', 'quotes', 'transfer'];
 
   return (
     <>

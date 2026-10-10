@@ -51,11 +51,12 @@ export interface Translation {
     subtitle: string;
     tabs: {
       reading: string;
+      wallpaper: string;
       shelf: string;
+      home: string;
       journal: string;
       calendar: string;
       quotes: string;
-      home: string;
       transfer: string;
     };
   };
@@ -142,30 +143,30 @@ export const translations: Record<Lang, Translation> = {
       reading: {
         title: '沉浸正文阅读',
         desc: '支持 EPUB 图文排版与 TXT 原生解析。',
-        bullet1: '16 级灰阶抗锯齿字形与物理平滑排版',
-        bullet2: '极速断点续读，精准字符级进度记忆',
-        bullet3: '行距、边距、字号微调与轻量章节书签',
+        bullet1: '独创 21 相单向无闪直刷算法，文字边缘细腻平滑不发白',
+        bullet2: '极速断点续读，精准字符级进度记忆与章节快速跳转',
+        bullet3: '行距、边距、字号微调、智能书签与丰富排版设置',
       },
       shelf: {
         title: '双存储卡片书架',
         desc: '内置高速 Flash 与 TF 卡扩展双源书库管理。',
         bullet1: '离线拼音、声母与英文拼写即时书名检索',
-        bullet2: 'EPUB 封面自动有界解码与排版回退卡片',
-        bullet3: '批量管理与清晰的已读百分比标记',
+        bullet2: 'EPUB 封面自动有界解码，精致卡片与排版回退',
+        bullet3: '批量管理与清晰的已读百分比进度标记',
       },
       journal: {
         title: '今日阅读手帐',
         desc: '阅读足迹与习惯沉淀，专属个人精神岛屿。',
-        bullet1: '精准统计今日与近 7 日真实专注时长',
-        bullet2: '打卡月历与阅读热度直观呈现',
-        bullet3: '长按摘录佳句，生成便签与足迹卡片',
+        bullet1: '精准统计今日与近 7 日真实专注时长及柱状走势',
+        bullet2: '打卡月历与阅读热度直观呈现（盖印达标日）',
+        bullet3: '正文长按摘录佳句，生成金句便签卡片并直达原文',
       },
       transfer: {
-        title: '无线传书与 USB 电脑挂载',
-        desc: '支持无线 WiFi 传书与标准 USB 电脑连接挂载 TF 卡，灵活自由。',
-        bullet1: '设备自建 AP 热点扫码直传 / 局域网 STA 浏览器拖拽极速导入',
-        bullet2: '设置中一键开启 USB 电脑连接模式，免拔卡直接挂载为电脑 U 盘',
-        bullet3: '兼容 KOReader 的 Kosync 云端进度双向同步与 SNTP 自动校时',
+        title: '无线传书传图与文件管理',
+        desc: '支持双模 WiFi 传书、自定义锁屏壁纸图片分流及标准 USB 挂载。',
+        bullet1: '扫码或局域网免驱动极速拖拽导入图书、自定义字体与壁纸照片',
+        bullet2: '网页端直接浏览与管理删除 TF 卡上的图书、字体与壁纸文件',
+        bullet3: '设置中一键开启 USB 电脑 U 盘模式，传输中智能抑制空闲锁屏',
       },
     },
     gallery: {
@@ -174,6 +175,7 @@ export const translations: Record<Lang, Translation> = {
       subtitle: '684 × 1216 分辨率原生渲染画面，精工细作的每一个交互页面',
       tabs: {
         reading: '正文阅读',
+        wallpaper: '自定义壁纸锁屏',
         shelf: '书架 (带真实书封)',
         home: '首页正在读',
         journal: '手帐 · 今日足迹',
@@ -263,30 +265,30 @@ export const translations: Record<Lang, Translation> = {
       reading: {
         title: 'Immersive Reader',
         desc: 'Native EPUB & TXT engine with rich typography.',
-        bullet1: '16 gray-level antialiased rendering and smooth layout',
-        bullet2: 'Instant resume with exact character-level memory',
-        bullet3: 'Fine adjustments for margin, leading, size and bookmarks',
+        bullet1: 'Proprietary 21-phase one-way flash-free direct engine with smooth, solid edges',
+        bullet2: 'Instant resume with exact character-level memory and swift TOC navigation',
+        bullet3: 'Fine adjustments for margin, leading, font sizes and smart bookmarks',
       },
       shelf: {
         title: 'Dual-Storage Shelf',
         desc: 'Seamless management across internal Flash and MicroSD.',
         bullet1: 'Instant search by pinyin, initials and English titles',
-        bullet2: 'Automatic EPUB cover extraction with typographic fallback',
-        bullet3: 'Batch management with clear progress marks',
+        bullet2: 'Automatic EPUB cover extraction with typographic fallback cards',
+        bullet3: 'Batch management with clear progress marks and source badges',
       },
       journal: {
         title: 'Today Journal',
         desc: 'Reading footprint, habits, and personal reflections.',
-        bullet1: 'Precise tracking for daily and 7-day focus minutes',
-        bullet2: 'Calendar check-ins with monthly activity heatmaps',
-        bullet3: 'Long-press quote clips saved into notes & cards',
+        bullet1: 'Precise tracking for daily and 7-day focus minutes with trend bar charts',
+        bullet2: 'Monthly calendar check-ins with stamped reading achievements',
+        bullet3: 'Long-press quote clips saved into cards with direct source links',
       },
       transfer: {
-        title: 'Wireless Transfer & USB Disk Mount',
-        desc: 'Wire-free book uploads plus USB computer connection for direct TF card mounting.',
-        bullet1: 'AP hotspot QR code transfer & local LAN browser drag-and-drop',
-        bullet2: 'One-tap USB connection in settings to mount TF card directly as a computer disk',
-        bullet3: 'Kosync bidirectional cloud progress sync (KOReader compatible) & auto time sync',
+        title: 'Wireless Management & USB Disk Mount',
+        desc: 'Wire-free uploads, wallpaper photo routing, and direct USB disk mounting.',
+        bullet1: 'Drag-and-drop books, custom TTF fonts and lockscreen wallpaper photos without drivers',
+        bullet2: 'Manage and delete books, fonts and images directly within the web interface',
+        bullet3: 'One-tap USB connection to mount TF card directly, with auto-lock suppression during transfers',
       },
     },
     gallery: {
@@ -295,6 +297,7 @@ export const translations: Record<Lang, Translation> = {
       subtitle: '684 × 1216 native resolution renders capturing genuine e-paper precision',
       tabs: {
         reading: 'Reading View',
+        wallpaper: 'Custom Wallpaper Lock',
         shelf: 'Book Shelf (with Covers)',
         home: 'Now Reading',
         journal: 'Journal · Today',
