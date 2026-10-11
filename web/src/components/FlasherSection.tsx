@@ -68,9 +68,30 @@ export const FlasherSection: React.FC<FlasherSectionProps> = ({ lang }) => {
     reader.readAsArrayBuffer(file);
   };
 
+  // 合并完整包识别：0xE9 镜像头 + 0x8000 分区表魔数 + 0x10000 又一镜像头。
+  // Merged-image detection: 0xE9 image magic, the partition-table magic at 0x8000 and
+  // another image header at 0x10000.
+  const isMergedImage = (buf: Uint8Array): boolean =>
+    buf.length > 0x10008 && buf[0] === 0xe9 && buf[0x8000] === 0xaa && buf[0x8001] === 0x50 && buf[0x10000] === 0xe9;
+
   const getFilesToFlash = (): FlashFileItem[] => {
     if (mode === 'modeA') {
       if (!fileA) return [];
+      // 单一完整包即可完成升级：识别为合并包时自动只取 0x10000 处的应用分区，
+      // 引导/分区表/NVS 均不触碰，设置与数据完整保留。
+      // A single full package covers upgrades too: merged images are sliced to the
+      // app partition at 0x10000, leaving the bootloader, partition table and NVS
+      // (settings and data) untouched.
+      if (isMergedImage(fileA.buffer)) {
+        appendLog(`检测到完整合并包，升级模式自动只写入 0x10000 起的应用分区（保留设置与数据）`);
+        return [
+          {
+            name: `${fileA.file.name}（应用分区）`,
+            address: 0x10000,
+            data: fileA.buffer.slice(0x10000),
+          },
+        ];
+      }
       return [
         {
           name: fileA.file.name,
