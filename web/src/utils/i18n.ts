@@ -1,370 +1,72 @@
+// 中文：官网双语文案以现有固件功能为边界。/ English: Website copy describes implemented firmware features only.
 export type Lang = 'zh' | 'en';
-
-export interface Translation {
-  brand: string;
-  subBrand: string;
-  tagline: string;
-  description: string;
-  nav: {
-    features: string;
-    gallery: string;
-    flasher: string;
-    specs: string;
-    github: string;
-  };
-  features: {
-    tag: string;
-    title: string;
-    subtitle: string;
-    reading: {
-      title: string;
-      desc: string;
-      bullet1: string;
-      bullet2: string;
-      bullet3: string;
-    };
-    shelf: {
-      title: string;
-      desc: string;
-      bullet1: string;
-      bullet2: string;
-      bullet3: string;
-    };
-    journal: {
-      title: string;
-      desc: string;
-      bullet1: string;
-      bullet2: string;
-      bullet3: string;
-    };
-    transfer: {
-      title: string;
-      desc: string;
-      bullet1: string;
-      bullet2: string;
-      bullet3: string;
-    };
-  };
-  gallery: {
-    tag: string;
-    title: string;
-    subtitle: string;
-    tabs: {
-      reading: string;
-      wallpaper: string;
-      shelf: string;
-      home: string;
-      journal: string;
-      calendar: string;
-      quotes: string;
-      transfer: string;
-    };
-  };
-  flasher: {
-    tag: string;
-    title: string;
-    subtitle: string;
-    tabModeA: string;
-    tabModeB: string;
-    modeADesc: string;
-    modeBDesc: string;
-    modeAWarning: string;
-    modeBWarning: string;
-    modeBSelectType: string;
-    modeBMerged: string;
-    modeBTrio: string;
-    dropText: string;
-    browseText: string;
-    fileSelected: string;
-    removeFile: string;
-    selectHint: string;
-    startBtn: string;
-    flashingBtn: string;
-    baudRate: string;
-    eraseCheckbox: string;
-    eraseHint: string;
-    bootloaderLabel: string;
-    partitionLabel: string;
-    appLabel: string;
-    mergedLabel: string;
-    readyToFlash: string;
-    confirmTitle: string;
-    confirmModeAContent: string;
-    confirmModeBContent: string;
-    confirmBtn: string;
-    cancelBtn: string;
-    noticeHeader: string;
-    notice1: string;
-    notice2: string;
-    notice3: string;
-    unsupportedBrowser: string;
-    consoleLogs: string;
-  };
-  specs: {
-    tag: string;
-    title: string;
-    mcu: string;
-    mcuVal: string;
-    display: string;
-    displayVal: string;
-    pmu: string;
-    pmuVal: string;
-    storage: string;
-    storageVal: string;
-    battery: string;
-    batteryVal: string;
-    connectivity: string;
-    connectivityVal: string;
-  };
-  footer: {
-    license: string;
-    disclaimer: string;
-  };
-}
-
-export const translations: Record<Lang, Translation> = {
+export const translations = {
   zh: {
-    brand: '小纸 Pico',
-    subBrand: 'Read Pico',
-    tagline: '极简 · 纯粹 · 属于手掌的 4.7" 墨水屏阅读器',
-    description:
-      '搭载 4.7 英寸 16 级灰阶电子墨水屏、ESP32-S3 双核主控与独立低功耗 PMU。为纯粹阅读与每日阅读手帐而生。',
-    nav: {
-      features: '核心功能',
-      gallery: '界面欣赏',
-      flasher: '在线烧录',
-      specs: '硬件规格',
-      github: 'GitHub 仓库',
-    },
-    features: {
-      tag: 'CRAFTED FOR READING',
-      title: '专注纯粹阅读与每日记录',
-      subtitle: '剔除繁冗干扰，回归指尖墨香与专注排版',
-      reading: {
-        title: '沉浸正文阅读',
-        desc: '支持 EPUB 图文排版与 TXT 原生解析。',
-        bullet1: '独创 21 相单向无闪直刷算法，文字边缘细腻平滑不发白',
-        bullet2: '极速断点续读，精准字符级进度记忆与章节快速跳转',
-        bullet3: '行距、边距、字号微调、智能书签与丰富排版设置',
-      },
-      shelf: {
-        title: '双存储卡片书架',
-        desc: '内置高速 Flash 与 TF 卡扩展双源书库管理。',
-        bullet1: '离线拼音、声母与英文拼写即时书名检索',
-        bullet2: 'EPUB 封面自动有界解码，精致卡片与排版回退',
-        bullet3: '批量管理与清晰的已读百分比进度标记',
-      },
-      journal: {
-        title: '今日阅读手帐',
-        desc: '阅读足迹与习惯沉淀，专属个人精神岛屿。',
-        bullet1: '精准统计今日与近 7 日真实专注时长及柱状走势',
-        bullet2: '打卡月历与阅读热度直观呈现（盖印达标日）',
-        bullet3: '正文长按摘录佳句，生成金句便签卡片并直达原文',
-      },
-      transfer: {
-        title: '无线传书传图与文件管理',
-        desc: '支持双模 WiFi 传书、自定义锁屏壁纸图片分流及标准 USB 挂载。',
-        bullet1: '扫码或局域网免驱动极速拖拽导入图书、自定义字体与壁纸照片',
-        bullet2: '网页端直接浏览与管理删除 TF 卡上的图书、字体与壁纸文件',
-        bullet3: '设置中一键开启 USB 电脑 U 盘模式，传输中智能抑制空闲锁屏',
-      },
-    },
-    gallery: {
-      tag: 'PIXEL PERFECT',
-      title: '真机 1:1 像素级界面渲染',
-      subtitle: '684 × 1216 分辨率原生渲染画面，精工细作的每一个交互页面',
-      tabs: {
-        reading: '正文阅读',
-        wallpaper: '自定义壁纸锁屏',
-        shelf: '书架 (带真实书封)',
-        home: '首页正在读',
-        journal: '手帐 · 今日足迹',
-        calendar: '手帐 · 打卡月历',
-        quotes: '手帐 · 金句便签',
-        transfer: '极速传书',
-      },
-    },
-    flasher: {
-      tag: 'WEB SERIAL TOOL',
-      title: '固件在线升级与烧录',
-      subtitle: '使用现代浏览器 Web Serial 技术，直接连线升级小纸 Pico',
-      tabModeA: '模式 A：保留数据平滑升级 (官方系统更新)',
-      tabModeB: '模式 B：完整重装 / 跨固件换系统 (新装/救砖推荐)',
-      modeADesc: '仅刷写应用程序到 0x10000 分区。完整保留机器内的本地图书、进度记录及系统配置。可直接选择完整固件包（自动只取应用分区）。',
-      modeBDesc: '写入完整引导、分区表及核心系统。解决因曾刷过第三方固件导致的分区或引导时序不兼容。',
-      modeAWarning: '【重要提醒】模式 A 仅适用于当前机器已处于“官方固件”的日常升级！若您的设备此前刷入过第三方固件（如 Crossmux、Freeink 或非官方分支），由于引导程序(120MHz时序)与分区表不匹配，使用模式 A 刷入将导致无法开机！跨固件更换系统请务必使用【模式 B】。',
-      modeBWarning: '【跨固件安全换装】模式 B 会重写 Bootloader (0x0)、分区表 (0x8000) 与应用。可选勾选“擦除整片 Flash”以彻底清除旧固件残留。',
-      modeBSelectType: '固件形式：',
-      modeBMerged: '单文件全量合并包 (merged-firmware.bin @ 0x0)',
-      modeBTrio: '官方三件套 (Bootloader + Partitions + App)',
-      dropText: '将固件文件拖拽至此处，或',
-      browseText: '点击选择文件',
-      fileSelected: '已选固件',
-      removeFile: '移除文件',
-      selectHint: '仅支持 .bin 格式固件文件',
-      startBtn: '连接设备并开始烧录',
-      flashingBtn: '正在烧录中…',
-      baudRate: '波特率',
-      eraseCheckbox: '完全抹除 Flash（清除所有历史分区与配置，跨系统推荐）',
-      eraseHint: '将擦除所有数据，彻底还原至出厂纯净态',
-      bootloaderLabel: '1. Bootloader 引导程序 (0x0000)',
-      partitionLabel: '2. Partition Table 分区表 (0x8000)',
-      appLabel: '3. Application 应用程序 (0x10000)',
-      mergedLabel: '全量固件包 (0x0000)',
-      readyToFlash: '分区已就绪，可开始烧录',
-      confirmTitle: '烧录安全确认',
-      confirmModeAContent: '您正在执行【模式 A：平滑升级】。请再次确认：您的机器目前运行的是小纸官方固件吗？如果机器正在运行第三方系统，请取消并切换到【模式 B】，否则机器将无法开机！',
-      confirmModeBContent: '您正在执行【模式 B：完整重装】。此操作将写入完整的 Bootloader 与分区表。如果勾选了全片擦除，所有存储内容将被清空。是否继续？',
-      confirmBtn: '我已核对，确认烧录',
-      cancelBtn: '返回检查',
-      noticeHeader: '烧录前注意事项：',
-      notice1: '若设备此前处于“电脑 U 盘（USB Disk）模式”，必须先在电脑端安全弹出并在机器上退出该模式，释放刷机串口。',
-      notice2: '建议使用 Chrome / Edge 浏览器，并通过可靠的数据线连接电脑（部分仅充电线无法传输数据）。',
-      notice3: '烧录完成后设备将自动发送退出指令并复位。若屏幕未更新，请长按机身电源键手动开机。',
-      unsupportedBrowser: '您的浏览器不支持 Web Serial API。请在桌面端 Chrome 或 Edge 浏览器中打开本站以使用烧录功能。',
-      consoleLogs: '串口终端日志',
-    },
-    specs: {
-      tag: 'SPECIFICATIONS',
-      title: '硬件参数与架构',
-      mcu: '主控芯片',
-      mcuVal: 'ESP32-S3 双核 LX7 240MHz, 16MB Flash, 8MB Octal PSRAM @ 120MHz',
-      display: '电子墨水屏',
-      displayVal: '4.7 英寸 E-Paper 电子墨水屏 (684 × 1216, 16 级灰阶, LCD 16-bit 并口总线)',
-      pmu: '电源管理协处理器',
-      pmuVal: 'CW32L010 独立低功耗单片机, 专有 I2C 协议控制电源、RTC、按键与唤醒',
-      storage: '存储扩展',
-      storageVal: '内置 SPI Flash 存储分区 + MicroSD (TF) 卡插槽扩展',
-      battery: '按键与交互',
-      batteryVal: 'CST836U 触控芯片 + 机身物理三功能键 + SC7A20H 加速度计',
-      connectivity: '无线通信',
-      connectivityVal: 'Wi-Fi 802.11 b/g/n (AP / STA 双模传书与云端对时)',
-    },
-    footer: {
-      license: '小纸 Pico (Read Pico) 采用 Apache-2.0 开源协议',
-      disclaimer: '基于 ESP-IDF 与定制墨水屏波形驱动构建。专注提供最佳纯粹掌上阅读体验。',
-    },
+    device: '小纸 Pico', language: 'English', nav: ['功能', '界面', '在线烧录', '使用帮助'],
+    eyebrow: '为墨水屏而做的阅读固件', headline: ['好好读书，', '顺手记下。'],
+    intro: 'PageRest 把阅读、书架与每日手帐放在一起。从上次读到的地方继续，把喜欢的句子留在锁屏上。',
+    primary: '在线更新固件', secondary: '看看现在的界面', compatibility: '当前适配 小纸 Pico / Read Pico · RDP-G01-W',
+    heroCaption: '正在读 · 从上次停下的地方继续', versionLabel: '当前固件',
+    strip: ['TXT / EPUB 阅读', '阅读手帐与目标', '个人摘录锁屏', 'BLE 翻页器'],
+    featuresTag: '01 / 日常使用', featuresTitle: '常用的事，\n放在顺手的位置。', featuresIntro: '正在读、书架、手帐、设置。四个入口，连接一次完整的阅读日常。',
+    features: [
+      { title: '阅读按你的习惯来', desc: '字号、字体、字重、行距与边距可调；速度、画质两档刷新，配合触摸、三键或蓝牙翻页。', label: '夜间阅读 · 书签 · KOReader 进度同步' },
+      { title: '书多一点，也好找', desc: '三行列表与六封面书架随时切换，支持拼音、首字母和英文检索，保留每本书的阅读进度。', label: '双存储书库 · 搜索 · 批量管理' },
+      { title: '把每天读过的留下来', desc: '查看阅读分钟、近期走势与打卡月历，设置自己的每日阅读目标；摘录可以回到原文。', label: '阅读记录 · 每日目标 · 个人摘录' },
+      { title: '传书不用来回折腾', desc: '设备热点或已有 WiFi，浏览器分别上传图书、图片和 TTF 字体，就地查看文件与进度；也支持 TF 卡 USB 挂载。', label: 'WiFi 上传 · 文件管理 · USB 传输' },
+    ],
+    galleryTag: '02 / 看看界面', galleryTitle: '熟悉的纸面，\n更清楚的层次。', galleryIntro: '切换下方页面，看看当前固件的实际排版。', screenNote: '固件原生渲染 · 684 × 1216；不模拟实屏刷新与残影',
+    gallery: [
+      { title: '正在读', desc: '最近阅读、断点续读和每日概览，让打开设备后的第一步更直接。', points: ['最近读过的书', '一键继续阅读'] },
+      { title: '六封面书架', desc: '把空间留给书封。三列两排，结合列表切换、检索和逐书进度。', points: ['六封面 / 三行列表', '拼音与首字母搜索'] },
+      { title: '正文阅读', desc: '专注正文，收起常驻按键提示。需要时再打开工具与文字排版设置。', points: ['速度 / 画质优先', '自定义字体与字重'] },
+      { title: '阅读手帐', desc: '从今日分钟到打卡月历，按自己的节奏设定每日目标，留下阅读足迹。', points: ['每日阅读目标', '阅读走势与月历'] },
+      { title: '个人摘录锁屏', desc: '从保存的多条摘录中自行选择。文字自适应居中，锁屏时钟按分钟更新。', points: ['自主选择摘录', '竖排文字与来源'] },
+      { title: 'WiFi 传输', desc: '热点或已有 WiFi 均可传输。网页的图书、图片和字体模块各自显示任务进度，图片可用于自定义锁屏壁纸。', points: ['图书 / 图片 / 字体', '文件名、进度与结果'] },
+      { title: '蓝牙翻页器', desc: '连接 BLE HID 翻页器，可学习前后页和独立锁屏按键；锁屏后蓝牙停止，不能遥控唤醒。', points: ['连接与按键测试', '独立锁屏按键学习'] },
+    ],
+    updateTitle: '最近，把这些细节做好了一点。', updates: [ ['上传进度，就在原地', '图书、图片、字体各自显示文件名、进度和结果。'], ['把喜欢的句子放大', '自选摘录、竖排布局与动态时钟，组成个人锁屏。'], ['翻页器，也能锁屏', '学习独立按键后，在正文中直接锁屏。'] ],
+    helpTitle: '开始之前，了解这几件事。', faqs: [
+      ['第一次安装该选哪个文件？', '选择 full.bin 完整包。统一烧录入口会识别为完整安装，写入引导、分区表和应用；设置与阅读记录会重置，请先备份。当前仅适配 RDP-G01-W。'],
+      ['日常升级怎样保留阅读记录？', '已有相同分区布局的 PageRest 可选 incremental.bin，自动写入 0x10000 应用区，不全片擦除。工具不会读取设备分区，首次安装或不确定布局时请先核对说明。'],
+      ['网页能直接向设备传书吗？', '在线烧录用于安装固件。传书请在设备的 WiFi 传输中开启热点或已有 WiFi，然后用浏览器打开设备显示的地址。'],
+      ['蓝牙翻页器都支持吗？', '支持 BLE HID；传统蓝牙、私有协议或夹屏接收器不保证兼容。锁屏学习要求独立按键报告，锁屏后不能通过翻页器唤醒。'],
+    ],
+    hardwareTitle: '当前适配的设备', hardware: ['4.7 英寸电子墨水屏', '684 × 1216 · 16 级灰度', 'ESP32-S3 · 16 MB Flash / 8 MB PSRAM', '触摸与三键 · WiFi / BLE · TF 卡'],
+    footer: 'PageRest 是为墨水屏设计的阅读固件。当前适配一个机型，更多设备适配仍在后续计划中。', license: '第三方组件许可与声明', top: '回到顶部',
   },
   en: {
-    brand: 'Read Pico',
-    subBrand: '小纸 Pico',
-    tagline: 'Minimal · Pure · 4.7" Handheld E-Paper Reader',
-    description:
-      'Engineered with a 4.7-inch 16-grayscale E-Paper display, ESP32-S3 dual-core MCU, and a dedicated low-power PMU. Designed purely for focused reading and personal journaling.',
-    nav: {
-      features: 'Features',
-      gallery: 'Interface',
-      flasher: 'Web Flasher',
-      specs: 'Specs',
-      github: 'GitHub',
-    },
-    features: {
-      tag: 'CRAFTED FOR READING',
-      title: 'Focused Reading & Daily Reflection',
-      subtitle: 'Zero distractions, bringing back the pure joy of typography and ink',
-      reading: {
-        title: 'Immersive Reader',
-        desc: 'Native EPUB & TXT engine with rich typography.',
-        bullet1: 'Proprietary 21-phase one-way flash-free direct engine with smooth, solid edges',
-        bullet2: 'Instant resume with exact character-level memory and swift TOC navigation',
-        bullet3: 'Fine adjustments for margin, leading, font sizes and smart bookmarks',
-      },
-      shelf: {
-        title: 'Dual-Storage Shelf',
-        desc: 'Seamless management across internal Flash and MicroSD.',
-        bullet1: 'Instant search by pinyin, initials and English titles',
-        bullet2: 'Automatic EPUB cover extraction with typographic fallback cards',
-        bullet3: 'Batch management with clear progress marks and source badges',
-      },
-      journal: {
-        title: 'Today Journal',
-        desc: 'Reading footprint, habits, and personal reflections.',
-        bullet1: 'Precise tracking for daily and 7-day focus minutes with trend bar charts',
-        bullet2: 'Monthly calendar check-ins with stamped reading achievements',
-        bullet3: 'Long-press quote clips saved into cards with direct source links',
-      },
-      transfer: {
-        title: 'Wireless Management & USB Disk Mount',
-        desc: 'Wire-free uploads, wallpaper photo routing, and direct USB disk mounting.',
-        bullet1: 'Drag-and-drop books, custom TTF fonts and lockscreen wallpaper photos without drivers',
-        bullet2: 'Manage and delete books, fonts and images directly within the web interface',
-        bullet3: 'One-tap USB connection to mount TF card directly, with auto-lock suppression during transfers',
-      },
-    },
-    gallery: {
-      tag: 'PIXEL PERFECT',
-      title: '1:1 Native Screen Renders',
-      subtitle: '684 × 1216 native resolution renders capturing genuine e-paper precision',
-      tabs: {
-        reading: 'Reading View',
-        wallpaper: 'Custom Wallpaper Lock',
-        shelf: 'Book Shelf (with Covers)',
-        home: 'Now Reading',
-        journal: 'Journal · Today',
-        calendar: 'Journal · Calendar',
-        quotes: 'Journal · Quotes & Notes',
-        transfer: 'WiFi Transfer',
-      },
-    },
-    flasher: {
-      tag: 'WEB SERIAL TOOL',
-      title: 'Web Firmware Flasher',
-      subtitle: 'Update your Read Pico directly from your browser via Web Serial',
-      tabModeA: 'Mode A: Smooth Upgrade (Official Firmware Only)',
-      tabModeB: 'Mode B: Full Reinstall / Cross-Firmware (Recommended for 3rd-Party OS / Unbrick)',
-      modeADesc: 'Writes only the application partition to 0x10000. Books, progress and settings remain completely intact. The full merged package works here too (the app partition is sliced automatically).',
-      modeBDesc: 'Writes complete Bootloader, Partition Table and App. Resolves incompatibility from 3rd-party bootloader timings.',
-      modeAWarning: '[CRITICAL WARNING] Mode A is ONLY for routine updates when the device is ALREADY running official Read Pico firmware! If your device is currently running 3rd-party firmware (Crossmux, Freeink, etc.), mismatched 120MHz bootloader and partitions will render the device UNBOOTABLE! Use Mode B to switch from other firmware.',
-      modeBWarning: '[SAFE CROSS-FIRMWARE FLASH] Mode B rewrites Bootloader (0x0), Partitions (0x8000), and Application (0x10000). Optionally erase all flash to wipe legacy remnants.',
-      modeBSelectType: 'Package Format:',
-      modeBMerged: 'Single Merged Binary (merged-firmware.bin @ 0x0)',
-      modeBTrio: 'Official 3-Bin Set (Bootloader + Partitions + App)',
-      dropText: 'Drag and drop your firmware .bin file here, or',
-      browseText: 'Browse File',
-      fileSelected: 'Selected File',
-      removeFile: 'Remove File',
-      selectHint: 'Only .bin files are supported',
-      startBtn: 'Connect & Flash',
-      flashingBtn: 'Flashing…',
-      baudRate: 'Baud Rate',
-      eraseCheckbox: 'Erase entire flash memory (Recommended when switching firmware)',
-      eraseHint: 'Wipes all internal data and returns to clean factory state',
-      bootloaderLabel: '1. Bootloader (0x0000)',
-      partitionLabel: '2. Partition Table (0x8000)',
-      appLabel: '3. Application (0x10000)',
-      mergedLabel: 'Merged Full Binary (0x0000)',
-      readyToFlash: 'Partitions ready to flash',
-      confirmTitle: 'Fashing Safety Confirmation',
-      confirmModeAContent: 'You selected [Mode A: Smooth Upgrade]. Please confirm: Is your device ALREADY running official Read Pico firmware? If it is running 3rd-party firmware, cancel and switch to [Mode B] now, otherwise it will fail to boot!',
-      confirmModeBContent: 'You selected [Mode B: Full Reinstall]. This writes the complete bootloader and partition table. If Erase Flash is checked, all internal data will be wiped. Proceed?',
-      confirmBtn: 'I Understand, Proceed to Flash',
-      cancelBtn: 'Go Back & Check',
-      noticeHeader: 'Before Flashing:',
-      notice1: 'If the device was in USB Computer Disk mode, safely eject on your PC and exit disk mode on device first to release the flashing port.',
-      notice2: 'Use Chrome or Edge on desktop, and connect with a verified USB data cable.',
-      notice3: 'The flasher sends a soft/hard reset pulse upon completion. If the screen does not update, long press the power key to reboot.',
-      unsupportedBrowser: 'Your browser does not support the Web Serial API. Please use Google Chrome or Microsoft Edge on a desktop computer.',
-      consoleLogs: 'Serial Terminal Logs',
-    },
-    specs: {
-      tag: 'SPECIFICATIONS',
-      title: 'Hardware & Architecture',
-      mcu: 'Main MCU',
-      mcuVal: 'ESP32-S3 dual-core LX7 240MHz, 16MB Flash, 8MB Octal PSRAM @ 120MHz',
-      display: 'Display',
-      displayVal: '4.7" E-Paper Display (684 × 1216, 16 gray levels, 16-bit parallel LCD bus)',
-      pmu: 'PMU Coprocessor',
-      pmuVal: 'CW32L010 low-power MCU with custom I2C protocol managing power, RTC and keys',
-      storage: 'Storage',
-      storageVal: 'Internal SPI Flash FAT filesystem + MicroSD (TF) card slot',
-      battery: 'Input & Sensors',
-      batteryVal: 'CST836U capacitive touch + 3 hardware physical keys + SC7A20H accelerometer',
-      connectivity: 'Connectivity',
-      connectivityVal: 'Wi-Fi 802.11 b/g/n (Dual AP/STA modes for book transfer and SNTP sync)',
-    },
-    footer: {
-      license: 'Read Pico (小纸 Pico) is released under the Apache-2.0 License',
-      disclaimer: 'Built with ESP-IDF and custom waveforms for the finest pocket reading experience.',
-    },
+    device: 'Read Pico', language: '中文', nav: ['Features', 'Interface', 'Web flasher', 'Help'],
+    eyebrow: 'READING FIRMWARE FOR E-PAPER', headline: ['Make time to read.', 'Keep a little of it.'],
+    intro: 'PageRest brings your reader, bookshelf and daily journal together. Pick up where you left off, and keep a favorite passage on your lock screen.',
+    primary: 'Update firmware', secondary: 'Explore the interface', compatibility: 'Currently for Read Pico · RDP-G01-W',
+    heroCaption: 'Now reading · Pick up where you left off', versionLabel: 'Current firmware',
+    strip: ['TXT / EPUB reader', 'Journal & daily goals', 'Personal quote lock', 'BLE page-turners'],
+    featuresTag: '01 / EVERYDAY READING', featuresTitle: 'The things you use,\nright where you need them.', featuresIntro: 'Now reading, Library, Journal and Settings. Four starting points for your reading day.',
+    features: [
+      { title: 'Read your way', desc: 'Adjust font, size, stroke, leading and margins. Choose speed or quality, with touch, three keys or a Bluetooth remote.', label: 'Night reading · Bookmarks · KOReader sync' },
+      { title: 'Room for more books', desc: 'Switch between three rows and six covers. Search by pinyin, initials or English, with progress saved for each book.', label: 'Dual storage · Search · Batch actions' },
+      { title: 'Keep a reading habit', desc: 'See reading minutes, recent trends and a monthly calendar. Set a daily goal and return from a saved quote to its source.', label: 'Reading records · Goals · Quotes' },
+      { title: 'Bring your files along', desc: 'Use a device hotspot or existing WiFi. Books, images and TTF fonts have their own upload progress. TF card USB mounting is also available.', label: 'WiFi upload · File management · USB' },
+    ],
+    galleryTag: '02 / THE INTERFACE', galleryTitle: 'A familiar page.\nA clearer place for everything.', galleryIntro: 'Choose a screen to explore the current firmware layout.', screenNote: 'Native firmware render · 684 × 1216; does not simulate panel refresh or ghosting',
+    gallery: [
+      { title: 'Now reading', desc: 'Recent books, resume and a daily overview make the first step straightforward.', points: ['Recently read books', 'Resume with one tap'] },
+      { title: 'Six-cover library', desc: 'Three columns, two rows and more room for covers, with list view, search and individual progress.', points: ['Six covers / three rows', 'Pinyin and initials search'] },
+      { title: 'The reader', desc: 'Focus on the text with persistent key hints tucked away. Open tools and typography controls when you need them.', points: ['Speed / quality priority', 'Custom fonts and stroke'] },
+      { title: 'Reading journal', desc: 'From today’s minutes to monthly check-ins, set a daily goal and keep a reading history.', points: ['Daily reading goal', 'Trends and calendar'] },
+      { title: 'Personal quote lock', desc: 'Choose from your saved passages. Centered adaptive typography, with a clock updated every minute.', points: ['Choose your own quote', 'Vertical text and source'] },
+      { title: 'WiFi transfer', desc: 'Use a hotspot or existing WiFi. Books, images and fonts have separate progress. Uploaded images can become lock-screen wallpapers.', points: ['Books / images / fonts', 'Names, progress and results'] },
+      { title: 'Bluetooth remote', desc: 'Connect a BLE HID remote and learn turn and independent lock buttons. BLE stops on lock; remote wake is unavailable.', points: ['Connection and key test', 'Independent lock-key learning'] },
+    ],
+    updateTitle: 'A few details, made a little better.', updates: [ ['Progress stays with the file', 'Books, images and fonts each show names, progress and results.'], ['A passage worth keeping', 'Choose a quote for a vertical layout and a live lock-screen clock.'], ['Lock from your remote', 'Learn an independent key and lock directly from body text.'] ],
+    helpTitle: 'A few things before you begin.', faqs: [
+      ['Which file is right for a first install?', 'Choose full.bin. The unified tool identifies a full install and writes bootloader, partitions and app. Settings and reading records reset; back them up first. Only RDP-G01-W is supported.'],
+      ['How do I keep reading records when updating?', 'For PageRest with a matching layout, incremental.bin writes only the app at 0x10000, without full erase. The tool does not read device partitions. Check the documentation before first installation or if the layout is unknown.'],
+      ['Can this website send books to my device?', 'The web flasher installs firmware. For books, start WiFi transfer on the device and open its displayed address in your browser.'],
+      ['Will every Bluetooth remote work?', 'BLE HID is supported. Classic Bluetooth, private protocols and screen-clipping receivers are not guaranteed. Lock learning needs a distinct button report; Bluetooth cannot wake the locked device.'],
+    ],
+    hardwareTitle: 'The device supported today', hardware: ['4.7-inch e-paper', '684 × 1216 · 16 gray levels', 'ESP32-S3 · 16 MB Flash / 8 MB PSRAM', 'Touch & three keys · WiFi / BLE · TF card'],
+    footer: 'PageRest is reading firmware for e-paper devices. One device is supported today; further ports are planned.', license: 'Third-party component licenses and notices', top: 'Back to top',
   },
 };

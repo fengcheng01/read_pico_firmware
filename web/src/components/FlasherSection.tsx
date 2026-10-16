@@ -1,632 +1,70 @@
-import React, { useState, useRef } from 'react';
-import { translations, type Lang } from '../utils/i18n';
-import { PicoFlasher, type FlashProgress, type FlashFileItem } from '../utils/flasher';
-import {
-  UploadCloud,
-  CheckCircle2,
-  AlertCircle,
-  RefreshCw,
-  Terminal,
-  Cpu,
-  AlertTriangle,
-  Layers,
-  ShieldAlert,
-  Trash2,
-  X,
-} from 'lucide-react';
-
-interface FlasherSectionProps {
-  lang: Lang;
-}
-
-type FlashMode = 'modeA' | 'modeB';
-type ModeBType = 'merged' | 'trio';
-
-export const FlasherSection: React.FC<FlasherSectionProps> = ({ lang }) => {
-  const t = translations[lang].flasher;
-  const [mode, setMode] = useState<FlashMode>('modeA');
-  const [modeBType, setModeBType] = useState<ModeBType>('merged');
-  const [eraseAll, setEraseAll] = useState<boolean>(false);
-  const [baudRate, setBaudRate] = useState<number>(460800);
-
-  const [fileA, setFileA] = useState<{ file: File; buffer: Uint8Array } | null>(null);
-  const [fileBMerged, setFileBMerged] = useState<{ file: File; buffer: Uint8Array } | null>(null);
-  const [fileBBoot, setFileBBoot] = useState<{ file: File; buffer: Uint8Array } | null>(null);
-  const [fileBPart, setFileBPart] = useState<{ file: File; buffer: Uint8Array } | null>(null);
-  const [fileBApp, setFileBApp] = useState<{ file: File; buffer: Uint8Array } | null>(null);
-
-  const [showConfirmModal, setShowConfirmModal] = useState<boolean>(false);
-
-  const [progress, setProgress] = useState<FlashProgress>({
-    state: 'idle',
-    percent: 0,
-    writtenBytes: 0,
-    totalBytes: 0,
-    message: '',
-  });
-  const [logs, setLogs] = useState<string[]>([]);
-  const [showLogs, setShowLogs] = useState<boolean>(false);
-
-  const fileInputRefA = useRef<HTMLInputElement>(null);
-  const fileInputRefMerged = useRef<HTMLInputElement>(null);
-  const fileInputRefBoot = useRef<HTMLInputElement>(null);
-  const fileInputRefPart = useRef<HTMLInputElement>(null);
-  const fileInputRefApp = useRef<HTMLInputElement>(null);
-
-  const appendLog = (line: string) => {
-    setLogs((prev) => [...prev.slice(-300), `[${new Date().toLocaleTimeString()}] ${line}`]);
+import { useEffect, useRef, useState } from 'react';
+import { AlertCircle, ArrowRight, Check, CheckCircle2, FileCheck2, LoaderCircle, Terminal, Upload, Usb, X } from 'lucide-react';
+import type { Lang } from '../utils/i18n';
+import { PicoFlasher, type FlashProgress } from '../utils/flasher';
+import { planFirmware } from '../utils/firmware';
+const copy = {
+ zh: {tag:'03 / 固件更新',title:'一个文件，一个入口。',intro:'选择 full 或 incremental BIN，自动识别镜像类型。核对写入计划后，再连接设备。',step1:'选择固件',step2:'核对计划',step3:'连接并烧录',drop:'拖入固件 BIN 文件',browse:'或点击选择本地文件',hint:'支持 full.bin / incremental.bin · 仅适配小纸 Pico RDP-G01-W',reading:'正在读取并检查镜像…',remove:'移除固件',full:'完整安装',app:'增量升级',version:'固件版本',target:'写入地址',bytes:'写入大小',impact:'数据影响',fullImpact:'完整包覆盖设置区，会重置设置与阅读记录；TF 卡文件不受本次写入影响。',appImpact:'只写应用区；已有相同 PageRest 分区时可保留设置与阅读记录。工具不会读取设备现有分区。',ready:'镜像结构校验通过',layout:'请确认当前是相同分区布局的 PageRest。首次安装或布局不明，请选择 full.bin 并先备份。',options:'高级选项',baud:'连接速率',erase:'额外擦除整片 Flash',eraseHelp:'仅完整包可用，默认关闭。会删除内置存储中的文件、设置及阅读记录，请先备份。',connect:'连接设备并开始烧录',busy:'正在烧录…',unsupported:'请使用桌面版 Chrome / Edge，并通过 HTTPS 或 localhost 打开页面。当前浏览器无法使用 Web Serial。',local:'文件仅在浏览器本地检查；点击确认烧录后才请求串口，不上传到服务器。',download:'准备好已下载到本机的 full 或 incremental BIN，再选择文件。',notice:'连接前请确认',notice1:'使用可传数据的 USB 线；如果设备在电脑 U 盘模式，先安全弹出并在设备上退出。',notice2:'烧录时保持连接。完成后核对设备版本；写入成功不等于已验证设备启动。',logs:'查看烧录日志',emptyLog:'尚未连接设备。',confirm:'核对本次烧录',cancel:'返回检查',confirmAction:'确认并选择串口',eraseConfirm:'已选择全片擦除：内置文件和所有设置将被删除。',error:'文件读取或校验失败，请重新选择本地下载的 BIN。',count:'请选择一个 BIN 文件。',extension:'请选择 .bin 固件文件。',size:'固件大小须在 80 字节至 16 MB 之间。',newFile:'已选择新文件，请先核对计划。'},
+ en: {tag:'03 / FIRMWARE UPDATE',title:'One file. One place to begin.',intro:'Choose a full or incremental BIN. The image type is detected automatically. Check the plan before connecting.',step1:'Choose firmware',step2:'Check the plan',step3:'Connect & flash',drop:'Drop a firmware BIN here',browse:'or choose a local file',hint:'full.bin / incremental.bin · Read Pico RDP-G01-W only',reading:'Reading and checking the image…',remove:'Remove firmware',full:'Full installation',app:'Incremental upgrade',version:'Firmware version',target:'Write address',bytes:'Write size',impact:'Effect on data',fullImpact:'Full images overwrite settings storage and reset settings and reading records. TF card files are not written by this operation.',appImpact:'Writes the app only. Settings and records remain with a matching PageRest layout. The tool does not read existing device partitions.',ready:'Image structure checked',layout:'Confirm a matching PageRest layout. For a first install or unknown layout, back up first and choose full.bin.',options:'Advanced options',baud:'Connection speed',erase:'Additionally erase all flash',eraseHelp:'Full images only, off by default. Deletes internal files, settings and reading records. Back them up first.',connect:'Connect device & flash',busy:'Flashing…',unsupported:'Use desktop Chrome / Edge over HTTPS or localhost. Web Serial is unavailable in this browser.',local:'Files are inspected locally, never uploaded. Serial access is requested only after you confirm flashing.',download:'Have a full or incremental BIN downloaded locally, then choose the file.',notice:'Before connecting',notice1:'Use a USB data cable. If the device is mounted as a USB disk, safely eject it and exit disk mode on the device first.',notice2:'Keep the cable connected while writing. Check the version on the device afterward; successful writing does not verify a successful boot.',logs:'Flash logs',emptyLog:'No device connected.',confirm:'Check this flash operation',cancel:'Go back',confirmAction:'Confirm & choose serial port',eraseConfirm:'Full erase selected: internal files and all settings will be deleted.',error:'File read or validation failed. Choose a freshly downloaded local BIN.',count:'Choose exactly one BIN file.',extension:'Choose a .bin firmware file.',size:'Firmware must be between 80 bytes and 16 MB.',newFile:'New file selected. Check the plan first.'},
+};
+const idle: FlashProgress = {state:'idle',percent:0,writtenBytes:0,totalBytes:0,message:''};
+type Selection = {file:File; plan:ReturnType<typeof planFirmware>};
+// 中文：单入口按文件内容识别，确认前不访问串口；异步读取代次防止旧文件覆盖新选择。
+// English: Detect content in one entry, access serial only after confirmation, and reject stale asynchronous reads.
+export const FlasherSection = ({lang}:{lang:Lang}) => {
+ const t=copy[lang];
+ const [selection,setSelection]=useState<Selection|null>(null),[loading,setLoading]=useState(false),[fileError,setFileError]=useState('');
+ const [progress,setProgress]=useState<FlashProgress>(idle),[logs,setLogs]=useState<string[]>([]);
+ const [baudRate,setBaudRate]=useState(460800),[erase,setErase]=useState(false),[confirm,setConfirm]=useState(false),[supported,setSupported]=useState(false);
+ const input=useRef<HTMLInputElement>(null),reader=useRef<FileReader|null>(null),generation=useRef(0),busy=useRef(false),dialog=useRef<HTMLDialogElement>(null),returnFocus=useRef<HTMLButtonElement>(null);
+ const isFlashing=['connecting','connected','erasing','writing','resetting'].includes(progress.state);
+ useEffect(()=>{setSupported(window.isSecureContext&&'serial' in navigator);return ()=>{++generation.current;reader.current?.abort();};},[]);
+ useEffect(()=>{if(confirm&&!dialog.current?.open)dialog.current?.showModal();else if(!confirm&&dialog.current?.open)dialog.current?.close();},[confirm]);
+ const appendLog=(line:string)=>setLogs(prev=>[...prev.slice(-299),`[${new Date().toLocaleTimeString()}] ${line}`]);
+ const clear=()=>{++generation.current;reader.current?.abort();reader.current=null;setSelection(null);setErase(false);setLoading(false);setFileError('');setProgress(idle);setLogs([]);if(input.current)input.current.value='';};
+ const pick=(files:FileList|null)=>{
+  if(busy.current||!files?.length)return;
+  const file=files[0];clear();
+  if(files.length!==1){setFileError(t.count);return;}
+  if(!/\.bin$/i.test(file.name)){setFileError(t.extension);return;}
+  if(file.size<80||file.size>16*1024*1024){setFileError(t.size);return;}
+  const id=generation.current;const r=new FileReader();reader.current=r;setLoading(true);
+  r.onload=()=>{if(id!==generation.current)return;setLoading(false);reader.current=null;
+   try{if(!(r.result instanceof ArrayBuffer))throw Error(t.error);const plan=planFirmware(new Uint8Array(r.result),file.name);setSelection({file,plan});}
+   catch(e){setSelection(null);setFileError(e instanceof Error?e.message:t.error);}
   };
-
-  const readFileToUint8 = (file: File, callback: (buf: Uint8Array) => void) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (reader.result instanceof ArrayBuffer) {
-        callback(new Uint8Array(reader.result));
-        appendLog(`已载入文件: ${file.name} (${(file.size / 1024).toFixed(1)} KB)`);
-      }
-    };
-    reader.readAsArrayBuffer(file);
-  };
-
-  // 合并完整包识别：0xE9 镜像头 + 0x8000 分区表魔数 + 0x10000 又一镜像头。
-  // Merged-image detection: 0xE9 image magic, the partition-table magic at 0x8000 and
-  // another image header at 0x10000.
-  const isMergedImage = (buf: Uint8Array): boolean =>
-    buf.length > 0x10008 && buf[0] === 0xe9 && buf[0x8000] === 0xaa && buf[0x8001] === 0x50 && buf[0x10000] === 0xe9;
-
-  const getFilesToFlash = (): FlashFileItem[] => {
-    if (mode === 'modeA') {
-      if (!fileA) return [];
-      // 单一完整包即可完成升级：识别为合并包时自动只取 0x10000 处的应用分区，
-      // 引导/分区表/NVS 均不触碰，设置与数据完整保留。
-      // A single full package covers upgrades too: merged images are sliced to the
-      // app partition at 0x10000, leaving the bootloader, partition table and NVS
-      // (settings and data) untouched.
-      if (isMergedImage(fileA.buffer)) {
-        appendLog(`检测到完整合并包，升级模式自动只写入 0x10000 起的应用分区（保留设置与数据）`);
-        return [
-          {
-            name: `${fileA.file.name}（应用分区）`,
-            address: 0x10000,
-            data: fileA.buffer.slice(0x10000),
-          },
-        ];
-      }
-      return [
-        {
-          name: fileA.file.name,
-          address: 0x10000,
-          data: fileA.buffer,
-        },
-      ];
-    } else {
-      if (modeBType === 'merged') {
-        if (!fileBMerged) return [];
-        return [
-          {
-            name: fileBMerged.file.name,
-            address: 0x0000,
-            data: fileBMerged.buffer,
-          },
-        ];
-      } else {
-        const list: FlashFileItem[] = [];
-        if (fileBBoot) list.push({ name: fileBBoot.file.name, address: 0x0000, data: fileBBoot.buffer });
-        if (fileBPart) list.push({ name: fileBPart.file.name, address: 0x8000, data: fileBPart.buffer });
-        if (fileBApp) list.push({ name: fileBApp.file.name, address: 0x10000, data: fileBApp.buffer });
-        return list;
-      }
-    }
-  };
-
-  const isReady = () => {
-    if (mode === 'modeA') return fileA !== null;
-    if (modeBType === 'merged') return fileBMerged !== null;
-    return fileBBoot !== null && fileBPart !== null && fileBApp !== null;
-  };
-
-  const handleStartFlash = async () => {
-    setShowConfirmModal(false);
-    const files = getFilesToFlash();
-    if (files.length === 0) return;
-
-    const flasher = new PicoFlasher({
-      baudRate,
-      onProgress: (p) => setProgress(p),
-      onLog: (l) => appendLog(l),
-    });
-
-    if (!flasher.isSupported()) {
-      alert(t.unsupportedBrowser);
-      return;
-    }
-
-    setShowLogs(true);
-    await flasher.flashFiles(files, mode === 'modeB' ? eraseAll : false);
-  };
-
-  const isFlashing =
-    progress.state === 'connecting' ||
-    progress.state === 'connected' ||
-    progress.state === 'writing' ||
-    progress.state === 'resetting';
-
-  return (
-    <section id="flasher" className="py-24 px-4 sm:px-6 lg:px-8 max-w-[1200px] mx-auto">
-      <div className="text-center mb-10">
-        <span className="text-[12px] font-mono uppercase tracking-[1.5px] text-[#6c6a64] bg-[#efe9de] px-3 py-1 rounded-full border border-[#e6dfd8]">
-          {t.tag}
-        </span>
-        <h2 className="text-3xl sm:text-4xl font-claude-serif text-[#141413] mt-4 mb-3">
-          {t.title}
-        </h2>
-        <p className="text-[#3d3d3a] max-w-2xl mx-auto text-base sm:text-lg">
-          {t.subtitle}
-        </p>
-      </div>
-
-      {/* 模式选择切换 Tab (Claude 风格分段控制器) */}
-      <div className="flex flex-col sm:flex-row items-center justify-center gap-1.5 p-1.5 bg-[#efe9de] rounded-[8px] border border-[#e6dfd8] mb-6 max-w-2xl mx-auto">
-        <button
-          onClick={() => setMode('modeA')}
-          disabled={isFlashing}
-          className={`w-full sm:w-1/2 py-2.5 px-4 rounded-[6px] text-xs sm:text-sm font-medium transition-all ${
-            mode === 'modeA'
-              ? 'bg-[#faf9f5] text-[#141413] shadow-xs'
-              : 'text-[#6c6a64] hover:text-[#141413]'
-          }`}
-        >
-          {t.tabModeA}
-        </button>
-        <button
-          onClick={() => setMode('modeB')}
-          disabled={isFlashing}
-          className={`w-full sm:w-1/2 py-2.5 px-4 rounded-[6px] text-xs sm:text-sm font-medium transition-all ${
-            mode === 'modeB'
-              ? 'bg-[#faf9f5] text-[#141413] shadow-xs'
-              : 'text-[#6c6a64] hover:text-[#141413]'
-          }`}
-        >
-          {t.tabModeB}
-        </button>
-      </div>
-
-      {/* 模式差异与跨固件强提醒 */}
-      {mode === 'modeA' ? (
-        <div className="mb-8 rounded-[12px] bg-[#fcf5e9] border border-[#edd7b2] p-5 flex items-start gap-3.5 shadow-2xs">
-          <AlertTriangle className="w-5 h-5 text-[#cc785c] shrink-0 mt-0.5" />
-          <div className="space-y-1 text-xs sm:text-sm text-[#73431f] leading-relaxed">
-            <div className="font-semibold text-[#5c3214]">{t.modeADesc}</div>
-            <div className="text-[11px] sm:text-xs opacity-95">{t.modeAWarning}</div>
-          </div>
-        </div>
-      ) : (
-        <div className="mb-8 rounded-[12px] bg-[#f0f7f5] border border-[#cbe6df] p-5 flex items-start gap-3.5 shadow-2xs">
-          <ShieldAlert className="w-5 h-5 text-[#5db8a6] shrink-0 mt-0.5" />
-          <div className="space-y-1 text-xs sm:text-sm text-[#1b5e50] leading-relaxed">
-            <div className="font-semibold text-[#13493e]">{t.modeBDesc}</div>
-            <div className="text-[11px] sm:text-xs opacity-95">{t.modeBWarning}</div>
-          </div>
-        </div>
-      )}
-
-      {/* 烧录操作主体卡片 (Claude 风格白米底卡片 + 8px/12px 圆角) */}
-      <div className="rounded-[12px] bg-[#faf9f5] border border-[#e6dfd8] p-6 sm:p-10 shadow-2xs">
-        {/* 模式 A：单文件上传 */}
-        {mode === 'modeA' && (
-          <div>
-            <div
-              onDragOver={(e) => e.preventDefault()}
-              onDrop={(e) => {
-                e.preventDefault();
-                const f = e.dataTransfer.files?.[0];
-                if (f && f.name.endsWith('.bin')) {
-                  readFileToUint8(f, (buf) => setFileA({ file: f, buffer: buf }));
-                }
-              }}
-              onClick={() => !isFlashing && fileInputRefA.current?.click()}
-              className={`border border-dashed rounded-[8px] p-8 sm:p-12 text-center transition-all cursor-pointer ${
-                fileA
-                  ? 'border-[#cc785c] bg-[#fcf8f5]'
-                  : 'border-[#dcd4c9] hover:border-[#cc785c] bg-[#f5f0e8]'
-              } ${isFlashing ? 'pointer-events-none opacity-60' : ''}`}
-            >
-              <input
-                type="file"
-                ref={fileInputRefA}
-                accept=".bin"
-                className="hidden"
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  if (f) readFileToUint8(f, (buf) => setFileA({ file: f, buffer: buf }));
-                }}
-              />
-              <div className="mx-auto w-12 h-12 rounded-[8px] bg-[#faf9f5] border border-[#e6dfd8] flex items-center justify-center text-[#cc785c] mb-4">
-                <UploadCloud className="w-6 h-6" />
-              </div>
-              {fileA ? (
-                <div className="flex flex-col items-center">
-                  <div className="font-semibold text-base text-[#141413]">{fileA.file.name}</div>
-                  <div className="text-xs text-[#6c6a64] mt-1 font-mono">
-                    0x10000 · {(fileA.file.size / 1024 / 1024).toFixed(2)} MB
-                  </div>
-                  <button
-                    type="button"
-                    disabled={isFlashing}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setFileA(null);
-                      if (fileInputRefA.current) fileInputRefA.current.value = '';
-                    }}
-                    className="mt-3 inline-flex items-center gap-1 px-3 py-1 text-xs text-[#c64545] hover:text-[#a93232] hover:bg-[#fce8e8] rounded-[4px] border border-[#edd2d2] transition-colors"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                    <span>{t.removeFile}</span>
-                  </button>
-                </div>
-              ) : (
-                <div>
-                  <div className="text-[#141413] font-medium text-sm mb-1">
-                    {t.dropText} <span className="underline font-semibold text-[#cc785c]">{t.browseText}</span>
-                  </div>
-                  <div className="text-xs text-[#8e8b82] font-mono">read_pico.bin (0x10000)</div>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* 模式 B：合并包或三件套 */}
-        {mode === 'modeB' && (
-          <div className="space-y-6">
-            <div className="flex items-center gap-5 text-xs font-medium text-[#3d3d3a] pb-2 border-b border-[#e6dfd8]">
-              <span className="font-mono text-[#8e8b82]">{t.modeBSelectType}</span>
-              <label className="flex items-center gap-1.5 cursor-pointer">
-                <input
-                  type="radio"
-                  name="modeBType"
-                  checked={modeBType === 'merged'}
-                  onChange={() => setModeBType('merged')}
-                  className="accent-[#cc785c]"
-                />
-                <span>{t.modeBMerged}</span>
-              </label>
-              <label className="flex items-center gap-1.5 cursor-pointer">
-                <input
-                  type="radio"
-                  name="modeBType"
-                  checked={modeBType === 'trio'}
-                  onChange={() => setModeBType('trio')}
-                  className="accent-[#cc785c]"
-                />
-                <span>{t.modeBTrio}</span>
-              </label>
-            </div>
-
-            {modeBType === 'merged' ? (
-              <div
-                onDragOver={(e) => e.preventDefault()}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  const f = e.dataTransfer.files?.[0];
-                  if (f && f.name.endsWith('.bin')) {
-                    readFileToUint8(f, (buf) => setFileBMerged({ file: f, buffer: buf }));
-                  }
-                }}
-                onClick={() => !isFlashing && fileInputRefMerged.current?.click()}
-                className={`border border-dashed rounded-[8px] p-8 sm:p-12 text-center transition-all cursor-pointer ${
-                  fileBMerged
-                    ? 'border-[#cc785c] bg-[#fcf8f5]'
-                    : 'border-[#dcd4c9] hover:border-[#cc785c] bg-[#f5f0e8]'
-                } ${isFlashing ? 'pointer-events-none opacity-60' : ''}`}
-              >
-                <input
-                  type="file"
-                  ref={fileInputRefMerged}
-                  accept=".bin"
-                  className="hidden"
-                  onChange={(e) => {
-                    const f = e.target.files?.[0];
-                    if (f) readFileToUint8(f, (buf) => setFileBMerged({ file: f, buffer: buf }));
-                  }}
-                />
-                <div className="mx-auto w-12 h-12 rounded-[8px] bg-[#faf9f5] border border-[#e6dfd8] flex items-center justify-center text-[#cc785c] mb-4">
-                  <Layers className="w-6 h-6" />
-                </div>
-
-                {fileBMerged ? (
-                  <div className="flex flex-col items-center">
-                    <div className="font-semibold text-base text-[#141413]">{fileBMerged.file.name}</div>
-                    <div className="text-xs text-[#6c6a64] mt-1 font-mono">
-                      全量镜像：0x0000 · {(fileBMerged.file.size / 1024 / 1024).toFixed(2)} MB
-                    </div>
-                    <button
-                      type="button"
-                      disabled={isFlashing}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setFileBMerged(null);
-                        if (fileInputRefMerged.current) fileInputRefMerged.current.value = '';
-                      }}
-                      className="mt-3 inline-flex items-center gap-1 px-3 py-1 text-xs text-[#c64545] hover:text-[#a93232] hover:bg-[#fce8e8] rounded-[4px] border border-[#edd2d2] transition-colors"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                      <span>{t.removeFile}</span>
-                    </button>
-                  </div>
-                ) : (
-                  <div>
-                    <div className="text-[#141413] font-medium text-sm mb-1">
-                      {t.dropText} <span className="underline font-semibold text-[#cc785c]">{t.browseText}</span>
-                    </div>
-                    <div className="text-xs text-[#8e8b82] font-mono">
-                      merged-firmware.bin (0x0000)
-                    </div>
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div
-                  onClick={() => !isFlashing && fileInputRefBoot.current?.click()}
-                  className={`relative border border-dashed rounded-[8px] p-4 text-center cursor-pointer transition-all ${
-                    fileBBoot ? 'border-[#cc785c] bg-[#fcf8f5]' : 'border-[#dcd4c9] bg-[#f5f0e8] hover:border-[#cc785c]'
-                  }`}
-                >
-                  {fileBBoot && !isFlashing && (
-                    <button
-                      type="button"
-                      title={t.removeFile}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setFileBBoot(null);
-                        if (fileInputRefBoot.current) fileInputRefBoot.current.value = '';
-                      }}
-                      className="absolute top-2 right-2 p-1 text-[#6c6a64] hover:text-[#c64545] hover:bg-[#fce8e8] rounded-[4px] transition-colors"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  )}
-                  <input
-                    type="file"
-                    ref={fileInputRefBoot}
-                    accept=".bin"
-                    className="hidden"
-                    onChange={(e) => {
-                      const f = e.target.files?.[0];
-                      if (f) readFileToUint8(f, (buf) => setFileBBoot({ file: f, buffer: buf }));
-                    }}
-                  />
-                  <div className="text-xs font-mono font-medium text-[#141413] mb-1">{t.bootloaderLabel}</div>
-                  {fileBBoot ? (
-                    <div className="text-xs text-[#cc785c] font-mono truncate">{fileBBoot.file.name}</div>
-                  ) : (
-                    <div className="text-[11px] text-[#8e8b82]">bootloader.bin</div>
-                  )}
-                </div>
-
-                <div
-                  onClick={() => !isFlashing && fileInputRefPart.current?.click()}
-                  className={`relative border border-dashed rounded-[8px] p-4 text-center cursor-pointer transition-all ${
-                    fileBPart ? 'border-[#cc785c] bg-[#fcf8f5]' : 'border-[#dcd4c9] bg-[#f5f0e8] hover:border-[#cc785c]'
-                  }`}
-                >
-                  {fileBPart && !isFlashing && (
-                    <button
-                      type="button"
-                      title={t.removeFile}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setFileBPart(null);
-                        if (fileInputRefPart.current) fileInputRefPart.current.value = '';
-                      }}
-                      className="absolute top-2 right-2 p-1 text-[#6c6a64] hover:text-[#c64545] hover:bg-[#fce8e8] rounded-[4px] transition-colors"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  )}
-                  <input
-                    type="file"
-                    ref={fileInputRefPart}
-                    accept=".bin"
-                    className="hidden"
-                    onChange={(e) => {
-                      const f = e.target.files?.[0];
-                      if (f) readFileToUint8(f, (buf) => setFileBPart({ file: f, buffer: buf }));
-                    }}
-                  />
-                  <div className="text-xs font-mono font-medium text-[#141413] mb-1">{t.partitionLabel}</div>
-                  {fileBPart ? (
-                    <div className="text-xs text-[#cc785c] font-mono truncate">{fileBPart.file.name}</div>
-                  ) : (
-                    <div className="text-[11px] text-[#8e8b82]">partition-table.bin</div>
-                  )}
-                </div>
-
-                <div
-                  onClick={() => !isFlashing && fileInputRefApp.current?.click()}
-                  className={`relative border border-dashed rounded-[8px] p-4 text-center cursor-pointer transition-all ${
-                    fileBApp ? 'border-[#cc785c] bg-[#fcf8f5]' : 'border-[#dcd4c9] bg-[#f5f0e8] hover:border-[#cc785c]'
-                  }`}
-                >
-                  {fileBApp && !isFlashing && (
-                    <button
-                      type="button"
-                      title={t.removeFile}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setFileBApp(null);
-                        if (fileInputRefApp.current) fileInputRefApp.current.value = '';
-                      }}
-                      className="absolute top-2 right-2 p-1 text-[#6c6a64] hover:text-[#c64545] hover:bg-[#fce8e8] rounded-[4px] transition-colors"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  )}
-                  <input
-                    type="file"
-                    ref={fileInputRefApp}
-                    accept=".bin"
-                    className="hidden"
-                    onChange={(e) => {
-                      const f = e.target.files?.[0];
-                      if (f) readFileToUint8(f, (buf) => setFileBApp({ file: f, buffer: buf }));
-                    }}
-                  />
-                  <div className="text-xs font-mono font-medium text-[#141413] mb-1">{t.appLabel}</div>
-                  {fileBApp ? (
-                    <div className="text-xs text-[#cc785c] font-mono truncate">{fileBApp.file.name}</div>
-                  ) : (
-                    <div className="text-[11px] text-[#8e8b82]">read_pico.bin</div>
-                  )}
-                </div>
-              </div>
-            )}
-
-            <div className="pt-2">
-              <label className="flex items-center gap-2 cursor-pointer text-xs sm:text-sm text-[#3d3d3a]">
-                <input
-                  type="checkbox"
-                  checked={eraseAll}
-                  disabled={isFlashing}
-                  onChange={(e) => setEraseAll(e.target.checked)}
-                  className="rounded-[4px] accent-[#cc785c]"
-                />
-                <span className="font-medium">{t.eraseCheckbox}</span>
-              </label>
-              <div className="text-[11px] text-[#8e8b82] pl-5 mt-0.5">{t.eraseHint}</div>
-            </div>
-          </div>
-        )}
-
-        {/* 控制配置栏 */}
-        <div className="mt-8 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4 pt-6 border-t border-[#e6dfd8]">
-          <div className="flex items-center gap-3">
-            <label className="text-xs font-mono uppercase tracking-wider text-[#6c6a64] flex items-center gap-1.5">
-              <Cpu className="w-4 h-4 text-[#cc785c]" /> {t.baudRate}
-            </label>
-            <select
-              value={baudRate}
-              disabled={isFlashing}
-              onChange={(e) => setBaudRate(Number(e.target.value))}
-              className="bg-[#faf9f5] border border-[#e6dfd8] rounded-[6px] px-3 py-1.5 text-xs font-mono text-[#141413] focus:outline-none focus:border-[#cc785c]"
-            >
-              <option value={921600}>921600 (High Speed)</option>
-              <option value={460800}>460800 (Standard)</option>
-              <option value={115200}>115200 (Safe)</option>
-            </select>
-          </div>
-
-          {/* Claude 珊瑚色主按钮 */}
-          <button
-            onClick={() => setShowConfirmModal(true)}
-            disabled={!isReady() || isFlashing}
-            className={`px-8 py-3 rounded-[8px] font-medium text-sm transition-colors flex items-center justify-center gap-2 ${
-              !isReady() || isFlashing
-                ? 'bg-[#e6dfd8] text-[#8e8b82] cursor-not-allowed'
-                : 'bg-[#cc785c] hover:bg-[#a9583e] text-[#ffffff] shadow-xs active:scale-[0.99]'
-            }`}
-          >
-            {isFlashing ? (
-              <>
-                <RefreshCw className="w-4 h-4 animate-spin" />
-                {t.flashingBtn}
-              </>
-            ) : (
-              t.startBtn
-            )}
-          </button>
-        </div>
-
-        {/* 烧录进度条 */}
-        {progress.state !== 'idle' && (
-          <div className="mt-8 p-6 rounded-[8px] bg-[#f5f0e8] border border-[#e6dfd8]">
-            <div className="flex justify-between items-center mb-2">
-              <div className="text-sm font-medium text-[#141413] flex items-center gap-2">
-                {progress.state === 'done' && <CheckCircle2 className="w-4 h-4 text-[#5db872]" />}
-                {progress.state === 'error' && <AlertCircle className="w-4 h-4 text-[#c64545]" />}
-                {isFlashing && <RefreshCw className="w-4 h-4 text-[#cc785c] animate-spin" />}
-                <span>{progress.message}</span>
-              </div>
-              <div className="font-mono text-sm font-bold text-[#cc785c]">{progress.percent}%</div>
-            </div>
-
-            <div className="w-full h-2 bg-[#e6dfd8] rounded-full overflow-hidden">
-              <div
-                className={`h-full transition-all duration-200 rounded-full ${
-                  progress.state === 'error'
-                    ? 'bg-[#c64545]'
-                    : progress.state === 'done'
-                    ? 'bg-[#5db872]'
-                    : 'bg-[#cc785c]'
-                }`}
-                style={{ width: `${progress.percent}%` }}
-              />
-            </div>
-          </div>
-        )}
-
-        {/* 串口终端可折叠输出 (Claude 代码窗口卡片规范: #181715, JetBrains Mono, 12px rounded) */}
-        <div className="mt-8">
-          <button
-            onClick={() => setShowLogs(!showLogs)}
-            className="flex items-center gap-2 text-xs font-mono text-[#6c6a64] hover:text-[#141413] transition-colors"
-          >
-            <Terminal className="w-4 h-4 text-[#cc785c]" />
-            <span>{t.consoleLogs} ({logs.length})</span>
-            <span>{showLogs ? '▲' : '▼'}</span>
-          </button>
-
-          {showLogs && (
-            <div className="mt-3 p-4 bg-[#181715] text-[#a09d96] font-mono text-xs rounded-[8px] h-48 overflow-y-auto space-y-1 select-text border border-[#252320]">
-              {logs.length === 0 ? (
-                <div className="text-[#6c6a64]">串口暂无活动记录…</div>
-              ) : (
-                logs.map((log, index) => <div key={index}>{log}</div>)
-              )}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* 烧录须知 */}
-      <div className="mt-8 p-6 rounded-[8px] bg-[#efe9de] border border-[#e6dfd8] text-xs text-[#3d3d3a] space-y-2 leading-relaxed">
-        <div className="font-semibold text-[#141413] text-sm mb-1">{t.noticeHeader}</div>
-        <p>• {t.notice1}</p>
-        <p>• {t.notice2}</p>
-        <p>• {t.notice3}</p>
-      </div>
-
-      {/* 安全防呆确认弹窗 */}
-      {showConfirmModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">
-          <div className="bg-[#faf9f5] rounded-[12px] max-w-md w-full p-6 sm:p-8 shadow-xl border border-[#e6dfd8] animate-in fade-in zoom-in-95 duration-150">
-            <div className="w-10 h-10 rounded-[8px] bg-[#fcf5e9] border border-[#edd7b2] text-[#cc785c] flex items-center justify-center mb-4">
-              <AlertTriangle className="w-5 h-5" />
-            </div>
-
-            <h3 className="text-xl font-claude-serif text-[#141413] mb-2">{t.confirmTitle}</h3>
-            <p className="text-sm text-[#3d3d3a] leading-relaxed mb-6">
-              {mode === 'modeA' ? t.confirmModeAContent : t.confirmModeBContent}
-            </p>
-
-            <div className="flex gap-3 justify-end">
-              <button
-                onClick={() => setShowConfirmModal(false)}
-                className="px-4 py-2.5 rounded-[6px] border border-[#e6dfd8] text-xs font-medium text-[#3d3d3a] hover:bg-[#efe9de]"
-              >
-                {t.cancelBtn}
-              </button>
-              <button
-                onClick={handleStartFlash}
-                className="px-4 py-2.5 rounded-[6px] bg-[#cc785c] hover:bg-[#a9583e] text-xs font-medium text-[#ffffff] shadow-2xs"
-              >
-                {t.confirmBtn}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </section>
-  );
+  r.onerror=()=>{if(id!==generation.current)return;setLoading(false);setSelection(null);reader.current=null;setFileError(`${t.error} ${r.error?.message||''}`);};
+  r.onabort=()=>{if(id===generation.current){setLoading(false);reader.current=null;}};
+  try{r.readAsArrayBuffer(file);}catch(e){setLoading(false);reader.current=null;setFileError(`${t.error} ${e instanceof Error?e.message:''}`);}
+ };
+ const closeConfirm=()=>{setConfirm(false);returnFocus.current?.focus();};
+ const start=async()=>{
+  if(busy.current||!selection||!supported)return;
+  busy.current=true;closeConfirm();setFileError('');
+  try {const plan=planFirmware(selection.plan.file.data,selection.file.name,erase);
+   const flasher=new PicoFlasher({baudRate,onProgress:setProgress,onLog:appendLog});
+   await flasher.flashFiles([plan.file],plan.eraseAll);
+  }catch(e){const message=e instanceof Error?e.message:String(e);setProgress({...idle,state:'error',message,error:message});appendLog(message);}
+  finally{busy.current=false;}
+ };
+ const full=selection?.plan.image.kind==='full';
+ const impact=full?t.fullImpact:t.appImpact;
+ const planRows=selection&&<dl className="plan-grid"><div><dt>{t.version}</dt><dd>{selection.plan.image.version||'—'}</dd></div><div><dt>{t.target}</dt><dd className="mono">0x{selection.plan.file.address.toString(16).toUpperCase()}</dd></div><div><dt>{t.bytes}</dt><dd className="mono">{(selection.plan.file.data.length/1024/1024).toFixed(2)} MB</dd></div></dl>;
+ return <section id="flasher" className="section container flasher-section"><div className="section-heading"><p className="eyebrow">{t.tag}</p><h2>{t.title}</h2><p>{t.intro}</p></div>
+ <div className="flasher-layout"><div className="flash-card"><ol className="flash-steps">{[t.step1,t.step2,t.step3].map((s,i)=><li key={s} className={(i===0||selection&&i===1||isFlashing&&i===2)?'reached':''}><span>{i+1}</span>{s}</li>)}</ol>
+ <div className={`firmware-drop ${selection?'has-file':''}`} onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();pick(e.dataTransfer.files);}} aria-busy={loading}>
+ <input ref={input} id="firmware-file" type="file" accept=".bin" disabled={isFlashing||loading} className="visually-hidden" onChange={e=>pick(e.target.files)} aria-label={t.step1}/>
+ <label htmlFor="firmware-file" className={isFlashing?'disabled':''}>{loading?<LoaderCircle className="spinner" size={28}/>:selection?<FileCheck2 size={28}/>:<Upload size={28}/>}<strong>{loading?t.reading:selection?selection.file.name:t.drop}</strong><span>{selection?`${(selection.file.size/1024/1024).toFixed(2)} MB · ${full?t.full:t.app}`:t.browse}</span></label>
+ {selection&&<button className="file-remove" disabled={isFlashing} aria-label={t.remove} onClick={clear}><X size={18}/></button>}
+ </div><p className="fine-print">{t.hint}</p>
+ {fileError&&<p className="error-message" role="alert"><AlertCircle size={18}/>{fileError}</p>}
+ {selection&&<div className="flash-plan" aria-live="polite"><div className="plan-heading"><span className="verified"><CheckCircle2 size={17}/>{t.ready}</span><span className="plan-kind">{full?t.full:t.app}</span></div>{planRows}<div className={full?'data-impact warning':'data-impact'}><strong>{t.impact}</strong><p>{impact}</p>{!full&&<p>{t.layout}</p>}</div></div>}
+ <details className="flash-options"><summary>{t.options}</summary><div><label htmlFor="baud-rate">{t.baud}</label><select id="baud-rate" value={baudRate} disabled={isFlashing} onChange={e=>setBaudRate(Number(e.target.value))}><option value={460800}>460800</option><option value={115200}>115200</option><option value={921600}>921600</option></select></div>{full&&<label className="erase-option"><input type="checkbox" checked={erase} disabled={isFlashing} onChange={e=>setErase(e.target.checked)}/><span>{t.erase}<small>{t.eraseHelp}</small></span></label>}</details>
+ {!supported&&<p className="browser-notice"><Usb size={18}/>{t.unsupported}</p>}
+ <button className="button primary flash-start" ref={returnFocus} disabled={!selection||loading||isFlashing||!supported} onClick={()=>setConfirm(true)}>{isFlashing?<LoaderCircle size={17} className="spinner"/>:<Usb size={17}/>} {isFlashing?t.busy:t.connect}<ArrowRight size={17}/></button><p className="fine-print">{t.local}</p>
+ {progress.state!=='idle'&&<div className={`flash-progress ${progress.state}`} role="status"><div>{progress.state==='done'?<CheckCircle2 size={19}/>:progress.state==='error'?<AlertCircle size={19}/>:<LoaderCircle className="spinner" size={19}/>}<span>{progress.message}</span><strong>{progress.percent}%</strong></div><progress max="100" value={progress.percent} aria-label={t.step3}/><small className="mono">{progress.writtenBytes.toLocaleString()} / {progress.totalBytes.toLocaleString()} bytes</small></div>}
+ <details className="flash-logs"><summary><Terminal size={15}/>{t.logs}<span>{logs.length}</span></summary><pre aria-label={t.logs}>{logs.length?logs.join('\n'):t.emptyLog}</pre></details>
+ </div><aside className="flash-aside"><span className="aside-icon"><Usb size={25} strokeWidth={1.4}/></span><h3>{t.notice}</h3><p><Check size={16}/>{t.notice1}</p><p><Check size={16}/>{t.notice2}</p><p className="fine-print">{t.download}</p></aside></div>
+ <dialog ref={dialog} className="flash-dialog" onCancel={closeConfirm} onClose={()=>{setConfirm(false);returnFocus.current?.focus();}} aria-labelledby="flash-confirm-title"><button className="dialog-close" onClick={closeConfirm} aria-label={t.cancel}><X size={21}/></button><p className="eyebrow">PAGEREST / {full?t.full:t.app}</p><h3 id="flash-confirm-title">{t.confirm}</h3>{selection&&<p className="confirm-filename">{selection.file.name}</p>}{planRows}<div className={full?'data-impact warning':'data-impact'}><p>{impact}</p>{!full&&<p>{t.layout}</p>}{erase&&<p><strong>{t.eraseConfirm}</strong></p>}</div><div className="dialog-actions"><button className="button secondary" onClick={closeConfirm} autoFocus>{t.cancel}</button><button className="button primary" onClick={start}>{t.confirmAction}</button></div></dialog>
+ </section>;
 };

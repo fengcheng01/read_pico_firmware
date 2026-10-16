@@ -3,6 +3,16 @@
 按日期和作者简述对用户可见的功能变化；详细实现历史见 Git。使用方法见 [README](../README.zh-CN.md)。
 User-visible changes by date and author; Git retains implementation history. See [README](../README.md) for usage.
 
+## 0.6.9 · 2026-10-16
+
+- 官网暂时移除本项目的GitHub、源码与发行页入口，保留本地烧录和第三方许可声明。
+  Temporarily remove this project's GitHub/source/release links from the public website, retaining local flashing and third-party license notices.
+
+## 0.6.8 · 2026-10-16
+
+- 官网按PageRest现有功能更新首页、原生界面图库、双语说明与手机布局；烧录A/B合并单文件入口，自动识别full/app并展示地址和数据影响，增量禁止全擦，完整包仍重置设置与阅读记录。
+  Refresh the PageRest homepage, native gallery, bilingual copy and responsive layout. Merge A/B flashing into one content-detected full/app input with address/data impact; apps forbid full erase and full images still reset settings/reading records.
+
 ## 0.5.31-20261009.1 · 2026-10-09
 
 - 针对锁屏后WiFi扫描ESP_ERR_NO_MEM，扫描和校时专用连接使用较小静态缓冲，完整传书配置保持；释放失败保留真实资源供重试，并记录内存及失败阶段。

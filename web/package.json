@@ -6,7 +6,10 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:firmware": "node tests/firmware.test.mjs",
+    "test:flasher": "node tests/flasher.test.mjs",
+    "test:flasher-ui": "node tests/flasher-ui.test.mjs"
   },
   "type": "module",
   "keywords": [],

@@ -1,8 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Web Serial 固件烧录器 (基于 esptool-js + 小纸 Pico 专有复位时序)
- * 支持双模式：
- * Mode A: 保留数据升级 (仅刷写 factory 分区 @ 0x10000)
- * Mode B: 完整重装/跨固件换系统 (支持单合并包 @ 0x0 或三件套: bootloader 0x0, partitions 0x8000, app 0x10000)
+ * 中文：页面统一识别full/app，控制器按已校验计划写入；不自动重试部分写入。
+ * English: The page identifies full/app images; this controller writes a validated plan without retrying partial writes.
  */
 
 import { ESPLoader, Transport } from 'esptool-js';
@@ -70,7 +69,7 @@ export class PicoFlasher {
   /**
    * 烧录文件列表
    * @param files 待写入分区数组
-   * @param eraseAll 是否全片擦除 (仅模式 B 推荐)
+   * @param eraseAll 是否全片擦除，仅完整包显式选择。/ Explicit full-image erase only.
    */
   public async flashFiles(files: FlashFileItem[], eraseAll = false): Promise<boolean> {
     if (!this.isSupported()) {
@@ -81,16 +80,17 @@ export class PicoFlasher {
       throw new Error('未指定待烧录的文件。');
     }
 
+    let stage = '选择串口';
+    let lastPercent = 0, lastWritten = 0;
+    const totalSize = files.reduce((acc, f) => acc + f.data.byteLength, 0);
     try {
       this.updateState('connecting', '请求连接设备串口…', 0);
       this.onLog?.('正在请求打开串口…');
 
       const device = await navigator.serial.requestPort({
         filters: [{ usbVendorId: 0x303a }],
-      }).catch(async () => {
-        this.onLog?.('未检测到默认 Espressif 过滤设备，切换至全串口模式…');
-        return await navigator.serial.requestPort();
       });
+      stage = '串口打开与芯片握手';
 
       this.onLog?.('串口已选定，正在初始化 Transport…');
       this.transport = new Transport(device, true);
@@ -112,7 +112,6 @@ export class PicoFlasher {
       const chip = await this.esploader.main();
       this.onLog?.(`设备握手成功: ${chip}`);
 
-      const totalSize = files.reduce((acc, f) => acc + f.data.byteLength, 0);
       this.onLog?.(`准备烧录 ${files.length} 个分区，总计 ${(totalSize / 1024 / 1024).toFixed(2)} MB`);
 
       for (const item of files) {
@@ -121,7 +120,8 @@ export class PicoFlasher {
 
       this.updateState('connected', `已连接到芯片 (${chip})，正在准备写入…`, 10);
 
-      // 写入 Flash
+      // 写入过程中不自动重试，保留失败阶段。/ Never retry a partial write automatically; retain its failure stage.
+      stage = eraseAll ? '擦除与写入' : '应用写入';
       this.updateState('writing', '正在写入固件…', 15, 0, totalSize);
 
       await this.esploader.writeFlash({
@@ -134,7 +134,9 @@ export class PicoFlasher {
         reportProgress: (fileIndex: number, written: number, total: number) => {
           const currentFile = files[fileIndex];
           const filePct = total > 0 ? (written / total) * 100 : 0;
-          const globalPct = Math.min(95, Math.floor(15 + (fileIndex / files.length) * 80 + (written / total / files.length) * 80));
+          const globalPct = Math.min(95, Math.floor(15 + (fileIndex / files.length) * 80 + ((total > 0 ? written / total : 0) / files.length) * 80));
+          lastPercent = globalPct;
+          lastWritten = files.slice(0, fileIndex).reduce((n, f) => n + f.data.byteLength, 0) + written;
           this.updateState(
             'writing',
             `写入 [${currentFile ? currentFile.name : `分区 ${fileIndex}`}] : ${filePct.toFixed(1)}% (${(written / 1024).toFixed(0)} KB / ${(total / 1024).toFixed(0)} KB)`,
@@ -145,6 +147,7 @@ export class PicoFlasher {
         },
       });
 
+      stage = '重启';
       this.onLog?.('Flash 写入完成，正在退出下载模式并发送小纸复位时序…');
       this.updateState('resetting', '正在退出下载模式并发送复位指令…', 96);
 
@@ -158,7 +161,7 @@ export class PicoFlasher {
         }
       );
 
-      this.onLog?.(resetSent ? '软复位命令执行成功' : '已发送 RTS 硬复位脉冲兜底');
+      this.onLog?.(resetSent === 'soft' ? '软复位命令执行成功' : resetSent === 'hard' ? '已发送 RTS 硬复位脉冲兜底' : '复位未确认，请手动重启并核对版本');
 
       try {
         await this.transport.disconnect();
@@ -168,9 +171,9 @@ export class PicoFlasher {
 
       this.updateState(
         'done',
-        resetSent
+        resetSent !== 'unconfirmed'
           ? '固件写入成功，已发送重启指令。请在设备开机图底部核对固件版本。'
-          : '固件写入成功，已发送硬件复位脉冲。若屏幕未更新，请长按电源键重启。',
+          : '固件写入完成，但未确认复位成功。请手动重启设备并核对版本。',
         100,
         totalSize,
         totalSize
@@ -178,9 +181,10 @@ export class PicoFlasher {
 
       return true;
     } catch (err: unknown) {
-      const errMsg = err instanceof Error ? err.message : String(err);
+      const detail = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+      const errMsg = `${stage}阶段失败：${detail}`;
       this.onLog?.(`烧录失败: ${errMsg}`);
-      this.updateState('error', `烧录失败: ${errMsg}`, 0, 0, 0, errMsg);
+      this.updateState('error', errMsg, lastPercent, lastWritten, totalSize, errMsg);
 
       try {
         if (this.transport) {

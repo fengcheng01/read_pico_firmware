@@ -34,30 +34,32 @@ export async function picoRestartTransport(
   transport: TransportLike,
   pause: (ms: number) => Promise<void> = delay,
   logger?: FlasherLogger
-): Promise<boolean> {
-  let softReset = false;
+): Promise<'soft' | 'hard' | 'unconfirmed'> {
   try {
-    // ROM 命令通道与烧录相同：flashBegin(0,0)+flashFinish(true) 即退出下载模式
+    // 软复位成功即停止，避免USB重枚举后再次操作已失效的串口信号。
+    // Stop after a successful soft reset to avoid signaling a stale port after USB re-enumeration.
     await esploader.flashBegin(0, 0);
     await esploader.flashFinish(true);
-    softReset = true;
     logger?.log('ROM 软复位命令发送成功 (flashBegin 0 + flashFinish true)');
+    return 'soft';
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     logger?.log(`软复位未响应，尝试硬复位时序: ${message}`);
   }
 
-  // 兜底：esptool hard_reset 的 RTS 复位脉冲（DTR 保持非下载态）
+  // 软复位失败时才发送RTS脉冲，DTR保持非下载态。
+  // Send an RTS pulse only after soft reset fails, keeping DTR outside download state.
   try {
     await transport.setDTR(false);
     await transport.setRTS(true);
     await pause(200);
     await transport.setRTS(false);
     await pause(200);
+    return 'hard';
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     logger?.log(`硬复位脉冲执行报错: ${message}`);
   }
 
-  return softReset;
+  return 'unconfirmed';
 }
