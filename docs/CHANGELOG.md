@@ -5,6 +5,8 @@ User-visible changes by date and author; Git retains implementation history. See
 
 ## 0.6.12 · 2026-10-16
 
+- 修复干净构建中的过期波形依赖、SNTP条件编译和USB磁盘配置缺失；CI先检查提交树依赖与条件编译配对。官网发布版本独立维护，网站更新不再因版本文案触发固件构建。
+  Fix stale waveform dependencies, an unterminated SNTP conditional and missing USB MSC configuration in clean builds. CI checks committed dependencies and conditional pairing first. Maintain the website release version separately so site version copy does not trigger firmware builds.
 - 官网同步发布PageRest首页、统一BIN烧录和当前界面；烧录结束不因命令应答跳过RTS硬件复位，区分脉冲完成与设备启动验收。公开页面继续隐藏本项目仓库入口，Cloudflare生产分支main自动构建web/dist。
   Publish the PageRest homepage, unified BIN flasher and current screens. A protocol ACK no longer skips the RTS hardware reset; pulse completion remains separate from device boot acceptance. Hide project repository links and build web/dist automatically from Cloudflare's production main branch.
 

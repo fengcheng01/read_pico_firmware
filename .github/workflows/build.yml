@@ -24,6 +24,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # 先检查提交树的本地依赖，缺源/缺头直接给出路径，避免漫长编译后才暴露。
+      # Check submitted local dependencies first, reporting missing paths before a long compile.
+      - name: Verify committed source dependencies
+        run: |
+          python3 tools/check_build_sources.py --self-test
+          python3 tools/check_build_sources.py
+
       # sdkconfig.defaults 里的 120MHz flash / PSRAM 依赖真机的 flash 型号，
       # CI 用 sdkconfig.ci 换成默认时序，只验证能不能编过。
       # The 120 MHz flash / PSRAM timing in sdkconfig.defaults needs the real

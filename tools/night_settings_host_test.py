@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 mindreset
 # SPDX-License-Identifier: Apache-2.0
-"""夜间Crossmux对照设置及旧实验升级回归。/ Crossmux night comparison settings and legacy-experiment upgrade regressions."""
+"""夜间设置及已撤回实验升级回归。/ Night settings and withdrawn-experiment upgrade regressions."""
 from pathlib import Path
 import os
 import subprocess
@@ -127,24 +127,24 @@ int main(int argc,char** argv) {
     // 新档位有独立键；实际写盘后先改缓存再加载，确认旧实验值不会作为该键的默认或迁移来源。
     // The new tier has its own key; change the cache before reloading persisted values so old experiments cannot become defaults or migration sources.
     has_cleanup=true;stored_cleanup=2;
-    for(uint8_t mode=BOOK_NIGHT_PROFILE_CURRENT;mode<=BOOK_NIGHT_PROFILE_CROSSMUX;++mode) {
-        app_settings_set_book_night_profile((uint8_t)(mode^1));
+    for(uint8_t mode=BOOK_NIGHT_PROFILE_CURRENT;mode<=BOOK_NIGHT_PROFILE_WHITE_REPAINT;mode+=3) {
+        app_settings_set_book_night_profile((uint8_t)(mode==BOOK_NIGHT_PROFILE_CURRENT?BOOK_NIGHT_PROFILE_WHITE_REPAINT:BOOK_NIGHT_PROFILE_CURRENT));
         unsigned before=writes;
         app_settings_set_book_night_profile(mode);
         assert(app_settings_book_night_profile()==mode&&stored_profile==mode&&writes==before+1&&commits==writes);
         app_settings_set_book_night_profile(mode);
         assert(writes==before+1);
-        app_settings_set_book_night_profile((uint8_t)(mode^1));
+        app_settings_set_book_night_profile((uint8_t)(mode==BOOK_NIGHT_PROFILE_CURRENT?BOOK_NIGHT_PROFILE_WHITE_REPAINT:BOOK_NIGHT_PROFILE_CURRENT));
         stored_profile=mode;app_settings_init();
         assert(app_settings_book_night_profile()==mode&&stored_cleanup==2);
         check_existing_choices();
     }
     unsigned before=writes;
-    for(unsigned raw=2;raw<=255;++raw) if(raw!=3) app_settings_set_book_night_profile((uint8_t)raw);
-    assert(app_settings_book_night_profile()==BOOK_NIGHT_PROFILE_CROSSMUX&&writes==before);
+    for(unsigned raw=1;raw<=255;++raw) if(raw!=3) app_settings_set_book_night_profile((uint8_t)raw);
+    assert(app_settings_book_night_profile()==BOOK_NIGHT_PROFILE_WHITE_REPAINT&&writes==before);
     // 非法持久化值回当前方案，不修写旧键，所有其它阅读选择和旧键保持原样。
     // Invalid persisted values fall back to the current profile without repairing keys, preserving every other reader choice and the old key.
-    for(unsigned raw=2;raw<=255;++raw) {
+    for(unsigned raw=1;raw<=255;++raw) {
         if(raw==3)continue;
         stored_profile=(uint8_t)raw;app_settings_init();
         assert(app_settings_book_night_profile()==BOOK_NIGHT_PROFILE_CURRENT&&stored_profile==raw&&writes==before);
@@ -172,7 +172,7 @@ int main(int argc,char** argv) {
     for(unsigned raw=0;raw<256;++raw){stored_edge=raw;app_settings_init();assert(app_settings_book_edge_gray()==(raw==1));check_existing_choices();}
     assert(!legacy_reads&&!fine_reads&&!erases&&writes==commits);
     puts("0.5.29 withdrawal: saved black profile returns CURRENT without repair writes, all legacy fine values ignored, night/direct/10-page choices retained PASS");
-    puts("night profile: distinct bk_ngprofile defaults CURRENT, three distinct tiers persist/reload, repeated saves skip, 253 invalid setter/stored values fall back safely and old experiment tiers never enable Crossmux PASS");
+    puts("night profile: distinct bk_ngprofile defaults CURRENT, two supported tiers persist/reload, repeated saves skip, 254 invalid setter/stored values fall back safely and old experiment tiers never enable Crossmux PASS");
 }
 '''
 

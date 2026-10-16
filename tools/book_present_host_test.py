@@ -15,7 +15,7 @@ def production_function(name):
     assert match, name
     end = source.index('\n}', match.end()) + 2
     return source[match.start():end]
-production = '\n'.join(production_function(name) for name in ('finish_reader_frame', 'reader_crossmux_enabled', 'reader_direct_enabled', 'reader_gray_direct_enabled', 'reader_white_repaint_enabled', 'present'))
+production = '\n'.join(production_function(name) for name in ('finish_reader_frame', 'reader_direct_enabled', 'reader_gray_direct_enabled', 'reader_white_repaint_enabled', 'present'))
 harness = r'''
 #include <assert.h>
 #include <stdbool.h>
@@ -56,7 +56,6 @@ typedef enum {DISPLAY_CROSSMUX_TURN,DISPLAY_CROSSMUX_ENTRY,DISPLAY_CROSSMUX_CLEA
 static bool gray_edges;
 static unsigned gray_calls,white_calls,white_actions[4];
 static uint8_t night_profile;
-static unsigned crossmux_calls,crossmux_actions[4];
 static int E0470_WAVEFORM,E0470_NAVIGATION_WAVEFORM,E0470_TEXTTURN_WAVEFORM,E0470_TEXTTURN_NIGHT_WAVEFORM,E0470_DIRECT_WAVEFORM;
 static unsigned fulls,turns,directs,navs,areas,renders,joins,entries;
 static unsigned quantizes,serial,last_render_serial,last_quantize_serial,last_draw_serial;
@@ -86,13 +85,6 @@ static bool app_settings_book_edge_gray(void) {return gray_edges;}
 static bool app_settings_book_night(void) {return night_setting;}
 static uint8_t app_settings_book_night_profile(void) {return night_profile;}
 static enum EpdDrawError result(void) {last_draw_serial=++serial;return fail?EPD_DRAW_FAILURE:EPD_DRAW_SUCCESS;}
-static enum EpdDrawError update_display_night_crossmux(int* h,display_crossmux_action_t action) {
- (void)h;assert(action>=DISPLAY_CROSSMUX_TURN&&action<=DISPLAY_CROSSMUX_REDRAW);
- assert(s_view==READING&&s_text&&night_setting&&!s_image_open&&!s_toolbar&&!s_clear_confirm&&!s_quote_selecting&&!s_ended);
- for(size_t i=0;i<s_block_count;++i)assert(!s_blocks[i].image);
- crossmux_calls++;crossmux_actions[action]++;return result();
-}
-static enum EpdDrawError update_display_text_gray_direct(int* h,bool night) {(void)h;assert(gray_edges&&direct);last_direct_night=night;gray_calls++;return result();}
 static enum EpdDrawError update_display_night_white_repaint(int* h,display_crossmux_action_t action,bool bw,bool gray) {
  (void)h;assert(s_view==READING&&s_text&&night_setting&&night_profile==3);
  assert(!s_image_open&&!s_toolbar&&!s_clear_confirm&&!s_quote_selecting&&!s_ended);
@@ -103,6 +95,7 @@ static enum EpdDrawError update_display_full(int* h) {(void)h;fulls++;return res
 static enum EpdDrawError update_display_clean(int* h) {(void)h;fulls++;return result();}
 static enum EpdDrawError update_display_text_turn(int* h,bool night) {(void)h;last_standard_night=night;turns++;return result();}
 static enum EpdDrawError update_display_text_direct(int* h,bool night) {(void)h;last_direct_night=night;directs++;return result();}
+static enum EpdDrawError update_display_text_gray_direct(int* h,bool night) {(void)h;(void)night;gray_calls++;return result();}
 static enum EpdDrawError update_display_with(int* h,const int* w,int mode) {
  (void)h;assert((w==&E0470_NAVIGATION_WAVEFORM||w==&E0470_TEXTTURN_NIGHT_WAVEFORM)&&mode==MODE_GL16);
  last_page_night=w==&E0470_TEXTTURN_NIGHT_WAVEFORM;navs++;return result();
@@ -240,56 +233,6 @@ int main(void) {
  assert(s_search_dirty&&s_search_edit_ms==11000);
  fail=false;processing_us=14000000;present(&ctx,APP_REDRAW_AREA);
  assert(!s_search_dirty&&!s_search_fast&&s_search_edit_ms==14000);
- // Crossmux仅夜间纯文字接管四种动作；当前翻页效果设置不改变其黑白目标。
- // Crossmux takes over four actions only for night text; the existing page-effect choice does not change its binary target.
- night_profile=BOOK_NIGHT_PROFILE_CROSSMUX;night_setting=true;
- s_view=READING;s_text="body";s_blocks=NULL;s_block_count=0;
- s_search_dirty=s_search_fast=false;s_presented_valid=true;s_presented_view=SHELF;
- for(int effect=0;effect<2;++effect) {
-   direct=effect;s_presented_view=SHELF;
-   unsigned before_cross=crossmux_calls,before_nav=navs,before_full=fulls,before_turn=turns,before_direct=directs;
-   unsigned before_quantize=quantizes;
-   present(&ctx,APP_REDRAW_PAGE);assert(crossmux_calls==before_cross+1&&crossmux_actions[DISPLAY_CROSSMUX_ENTRY]==(unsigned)(effect+1));
-   assert(s_reader_target_night&&s_reader_target_binary&&quantizes==before_quantize+1);
-   s_text_turn=true;present(&ctx,APP_REDRAW_AREA);assert(crossmux_calls==before_cross+2);
-   assert(crossmux_actions[DISPLAY_CROSSMUX_TURN]==(unsigned)(effect+1));
-   present(&ctx,APP_REDRAW_PAGE);assert(crossmux_calls==before_cross+3);
-   assert(crossmux_actions[DISPLAY_CROSSMUX_REDRAW]==(unsigned)(effect+1));
-   present(&ctx,APP_REDRAW_FULL);assert(crossmux_calls==before_cross+4);
-   assert(crossmux_actions[DISPLAY_CROSSMUX_CLEAN]==(unsigned)(effect+1));
-   assert(navs==before_nav&&fulls==before_full&&turns==before_turn&&directs==before_direct);
- }
- // 独立局推不走Crossmux；成功覆盖层返回正文走ENTRY，失败返回保留重试资格。
- // Independent areas bypass Crossmux; returning from a presented overlay uses ENTRY and retains retry eligibility on failure.
- unsigned before_cross=crossmux_calls,before_area=areas;
- present(&ctx,APP_REDRAW_AREA);assert(areas==before_area+1&&crossmux_calls==before_cross);
- bool* cross_overlays[]={&s_toolbar,&s_image_open,&s_clear_confirm,&s_quote_selecting,&s_ended};
- for(size_t i=0;i<sizeof(cross_overlays)/sizeof(*cross_overlays);++i) {
-   unsigned before_entry=crossmux_actions[DISPLAY_CROSSMUX_ENTRY];
-   *cross_overlays[i]=true;present(&ctx,APP_REDRAW_PAGE);
-   assert(crossmux_calls==before_cross&&!s_reader_target_binary&&s_presented_reading_overlay);
-   *cross_overlays[i]=false;fail=true;present(&ctx,APP_REDRAW_PAGE);
-   assert(crossmux_actions[DISPLAY_CROSSMUX_ENTRY]==before_entry+1&&s_presented_reading_overlay);
-   fail=false;present(&ctx,APP_REDRAW_PAGE);
-   assert(crossmux_actions[DISPLAY_CROSSMUX_ENTRY]==before_entry+2&&!s_presented_reading_overlay);
-   before_cross=crossmux_calls;
- }
- // 插图章节、日间和非正文页保持已有路径；旧方案仍可来回切换。
- // Image chapters, day and non-body views retain existing paths, and the current profile remains switchable.
- blk_t image_blocks[2]={{0},{.image=true}};s_blocks=image_blocks;s_block_count=2;
- direct=false;s_presented_view=SHELF;present(&ctx,APP_REDRAW_PAGE);
- s_text_turn=true;present(&ctx,APP_REDRAW_AREA);present(&ctx,APP_REDRAW_FULL);
- assert(crossmux_calls==before_cross&&!s_reader_target_binary);
- s_blocks=NULL;s_block_count=0;night_setting=false;s_presented_view=SHELF;
- present(&ctx,APP_REDRAW_PAGE);s_text_turn=true;present(&ctx,APP_REDRAW_AREA);
- assert(crossmux_calls==before_cross&&!s_reader_target_night);
- night_setting=true;s_view=LAYOUT;present(&ctx,APP_REDRAW_PAGE);assert(crossmux_calls==before_cross);
- s_view=READING;night_profile=BOOK_NIGHT_PROFILE_CURRENT;
- present(&ctx,APP_REDRAW_PAGE);s_text_turn=true;present(&ctx,APP_REDRAW_AREA);assert(crossmux_calls==before_cross);
- night_profile=BOOK_NIGHT_PROFILE_CROSSMUX;s_presented_view=LAYOUT;
- present(&ctx,APP_REDRAW_PAGE);assert(crossmux_calls==before_cross+1&&s_reader_target_binary);
- // 实际灰字缘不二值化，Crossmux仍固定黑白；新清白对照覆盖四动作且控件不计。
- // Actual gray edges bypass binarization, Crossmux remains binary, and white-clear repaint covers four actions outside controls.
  s_view=READING;s_blocks=NULL;s_block_count=0;s_text="body";s_presented_reading_overlay=false;
  for(int night=0;night<2;++night)for(int effect=0;effect<2;++effect){
    night_setting=night;direct=effect;gray_edges=true;night_profile=0;s_presented_view=SHELF;
@@ -298,8 +241,6 @@ int main(void) {
    s_text_turn=true;present(&ctx,APP_REDRAW_AREA);
    assert(gray_calls==g+(effect?1:0)&&quantizes==q);
  }
- night_setting=true;direct=true;gray_edges=true;night_profile=1;s_text_turn=true;
- unsigned q=quantizes;present(&ctx,APP_REDRAW_AREA);assert(quantizes==q+1&&s_reader_target_binary);
  for(int effect=0;effect<2;++effect)for(int edge=0;edge<2;++edge){
    direct=effect;gray_edges=edge;night_profile=3;s_presented_view=SHELF;s_presented_reading_overlay=false;
    unsigned before=white_calls;unsigned q0=quantizes;
@@ -315,9 +256,8 @@ int main(void) {
    fail=false;present(&ctx,APP_REDRAW_PAGE);assert(!s_presented_reading_overlay&&white_calls==before+6);
  }
  for(unsigned i=0;i<4;++i)assert(white_actions[i]>=4);
- puts("reader present: real gray target, unchanged Crossmux binary, new white clear four actions, overlay failure retries/control exclusions PASS");
+ puts("reader present: real gray target, white clear four actions, overlay failure retries/control exclusions PASS");
  puts("reader present: view/overlay-entry requests and failed retry, manual cleanup, preparation join, day/night binary direct frames before entry/redraw/turn, grayscale image fallback and ordinary-turn preservation PASS");
- puts("reader present: Crossmux ENTRY/TURN/CLEAN/REDRAW routing for night text, both page effects, binary frames, overlay retry, control/image/day exclusions and profile switching PASS");
 }
 '''
 with tempfile.TemporaryDirectory(prefix='pico-reader-present-', dir='/tmp') as folder:

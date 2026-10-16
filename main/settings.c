@@ -247,7 +247,7 @@ void app_settings_init(void) {
     if (nvs_get_u8(h, NVS_KEY_BOOK_EDGE_GRAY, &edge_gray) == ESP_OK) s_book_edge_gray = edge_gray == 1;
     uint8_t night_profile = BOOK_NIGHT_PROFILE_CURRENT;
     if (nvs_get_u8(h, NVS_KEY_BOOK_NIGHT_PROFILE, &night_profile) == ESP_OK &&
-        (night_profile <= BOOK_NIGHT_PROFILE_CROSSMUX || night_profile == BOOK_NIGHT_PROFILE_WHITE_REPAINT)) s_book_night_profile = night_profile;
+        (night_profile == BOOK_NIGHT_PROFILE_CURRENT || night_profile == BOOK_NIGHT_PROFILE_WHITE_REPAINT)) s_book_night_profile = night_profile;
     sleep_clock_record_t clock = {0};
     size_t clock_len = sizeof(clock);
     if (nvs_get_blob(h, NVS_KEY_SLEEP_CLOCK, &clock, &clock_len) == ESP_OK &&
@@ -576,7 +576,7 @@ void app_settings_set_book_edge_gray(bool on) {
 
 uint8_t app_settings_book_night_profile(void) { return s_book_night_profile; }
 void app_settings_set_book_night_profile(uint8_t profile) {
-    if ((profile > BOOK_NIGHT_PROFILE_CROSSMUX && profile != BOOK_NIGHT_PROFILE_WHITE_REPAINT) || s_book_night_profile == profile) return;
+    if ((profile != BOOK_NIGHT_PROFILE_CURRENT && profile != BOOK_NIGHT_PROFILE_WHITE_REPAINT) || s_book_night_profile == profile) return;
     s_book_night_profile = profile;
     nvs_put_u8_checked(NVS_KEY_BOOK_NIGHT_PROFILE, profile);
 }

@@ -13,16 +13,13 @@ cc -std=c11 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
     tools/display_host_test.c main/display.c main/display_pixels.c -o build/book-tests/display
 build/book-tests/display
 
-# 导航表测试链接真实厂家源表和裁剪器，不用波形标识替身。/ Navigation tests link real vendor tables and trimming, without waveform shims.
+# 导航表测试链接真实厂家源表，不用波形标识替身。/ Navigation tests link real vendor tables, without waveform shims.
 cc -std=c11 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
     -Icomponents/e0470_epaper_waveform/include -Icomponents/e0470_epaper_waveform/waveforms \
     -Itools/waveform_host_stubs -Icomponents/epdiy/include -Icomponents/epdiy/src tools/waveform_navigation_host_test.c \
-    components/e0470_epaper_waveform/e0470_epaper_waveform.c \
-    components/e0470_epaper_waveform/e0470_waveform_trim.c -o build/book-tests/navigation-waveform
+    components/e0470_epaper_waveform/e0470_epaper_waveform.c -o build/book-tests/navigation-waveform
 build/book-tests/navigation-waveform
 
-# 独立固定SDK指纹检查对照表全部字节，并保证原模式不变。/ Check all comparison bytes against pinned SDK fingerprints and retain original modes.
-python3 tools/crossmux_waveform_host_test.py
 
 # 灰边档逐相复用厂家DU/8灰GL，保持EE及中性尾，不把数字一致性当作光学通过。
 # Gray edges reuse each vendor DU/8-gray GL phase with held EE and neutral tails, without treating digital equality as optical success.

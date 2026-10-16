@@ -27,11 +27,11 @@ npm run preview
 ## GitHub Pages 发布 / GitHub Pages deployment
 
 1. 在仓库 **Settings → Pages → Build and deployment → Source** 选择 **GitHub Actions**。
-2. 将网站文件和 `.github/workflows/pages.yml` 提交并推送到 `main`。之后修改网站、工作流或根目录version.txt会自动构建并部署；也可在 Actions 中手动运行 **Build and deploy website**。
+2. 将网站文件和 `.github/workflows/pages.yml` 提交并推送到 `main`。之后修改网站、工作流或web/firmware-version.txt会自动构建并部署；也可在 Actions 中手动运行 **Build and deploy website**。
 3. 工作流成功后，从部署记录打开网站。当前仓库未绑定自定义域名时的默认地址为 `https://fengcheng01.github.io/read_pico_firmware/`；实际地址以部署输出为准。
 
 1. In **Settings → Pages → Build and deployment → Source**, select **GitHub Actions**.
-2. Commit the website and `.github/workflows/pages.yml`, then push to `main`. Subsequent website/workflow/version.txt changes trigger a build and deployment. You can also run **Build and deploy website** manually in Actions.
+2. Commit the website and `.github/workflows/pages.yml`, then push to `main`. Subsequent website/workflow/firmware-version.txt changes trigger a build and deployment. You can also run **Build and deploy website** manually in Actions.
 3. After a successful deployment, open the website from the deployment record. Without a custom domain, this repository's default URL is `https://fengcheng01.github.io/read_pico_firmware/`; use the deployment output as the authoritative URL.
 
 拉取请求仅检查网站构建，不发布。工作流只上传 `web/dist`，不上传设备端源码、本机构建目录或交接日志。Vite 的 `base: './'` 使资源可在仓库子路径和域名根路径加载；图片通过资源导入打包。
@@ -75,8 +75,8 @@ Flashing errors retain the chooser/handshake/write stage and original exception 
 
 ## 首页与截图 / Homepage and screen assets
 
-PageRest为固件名；当前适配设备为小纸Pico/Read Pico RDP-G01-W，不宣称已经适配其他品牌。首页版本从根目录version.txt导入，不手写旧版本号；功能、图库、统一烧录、帮助和硬件摘要使用中英双语。仓库暂不公开，公开页面不提供本项目GitHub、源码或发行页入口；src/site.ts仅导出版本。第三方许可中的必要出处保留。
-PageRest names the firmware; the supported device is Read Pico RDP-G01-W, without claiming existing ports to other brands. Import the version from root version.txt. Features, gallery, unified flasher, help and hardware summary are bilingual. Public pages temporarily omit this project’s GitHub, source and release links while the repository remains private; src/site.ts exports only the version. Retain necessary third-party license attribution.
+PageRest为固件名；当前适配设备为小纸Pico/Read Pico RDP-G01-W，不宣称已经适配其他品牌。首页版本从web/firmware-version.txt导入，不手写旧版本号；功能、图库、统一烧录、帮助和硬件摘要使用中英双语。仓库暂不公开，公开页面不提供本项目GitHub、源码或发行页入口；src/site.ts仅导出发布版本。第三方许可中的必要出处保留。
+PageRest names the firmware; the supported device is Read Pico RDP-G01-W, without claiming existing ports to other brands. Import the version from web/firmware-version.txt. Features, gallery, unified flasher, help and hardware summary are bilingual. Public pages temporarily omit this project’s GitHub, source and release links while the repository remains private; src/site.ts exports only the version. Retain necessary third-party license attribution.
 
 src/assets/screenshots与对应public/screenshots为原生684×1216帧导出，使用示例书库、模拟无线与系统边界，不是真机光学照片。官网可切换正在读/六封面书架/正文/手帐/摘录锁屏/传输/蓝牙，不把宿主画面当作无残影、无闪或型号兼容保证。设备外框是CSS示意，沿用真实帧比例。支持键盘图库切换、原生对话框焦点/取消、手机布局及减少动画偏好。
 Screen assets are native684×1216 exports with sample books and mocked radio/system boundaries, not optical device photos. Gallery includes home/shelf/reader/journal/quote lock/transfer/BLE without promising ghost-free, flash-free or model compatibility. The CSS shell preserves screen proportions. Support keyboard gallery navigation, native dialog focus/cancel, responsive layout and reduced motion.
@@ -92,3 +92,7 @@ Preserve public/THIRD_PARTY_LICENSES.txt in static distribution; refresh it when
 
 Cloudflare Pages项目`read-pico`连接`fengcheng01/read_pico_firmware`的`main`，根目录`web`、构建`npm run build`、输出`dist`，自定义域`pico.gofree.kdns.fr`。本地提交或功能分支打包不会更新生产；必须推送官网改动到该生产分支并核对Cloudflare部署成功。`web/.node-version`固定Node24。不将固件源码、source.zip、本机日志或私有文件放入`dist`。
 Cloudflare Pages project`read-pico` tracks`main` in`fengcheng01/read_pico_firmware`, with root`web`, command`npm run build`, output`dist` and domain`pico.gofree.kdns.fr`. A local commit or feature-branch build does not update production; push website changes to the production branch and verify the Cloudflare deployment. `web/.node-version` pins Node24. Never put firmware source, source.zip, local logs or private files in`dist`.
+
+
+官网发布版本使用`web/firmware-version.txt`，不为发布网页修改设备根目录`version.txt`，避免官网更新误触发固件编译。设备镜像仍以根目录版本为准；发版前运行`npm run test:firmware`核对官网元数据与实际BIN。固件工作流继续检查真实源码、配置、设备版本等改动，不能用禁用检查掩盖缺失依赖。
+Website release identity comes from`web/firmware-version.txt`; do not change device-root`version.txt` just to publish a site. Device images retain the root version. Before release run`npm run test:firmware` to compare website metadata with actual BINs. Firmware CI still checks actual source/config/device-version changes; disabling checks is not a substitute for complete dependencies.

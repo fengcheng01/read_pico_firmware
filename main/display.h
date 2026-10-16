@@ -76,12 +76,6 @@ typedef enum {
     DISPLAY_CROSSMUX_CLEAN, ///< 手动单次GC，不先物理清白 / Manual single GC without a preliminary physical clear
     DISPLAY_CROSSMUX_REDRAW, ///< 同布局重绘，不计翻页 / Same-layout redraw excluded from turn counting
 } display_crossmux_action_t;
-/// 用户选择的Pico对照：实际二值目标与真实参考，DU20/入口GL37/到期及手动GC36，已知参考不先清白。
-/// User-selected Pico comparison: actual binary targets and references, DU20/entry GL37/due or manual GC36, without clearing a known baseline first.
-/// 未知参考仍先物理清白并完整GC48恢复；只在成功后提交计数，不执行内容呈现后的补扫。
-/// Unknown references retain physical-clear/full-GC48 recovery; commit counts only on success and never post-scan presented content.
-enum EpdDrawError update_display_night_crossmux(EpdiyHighlevelState* hl, display_crossmux_action_t action);
-
 /// 可选夜间白重画：入口、手动或到期保留三轮物理清白，再从真实白参考单次厂家GL灰阶或DU二值写回；普通翻页保持原迁移。
 /// Optional night white repaint: entry, manual or due cleaning retains three physical-white-clear rounds, then one vendor GL gray or DU binary repaint from actual white; ordinary turns retain existing transitions.
 /// 灰缘仅在直刷启用时保灰；失败后的未知参考仍用原完整GC恢复，成功清理才重置计数。

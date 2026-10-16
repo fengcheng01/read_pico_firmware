@@ -7,6 +7,7 @@ import { inspectFirmware, prepareFirmware } from '../src/utils/firmware.ts';
 
 const root = resolve(import.meta.dirname, '../..');
 const version = readFileSync(resolve(root, 'version.txt'), 'utf8').trim();
+assert.equal(readFileSync(resolve(root, 'web/firmware-version.txt'), 'utf8').trim(), version, 'Website release metadata must match the actual firmware build');
 const stem = `build/firmware/PageRest-Read_Pico-${version}`;
 const full = new Uint8Array(readFileSync(resolve(root, stem + '-full.bin')));
 const app = new Uint8Array(readFileSync(resolve(root, stem + '-incremental.bin')));

@@ -220,6 +220,7 @@ void os_time_network(bool sta_uplink) {
 #if CONFIG_LWIP_SNTP_MAX_SERVERS > 1
         cfg.num_of_servers = 2;
         cfg.servers[1] = "pool.ntp.org";
+#endif
         if (esp_netif_sntp_init(&cfg) != ESP_OK) {
             ESP_LOGW(TAG, "sntp init failed");
             return;

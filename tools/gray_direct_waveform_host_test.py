@@ -36,7 +36,6 @@ def main():
         "-I" + str(ROOT / "components/epdiy/src"),
         str(ROOT / "tools/gray_direct_waveform_host_test.c"),
         str(ROOT / "components/e0470_epaper_waveform/e0470_epaper_waveform.c"),
-        str(ROOT / "components/e0470_epaper_waveform/e0470_waveform_trim.c"),
         "-o", str(binary),
     ]
     subprocess.run(command, check=True)

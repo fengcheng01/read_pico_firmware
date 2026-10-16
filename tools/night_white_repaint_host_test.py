@@ -38,7 +38,6 @@ def build_and_run(out, source, suffix, expected_failure=False):
         str(ROOT / "tools/night_white_repaint_host_test.c"), str(source), str(out / "actual_clear.c"),
         str(ROOT / "main/display_pixels.c"), str(ROOT / "components/epdiy/src/highlevel.c"),
         str(ROOT / "components/e0470_epaper_waveform/e0470_epaper_waveform.c"),
-        str(ROOT / "components/e0470_epaper_waveform/e0470_waveform_trim.c"),
         "-o", str(out / suffix),
     ]
     subprocess.run(command, check=True)
