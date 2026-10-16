@@ -63,13 +63,16 @@ def main():
         self_test()
         return
     root=Path(__file__).resolve().parents[1]
-    command=['git','ls-files','-z'] if args.index else ['git','ls-tree','-r','-z','--name-only','HEAD']
+    # 容器与检出任务可能使用不同UID，仅信任本次读取的仓库路径，不修改全局配置。
+    # Container and checkout UIDs may differ; trust only this repository for each read without changing global config.
+    git=['git','-c','safe.directory='+str(root)]
+    command=git+['ls-files','-z'] if args.index else git+['ls-tree','-r','-z','--name-only','HEAD']
     names=subprocess.check_output(command,cwd=root).decode().split('\0')
     files={}
     for name in names:
         if not name or not name.startswith(('main/','components/')):continue
         revision=':'+name if args.index else 'HEAD:'+name
-        data=subprocess.check_output(['git','show',revision],cwd=root)
+        data=subprocess.check_output(git+['show',revision],cwd=root)
         files[name]=data.decode('utf8',errors='replace')
     errors=audit(files)
     if errors:raise SystemExit('\n'.join(errors))
