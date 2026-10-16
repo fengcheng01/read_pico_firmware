@@ -4,20 +4,22 @@ import assert from 'node:assert/strict';
 import { registerHooks } from 'node:module';
 import { picoRestartTransport } from '../src/utils/reset.ts';
 let soft = 0, hard = 0;
+const signals = [];
 const loader = { async flashBegin(){ ++soft; }, async flashFinish(){} };
-const transport = { async setDTR(){ ++hard; }, async setRTS(){ ++hard; } };
-assert.equal(await picoRestartTransport(loader, transport, async()=>{}), 'soft');
-assert.equal(hard, 0, 'Successful soft reset must not signal a stale USB port');
+const transport = { async setDTR(state){ ++hard; signals.push(["DTR",state]); }, async setRTS(state){ ++hard; signals.push(["RTS",state]); } };
+assert.equal(await picoRestartTransport(loader, transport, async(ms)=>{signals.push(['pause',ms]);}), 'hard');
+assert.deepEqual(signals, [['DTR',false],['RTS',true],['pause',200],['RTS',false],['pause',200]]);
+assert.equal(hard, 3, 'A soft ACK without a reboot must still send the mandatory board-reset pulse');
 loader.flashBegin = async()=>{throw new Error('gone');};
 assert.equal(await picoRestartTransport(loader, transport, async()=>{}), 'hard');
-assert.equal(hard, 3);
+assert.equal(hard, 6);
 transport.setDTR = async()=>{throw new Error('gone');};
 assert.equal(await picoRestartTransport(loader, transport, async()=>{}), 'unconfirmed');
 const mock = `export class Transport {
  constructor(){globalThis.serialTest.transports++;}
  async disconnect(){globalThis.serialTest.disconnects++;}
- async setDTR(){throw new Error('USB gone');}
- async setRTS(){throw new Error('USB gone');}
+ async setDTR(){if(globalThis.serialTest.fail==='reset')throw new Error('USB gone');}
+ async setRTS(state){if(globalThis.serialTest.fail==='reset')throw new Error('USB gone');if(state)globalThis.serialTest.asserted=true;else if(globalThis.serialTest.asserted)globalThis.serialTest.rebooted=true;}
 }
 export class ESPLoader {
  async main(){if(globalThis.serialTest.fail==='connect')throw new DOMException('An unknown system error has occurred.','NetworkError');return 'ESP32-S3';}
@@ -48,6 +50,6 @@ for(const fail of ['choose','connect','write','reset','none']){
  if(fail==='connect')assert.match(last.error,/握手.*NetworkError.*unknown system/);
  if(fail==='write'){assert.match(last.error,/应用写入.*write failed/);assert.equal(last.writtenBytes,50);assert.equal(serialTest.writes,1);}
  if(fail==='reset'){assert.equal(last.state,'done');assert.match(last.message,/未确认复位成功/);assert(!logs.some(line=>line==='软复位命令执行成功'));assert(logs.some(line=>line.includes('复位未确认')));}
- if(fail==='none'){assert.equal(last.state,'done');assert.match(last.message,/已发送重启指令/);}
+ if(fail==='none'){assert.equal(last.state,'done');assert.match(last.message,/已执行硬件复位脉冲/);assert(serialTest.rebooted,'The reboot is modeled by RTS, never by the flash command ACK');}
 }
 console.log('Production web flasher: chooser cancellation, handshake/write stage errors, preserved progress, no write retries, reset fallback and completed-write status PASS');

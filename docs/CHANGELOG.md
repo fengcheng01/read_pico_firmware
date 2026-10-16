@@ -3,6 +3,11 @@
 按日期和作者简述对用户可见的功能变化；详细实现历史见 Git。使用方法见 [README](../README.zh-CN.md)。
 User-visible changes by date and author; Git retains implementation history. See [README](../README.md) for usage.
 
+## 0.6.12 · 2026-10-16
+
+- 官网同步发布PageRest首页、统一BIN烧录和当前界面；烧录结束不因命令应答跳过RTS硬件复位，区分脉冲完成与设备启动验收。公开页面继续隐藏本项目仓库入口，Cloudflare生产分支main自动构建web/dist。
+  Publish the PageRest homepage, unified BIN flasher and current screens. A protocol ACK no longer skips the RTS hardware reset; pulse completion remains separate from device boot acceptance. Hide project repository links and build web/dist automatically from Cloudflare's production main branch.
+
 ## 0.6.9 · 2026-10-16
 
 - 官网暂时移除本项目的GitHub、源码与发行页入口，保留本地烧录和第三方许可声明。

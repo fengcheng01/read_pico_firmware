@@ -1,8 +1,8 @@
 # PageRest 网站 / PageRest Website
 
-本目录是 React、TypeScript 和 Vite 静态网站，包含产品介绍、界面截图和 Web Serial 固件烧录工具。网站通过 GitHub Actions 构建并发布到 GitHub Pages。
+本目录是 React、TypeScript 和 Vite 静态网站，包含产品介绍、界面截图和 Web Serial 固件烧录工具。网站可通过既有Cloudflare Pages的read-pico项目随main自动部署；GitHub Pages工作流保留。
 
-This directory contains the React, TypeScript and Vite static website: product information, screenshots and the Web Serial firmware flasher. GitHub Actions builds and deploys it to GitHub Pages.
+This directory contains the React, TypeScript and Vite static website: product information, screenshots and the Web Serial firmware flasher. The existing Cloudflare Pages read-pico project deploys main automatically; the GitHub Pages workflow remains available.
 
 ## 本地开发 / Local development
 
@@ -69,8 +69,8 @@ Read/format failures clear old selections; generations discard late results from
 先构建固件，再在 `web/` 执行 `npm run test:firmware`（Node24），使用实际full/app镜像验证导入、相同升级负载、统一入口内容识别/地址/增量全擦拒绝、损坏与截断。选择文件/校验不访问串口；开始烧录才请求设备。外部网站上的“An unknown system error has occurred”仍须结合具体网址和发生阶段排查，不能仅凭字样断定BIN损坏。
 Build firmware first, then run `npm run test:firmware` in `web/` (Node24) against actual full/app images, covering import, identical upgrade payloads, unified content/address planning, app erase rejection, corruption and truncation. Selection/validation does not access serial; flashing requests a device. Diagnosing that generic error on another site still requires the URL and failure stage; the message alone does not establish a damaged BIN.
 
-刷机错误保留选择串口/握手/写入阶段与原始异常名，取消不再重复弹窗，部分写入失败不自动重试。软复位成功即停止发送USB信号；写入完成而两种复位都失败时，显示手动重启提示，不能当作已确认启动。对应测试：`npm run test:flasher`（模拟边界，不访问设备）。线上发布需另行部署本构建，修改本地文件不会更新网站。
-Flashing errors retain the chooser/handshake/write stage and original exception name. Cancellation does not reopen the chooser and partial writes are not retried. Soft-reset success stops USB signaling; when both resets fail after writing, show manual restart without claiming a confirmed boot. Run `npm run test:flasher` with mocked boundaries and no device access. Local edits require a separate deployment to update the public site.
+刷机错误保留选择串口/握手/写入阶段与原始异常名，取消不再重复弹窗，部分写入失败不自动重试。退出烧录协议的应答不能证明重启；应答或失败后均发送DTR=false、RTS=true等待200ms、RTS=false等待200ms的板级复位脉冲。信号执行失败显示复位未确认和手动重启提示，脉冲执行完成也仍须查看设备启动及版本。对应测试：`npm run test:flasher`（模拟边界，不访问设备）。线上发布需另行部署本构建，修改本地文件不会更新网站。
+Flashing errors retain the chooser/handshake/write stage and original exception name. Cancellation does not reopen the chooser and partial writes are not retried. A flash-protocol ACK does not establish reboot. After either ACK or failure, execute the board reset: DTR=false, RTS=true for200ms, then RTS=false for200ms. Signal failure reports unconfirmed reset/manual restart; even a completed pulse still requires device boot/version confirmation. Run `npm run test:flasher` with mocked boundaries and no device access. Local edits require a separate deployment to update the public site.
 
 
 ## 首页与截图 / Homepage and screen assets
@@ -86,3 +86,9 @@ Run npm run test:flasher-ui in web to exercise real component logic with hook sc
 
 发布静态文件保留public/THIRD_PARTY_LICENSES.txt内的依赖许可；升级已打包依赖版本时同步更新该文件。
 Preserve public/THIRD_PARTY_LICENSES.txt in static distribution; refresh it when upgrading bundled dependency versions.
+
+
+## 当前生产站点 / Current production site
+
+Cloudflare Pages项目`read-pico`连接`fengcheng01/read_pico_firmware`的`main`，根目录`web`、构建`npm run build`、输出`dist`，自定义域`pico.gofree.kdns.fr`。本地提交或功能分支打包不会更新生产；必须推送官网改动到该生产分支并核对Cloudflare部署成功。`web/.node-version`固定Node24。不将固件源码、source.zip、本机日志或私有文件放入`dist`。
+Cloudflare Pages project`read-pico` tracks`main` in`fengcheng01/read_pico_firmware`, with root`web`, command`npm run build`, output`dist` and domain`pico.gofree.kdns.fr`. A local commit or feature-branch build does not update production; push website changes to the production branch and verify the Cloudflare deployment. `web/.node-version` pins Node24. Never put firmware source, source.zip, local logs or private files in`dist`.

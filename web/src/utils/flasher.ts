@@ -161,7 +161,7 @@ export class PicoFlasher {
         }
       );
 
-      this.onLog?.(resetSent === 'soft' ? '软复位命令执行成功' : resetSent === 'hard' ? '已发送 RTS 硬复位脉冲兜底' : '复位未确认，请手动重启并核对版本');
+      this.onLog?.(resetSent === 'hard' ? '已执行 RTS 硬件复位脉冲' : '复位未确认，请手动重启并核对版本');
 
       try {
         await this.transport.disconnect();
@@ -172,7 +172,7 @@ export class PicoFlasher {
       this.updateState(
         'done',
         resetSent !== 'unconfirmed'
-          ? '固件写入成功，已发送重启指令。请在设备开机图底部核对固件版本。'
+          ? '固件写入完成，已执行硬件复位脉冲。请查看设备是否启动并核对版本。'
           : '固件写入完成，但未确认复位成功。请手动重启设备并核对版本。',
         100,
         totalSize,

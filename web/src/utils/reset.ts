@@ -1,8 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0
- * 中文：先走 ROM 软复位命令让 bootloader 退出并启动应用，再用 esptool 硬复位
- * 时序兜底；任一成功即算复位已发送。
- * English: First ask the ROM to leave the loader and boot the app, then fall
- * back to the esptool hard-reset pulse; either success counts as sent.
+ * 中文：退出烧录协议后仍发送小纸的硬件复位脉冲；命令应答不代表设备已经重启。
+ * English: Send the Pico hardware-reset pulse after leaving the flash protocol; an ACK does not establish a reboot.
  */
 
 export interface FlasherLogger {
@@ -26,29 +24,26 @@ function delay(ms: number): Promise<void> {
   return promise;
 }
 
-/**
- * Pico 专有复位逻辑：软复位命令优先，RTS 硬复位脉冲兜底
- */
+// 退出烧录协议后执行板级RTS复位。/ Reset via board RTS after leaving the flash protocol.
 export async function picoRestartTransport(
   esploader: EspLoaderLike,
   transport: TransportLike,
   pause: (ms: number) => Promise<void> = delay,
   logger?: FlasherLogger
-): Promise<'soft' | 'hard' | 'unconfirmed'> {
+): Promise<'hard' | 'unconfirmed'> {
   try {
-    // 软复位成功即停止，避免USB重枚举后再次操作已失效的串口信号。
-    // Stop after a successful soft reset to avoid signaling a stale port after USB re-enumeration.
+    // ESP32-S3 stub可应答但仍驻留，不能因ACK跳过板级复位。
+    // The ESP32-S3 stub may ACK while remaining active; never skip board reset on that ACK.
     await esploader.flashBegin(0, 0);
     await esploader.flashFinish(true);
-    logger?.log('ROM 软复位命令发送成功 (flashBegin 0 + flashFinish true)');
-    return 'soft';
+    logger?.log('退出烧录命令已应答，继续发送硬件复位脉冲');
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     logger?.log(`软复位未响应，尝试硬复位时序: ${message}`);
   }
 
-  // 软复位失败时才发送RTS脉冲，DTR保持非下载态。
-  // Send an RTS pulse only after soft reset fails, keeping DTR outside download state.
+  // 恢复实机曾可用的必发RTS脉冲，DTR保持非下载态。
+  // Restore the previously working mandatory RTS pulse, keeping DTR outside download state.
   try {
     await transport.setDTR(false);
     await transport.setRTS(true);
