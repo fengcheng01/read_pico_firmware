@@ -43,6 +43,44 @@ const int clear_cycle_time = 15;
 
 static RenderContext_t render_context;
 
+// ---- 逐行/逐列相位覆盖（揭页错相）----
+// 设置只在下一次 epd_draw_base 生效：draw 前快照进 render_context 并立刻清空，
+// 崩溃或复用都不会把上一场的指针带进普通刷新。Row/column phase overrides (staggered
+// page turn): armed for exactly one epd_draw_base call, snapshotted into the render
+// context and cleared up front so crashes or reuse never leak stale pointers.
+
+static const uint8_t* const* s_phase_luts;
+static const int8_t* s_line_phase;
+static const int* s_col_band_x0;
+static const int* s_col_band_x1;
+static const int8_t* s_col_band_phase;
+static int s_col_band_n;
+
+void epd_clear_phase_luts(void) {
+    s_phase_luts = NULL;
+    s_line_phase = NULL;
+    s_col_band_x0 = NULL;
+    s_col_band_x1 = NULL;
+    s_col_band_phase = NULL;
+    s_col_band_n = 0;
+}
+
+void epd_set_line_phase_luts(const uint8_t* const* phase_luts, const int8_t* line_phase) {
+    epd_clear_phase_luts();
+    s_phase_luts = phase_luts;
+    s_line_phase = line_phase;
+}
+
+void epd_set_col_phase_luts(const uint8_t* const* phase_luts, const int* x0, const int* x1,
+                            const int8_t* phase, int nbands) {
+    epd_clear_phase_luts();
+    s_phase_luts = phase_luts;
+    s_col_band_x0 = x0;
+    s_col_band_x1 = x1;
+    s_col_band_phase = phase;
+    s_col_band_n = nbands;
+}
+
 void epd_push_pixels(EpdRect area, short time, int color) {
     render_context.area = area;
     epd_push_pixels_lcd(&render_context, time, color);
@@ -260,6 +298,13 @@ enum EpdDrawError IRAM_ATTR epd_draw_base(
     render_context.data_ptr = data;
     render_context.lut_build_func = lut_functions.build_func;
     render_context.lut_lookup_func = lut_functions.lookup_func;
+    render_context.phase_luts = s_phase_luts;
+    render_context.line_phase = s_line_phase;
+    render_context.col_band_x0 = s_col_band_x0;
+    render_context.col_band_x1 = s_col_band_x1;
+    render_context.col_band_phase = s_col_band_phase;
+    render_context.col_band_n = s_col_band_n;
+    epd_clear_phase_luts();
 
     render_context.lines_prepared = 0;
     render_context.lines_consumed = 0;

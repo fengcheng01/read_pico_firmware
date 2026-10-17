@@ -117,6 +117,64 @@ def require(condition, message):
         raise ValueError(message)
 
 
+# 无目录书：章节自带编号题头，供正文补目扫描。ch4 只有连续编号行（无正文）必须被拒绝。
+# Navigation-less book: chapters carry numbered headings for the body-scan fallback; ch4 holds only
+# consecutive numbered lines (no prose) and must stay untitled.
+BODY_CHAPTERS = [
+    ("h1", "第一章 河边清晨", True),
+    ("h2", "Chapter II 雨后小路", True),
+    ("p", "第三章 山间书屋", True),
+    ("h1", "第四章 灯下归途", False),
+]
+
+
+def make_body_epub(path):
+    items = "".join(
+        f'<item id="c{i}" href="text/ch{i}.xhtml" media-type="application/xhtml+xml"/>'
+        for i in range(1, 5)
+    )
+    spine = "".join(f'<itemref idref="c{i}"/>' for i in range(1, 5))
+    package = f'''<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="{NS['opf']}" version="3.0" unique-identifier="book-id">
+<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+<dc:identifier id="book-id">urn:read-pico:fixture:none:0</dc:identifier>
+<dc:title>河边记事</dc:title><dc:language>zh-CN</dc:language><dc:creator>Read Pico fixtures</dc:creator>
+<meta property="dcterms:modified">2026-01-01T00:00:00Z</meta>
+</metadata><manifest>{items}</manifest><spine>{spine}</spine></package>'''
+    container = f'''<?xml version="1.0" encoding="UTF-8"?>
+<container xmlns="{NS['ocf']}" version="1.0"><rootfiles>
+<rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
+</rootfiles></container>'''
+    with zipfile.ZipFile(path, "w") as archive:
+        zip_entry(archive, "mimetype", "application/epub+zip", zipfile.ZIP_STORED)
+        zip_entry(archive, "META-INF/container.xml", container)
+        zip_entry(archive, "OEBPS/content.opf", package)
+        for index, (tag, title, prose) in enumerate(BODY_CHAPTERS):
+            if prose:
+                body = "".join(f"<p>{escape(p)}</p>" for p in paragraphs(index, 3))
+            else:
+                body = "".join(
+                    f"<p>第四章 假目录{word}</p>" for word in ("一", "二", "三")
+                )
+            chapter = f'''<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="{NS['x']}" xml:lang="zh-CN"><head><title>{escape(title)}</title></head>
+<body><{tag}>{escape(title)}</{tag}>{body}</body></html>'''
+            zip_entry(archive, f"OEBPS/text/ch{index + 1}.xhtml", chapter)
+
+
+def check_body_epub(path):
+    with zipfile.ZipFile(path) as archive:
+        require(archive.testzip() is None, "ZIP CRC failure")
+        first = archive.infolist()[0]
+        require(first.filename == "mimetype" and first.compress_type == zipfile.ZIP_STORED, "mimetype order/compression")
+        require(not any(name.endswith(".ncx") or "nav.xhtml" in name for name in archive.namelist()), "body fixture has navigation")
+        for name in archive.namelist()[1:]:
+            ET.fromstring(archive.read(name))
+        for index, (tag, title, prose) in enumerate(BODY_CHAPTERS):
+            chapter = ET.fromstring(archive.read(f"OEBPS/text/ch{index + 1}.xhtml"))
+            require(chapter.find(f"x:body/x:{tag}", NS).text == title, "body heading content")
+
+
 def check_epub(path, navigation, div_heavy):
     with zipfile.ZipFile(path) as archive:
         require(archive.testzip() is None, "ZIP CRC failure")
@@ -193,6 +251,12 @@ def main():
         check_epub(path, navigation, div_heavy)
         manifest.append(dict(file=f"books/{name}", encoding="utf-8", chapters=TITLES, navigation=navigation,
                              purpose="Nested div paragraph boundaries" if div_heavy else f"{navigation} TOC and spine order"))
+    path = books / "河边记事_body.epub"
+    make_body_epub(path)
+    check_body_epub(path)
+    manifest.append(dict(file="books/河边记事_body.epub", encoding="utf-8",
+                         chapters=[title for _, title, _ in BODY_CHAPTERS], navigation="none",
+                         purpose="Body-heading TOC fallback (h1/h2/p numbering, English roman, no-prose rejection)"))
     for item in manifest:
         data = (args.output / item["file"]).read_bytes()
         item.update(bytes=len(data), sha256=hashlib.sha256(data).hexdigest())

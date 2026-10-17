@@ -1,11 +1,19 @@
 /*
  * SPDX-FileCopyrightText: 2026 mindreset
  * SPDX-License-Identifier: Apache-2.0
+ * 冻结：用户批准蓝牙翻页器后，WiFi 扫描与启动先确认蓝牙资源已释放；失败显示错误而不叠加无线内存。
+ * Frozen: With the user-approved page-turner, WiFi scan/start first confirms BLE resources were released; failure shows an error instead of stacking radio allocations.
+ * 冻结修订：进页先停止蓝牙再切内置字体，切换失败保留可读原字体且不启动服务；停服后再恢复所选字体。
+ * Frozen revision: Stop BLE before switching to the built-in font; failed switching retains readable original text and gates service startup, restoring the saved font after shutdown.
  *
  * 传书页负责两种接入模式生命周期、书源注入与状态展示；HTTP和文件接收属于独立组件。
  * Transfer page owns both network modes, storage injection and status; the component receives files.
  *
- * 冻结：按用户双模式要求提供热点与已有WiFi，离页停止网络；沿用全局锁屏/睡眠策略，不新增协同；深睡/断电会中断传输。
+ * 冻结：按用户双模式要求提供热点与已有WiFi，离页停止网络；实机反馈要求会话在线（含启动与自动同步）不空闲锁屏——锁屏浅睡会断开网页与设备的连接，电源键手动锁屏不受影响；深睡/断电会中断传输。
+ * 第二批 UI：接入与打开网页分成两步；完成后可停止网络并去书架，上传中拒绝该出口。
+ * Batch-two UI separates joining from opening the upload page; completion can stop networking and open Library, with the exit rejected while uploading.
+ * 冻结修订：停服后在同任务恢复所选字体，返回页首帧不得先用内置再等后台重载。
+ * Frozen revision: After stopping HTTP, restore the selected font on this task before painting the first return frame.
  * render只画快照；内置存储单文件上限由book_store提供，不格式化TF卡。
  * 上传并发扫描曾欠载，页内增加预填余量；离页停服后恢复，不改波形或像素时钟。
  * 用户要求设备端配网：停服后扫描选网，ASCII密码只在连接保存时写入，离开输入页即清空。
@@ -16,7 +24,7 @@
  * 用户批准优化：单请求后台同步，离页取消并收齐；UI 串行准备/应用进度，下载明确确认，文件变更与同步互斥。
  * User-approved optimization: one network worker, cancel/join on exit; UI serializes progress snapshots/applications, confirms pulls and excludes file mutations during sync.
  * 用户批准补全产品功能：新增进度同步视图（kosync 协议，兼容 KOReader），用户反馈后按需自动连接保存的 WiFi；传书与阅读设置均可手动同步，传书上行可自动上传；密码仅存 MD5。
- * Frozen: user-requested AP/STA modes stop networking on exit; retain global lock/sleep policy without coordination; deep sleep or power loss interrupts transfer.
+ * Frozen: user-requested AP/STA modes stop networking on exit; device feedback requires no idle lock while a session is live (starting or auto-syncing) — lock light-sleep drops the webpage link, while manual power-key locking is unaffected; deep sleep or power loss interrupts transfer.
  * Render only paints snapshots; book_store defines the flash file limit. Never format the TF card.
  * Concurrent uploads underrun scan queues; increase prefill until service exit without changing waveforms or pixel clocks.
  * User-requested device provisioning scans while stopped; save ASCII passwords only on connect and clear input on leaving the editor.
@@ -26,13 +34,16 @@
  * User-approved completion: STA sessions with an uplink drive SNTP calibration that writes the PMU once and stops; the transfer lifecycle itself is unchanged.
  * User-approved completion: a progress-sync view (kosync protocol, KOReader-compatible) now automatically connects saved WiFi on demand from transfer or reader settings, while transfer uplinks may auto-push; passwords persist only as MD5.
  */
-// 整个传书页暂停 SD 字体并使用内置字库；HTTP 停止后才恢复读取。
-// Use the built-in font and suspend SD font opens for this page; resume only after HTTP stops.
+// 传书页暂停SD字体并使用内置字库；HTTP停止后先恢复所选字体再画返回页。
+// Use the built-in font and suspend SD opens here; after HTTP stops, restore the selected font before the return page paints.
 #include <stdio.h>
 #include <string.h>
 
 #include "app.h"
+#include "os_page_turner.h"
 #include "book_cover.h"
+#include "book_entry.h"
+#include "app_registry.h"
 #include "book_store.h"
 #include "book_progress.h"
 #include "display.h"
@@ -49,6 +60,7 @@
 #include "ui_kit.h"
 #include "ui/product/ui_product.h"
 #include "ui_menu.h"
+#include "ui_sheet.h"
 #include "ui_wifi_qr.h"
 
 static const char* TAG = "transfer_page";
@@ -58,8 +70,16 @@ static bool s_start_pending, s_settle, s_any_changed;
 static bool s_media_lost;
 static esp_err_t s_font_error;
 static int s_pressed = -1;
+// 忙时拒绝的短暂提示：只占状态卡的常驻提示行，几秒后由 tick 撤下。
+// / Short-lived note for busy rejections: it takes the status card's standing hint line and ticks remove it after a few seconds.
+static char s_hint[80];
+static int64_t s_hint_ms;
 static read_pico_transfer_mode_t s_mode = READ_PICO_TRANSFER_MODE_AP;
 static bool s_session_started;
+// 启动失败的自动重试：一次为限，用户点接入方式重新武装。
+// One automatic retry after a failed start; an explicit mode tap re-arms it.
+static int64_t s_start_failed_ms;
+static bool s_start_retry_used;
 static int64_t s_poll_ms;
 static uint64_t s_free;
 static size_t s_heap_before, s_internal_before;
@@ -117,10 +137,17 @@ static void clear_password(void) {
 static EpdRect network_control_rect(int id) {
     if (id < NETWORK_ROWS) return (EpdRect){UI_MARGIN, 350 + id * 100, ui_content_width(), 88};
     if (id == 6) return ui_row_rect(0, 2, 176, 84);
-    if (id == 11) return s_forget_confirm ? ui_row_rect(0, 2, 600, UI_BTN_H) : ui_row_rect(1, 2, 176, 84);
-    if (id == 12) return ui_row_rect(1, 2, 600, UI_BTN_H);
+    // 遗忘确认走统一底部面板：11 确认（右），12 取消（左/面板上方）。
+    // Forgetting confirms through the shared bottom sheet: 11 Confirm (right), 12 Cancel (left/above).
+    if (id == 11) return s_forget_confirm ? ui_sheet_confirm_button(1) : ui_row_rect(1, 2, 176, 84);
+    if (id == 12) return ui_sheet_confirm_button(0);
     if (id == 10) return ui_bar_rect(0, 1);
     return ui_row_rect(id - 7, 3, 968, 84);
+}
+static int sheet_target_for(int hit) {
+    if (hit == 1) return 11;
+    if (hit == 0 || hit == UI_SHEET_HIT_OUTSIDE) return 12;
+    return -1;
 }
 
 static EpdRect password_control_rect(int id) {
@@ -150,14 +177,16 @@ static void provisioning_button(uint8_t* fb, EpdRect rect, const char* text, int
 static void draw_networks(uint8_t* fb) {
     ui_clear_page(fb);
     if (s_forget_confirm) {
-        ui_draw_header(fb, "遗忘已保存网络？", "仅清除 WiFi 连接信息，不影响图书");
+        // 常规列表照画，确认面板盖在底部：上下文不消失。
+        // The normal list still paints with the confirm sheet over the bottom: context never vanishes.
+        ui_draw_header(fb, "选择 WiFi", "选择 2.4 GHz 网络，连接后同网传书");
         char name[33];
         snprintf(name, sizeof(name), "%s", s_saved_ssid);
         fit_label(name, UI_PX_BODY, ui_content_width());
         ui_text(fb, UI_MARGIN, 350, UI_PX_BODY, name, EPD_DRAW_ALIGN_LEFT, false);
         ui_text(fb, UI_MARGIN, 450, UI_PX_CAPTION, s_network_message, EPD_DRAW_ALIGN_LEFT, false);
-        provisioning_button(fb, network_control_rect(11), "确认遗忘", 11);
-        provisioning_button(fb, network_control_rect(12), "取消", 12);
+        ui_draw_confirm_sheet(fb, "遗忘已保存网络？", "仅清除 WiFi 连接信息，不影响图书",
+                              "确认遗忘", s_pressed == 11 ? 1 : s_pressed == 12 ? 0 : -1);
         ui_draw_menu_handle(fb, false);
         return;
     }
@@ -201,18 +230,23 @@ static void draw_networks(uint8_t* fb) {
 
 static void draw_password(uint8_t* fb) {
     ui_clear_page(fb);
-    ui_draw_header(fb, "WiFi 密码", "输入完成后点连接，密码将保存在设备");
-    char name[33];
-    snprintf(name, sizeof(name), "%s", s_selected.ssid);
-    fit_label(name, UI_PX_BODY, ui_content_width());
-    ui_text(fb, UI_MARGIN, 176, UI_PX_BODY, name, EPD_DRAW_ALIGN_LEFT, false);
-    char caption[80];
-    size_t len = strlen(s_password);
+    // 编辑同步字段时页面就是同步编辑器：不再挂 WiFi 标题和无关的网络名。
+    // While editing a sync field the page is the sync editor: no WiFi title and no unrelated network name.
     const char* edit_title = s_edit_field == EDIT_SYNC_URL ? "服务器地址" :
                              s_edit_field == EDIT_SYNC_USER ? "同步用户名" :
                              s_edit_field == EDIT_SYNC_PASS ? "同步密码（输入新值）" : NULL;
+    ui_draw_header(fb, edit_title ? edit_title : "WiFi 密码",
+                   edit_title ? "输入完成后点保存，设置保存在设备" : "输入完成后点连接，密码将保存在设备");
+    if (!edit_title) {
+        char name[33];
+        snprintf(name, sizeof(name), "%s", s_selected.ssid);
+        fit_label(name, UI_PX_BODY, ui_content_width());
+        ui_text(fb, UI_MARGIN, 176, UI_PX_BODY, name, EPD_DRAW_ALIGN_LEFT, false);
+    }
+    char caption[80];
+    size_t len = strlen(s_password);
     snprintf(caption, sizeof(caption), "%s · %u/%u",
-             edit_title ? edit_title : s_selected.requires_password ? "密码" : "开放网络，无需密码",
+             edit_title ? "输入内容" : s_selected.requires_password ? "密码" : "开放网络，无需密码",
              (unsigned)len, PASSWORD_MAX);
     ui_text(fb, UI_MARGIN, 240, UI_PX_CAPTION, caption, EPD_DRAW_ALIGN_LEFT, false);
     EpdRect field = {UI_MARGIN, 288, ui_content_width(), 86};
@@ -242,6 +276,9 @@ static void draw_password(uint8_t* fb) {
 
 static void queue_network_start(read_pico_transfer_mode_t mode) {
     s_mode = mode;
+    // 用户显式点按：重新武装一次自动重试。
+    // An explicit tap: re-arm the single automatic retry.
+    s_start_failed_ms = 0; s_start_retry_used = false;
     s_sync_pushed = false;
     s_qr_url = mode == READ_PICO_TRANSFER_MODE_STA;
     clear_qr();
@@ -279,7 +316,7 @@ static app_redraw_t network_ui_tick(app_ctx_t* ctx) {
     if (s_view != TRANSFER_NETWORKS || s_forget_confirm || !s_scan_pending || ctx->consumed) return APP_REDRAW_NONE;
     s_scan_pending = false;
     s_network_count = s_network_page = 0;
-    esp_err_t err = read_pico_transfer_scan_wifi(s_networks, &s_network_count);
+    esp_err_t err = os_page_turner_pause() ? read_pico_transfer_scan_wifi(s_networks, &s_network_count) : ESP_ERR_INVALID_STATE;
     if (err != ESP_OK) {
         s_network_count = 0;
         snprintf(s_network_message, sizeof(s_network_message), "扫描失败：%s", esp_err_to_name(err));
@@ -291,10 +328,7 @@ static app_redraw_t network_ui_tick(app_ctx_t* ctx) {
 }
 
 static int provisioning_hit(uint16_t x, uint16_t y) {
-    if (s_forget_confirm) {
-        for (int i = 11; i <= 12; ++i) if (ui_rect_hit(network_control_rect(i), x, y)) return i;
-        return -1;
-    }
+    if (s_forget_confirm) return sheet_target_for(ui_confirm_sheet_hit(x, y));
     if (s_view == TRANSFER_PASSWORD) {
         for (int i = 0; i < 47; ++i) if (ui_rect_hit(password_control_rect(i), x, y)) return i;
     } else {
@@ -340,7 +374,13 @@ static app_redraw_t provisioning_action(int id) {
         else if (id == 7 && s_network_page) --s_network_page;
         else if (id == 8) { s_scan_pending = true; s_network_message[0] = 0; }
         else if (id == 9 && (s_network_page + 1) * NETWORK_ROWS < s_network_count) ++s_network_page;
-        else if (id == 10) queue_network_start(s_mode);
+        else if (id == 10) {
+            // 返回只切视图不再自动拉起网络；首页点接入方式即重新开始。
+            // Back only switches views and never restarts networking; tapping a mode on Home starts it again.
+            s_view = TRANSFER_HOME;
+            s_pressed = -1;
+            return APP_REDRAW_PAGE;
+        }
         else if (id == 11) { s_forget_confirm = true; s_network_message[0] = 0; }
         return APP_REDRAW_PAGE;
     }
@@ -441,6 +481,7 @@ static void open_sync_edit(transfer_edit_t field) {
 }
 static void sync_button(uint8_t* fb, int i, const char* label, bool enabled) {
     EpdRect r = sync_action_rect(i);
+    if (s_pressed == 910 + i) ui_draw_pressed_round_rect(fb, r, UI_BTN_RADIUS);
     ui_draw_round_rect(fb, r, UI_BTN_RADIUS, enabled ? UI_GRAY_BLACK : UI_GRAY_LIGHT);
     ui_text_vc(fb, r.x + r.width / 2, r.y + r.height / 2, 32, label, EPD_DRAW_ALIGN_CENTER, false);
 }
@@ -454,6 +495,7 @@ static void draw_sync(uint8_t* fb) {
     const char* labels[] = {"服务器", "用户名", "密码", "自动上传"};
     for (int i = 0; i < 4; ++i) {
         EpdRect r = sync_row_rect(i);
+        if (s_pressed == 900 + i) ui_draw_pressed_round_rect(fb, r, UI_CHIP_RADIUS);
         ui_text_vc(fb, r.x, r.y + r.height / 2, 30, labels[i], EPD_DRAW_ALIGN_LEFT, false);
         ui_product_title(fb, (EpdRect){r.x + 180, r.y + 20, r.width - 180, 34}, values[i], 26, 1);
         ui_hairline(fb, r.y + r.height, r.x, r.width, UI_GRAY_LIGHT);
@@ -471,6 +513,10 @@ static void draw_sync(uint8_t* fb) {
     ui_product_title(fb, (EpdRect){UI_MARGIN, 850, ui_content_width(), 160},
                      "上传/下载针对最后一本读过的书；下载完成后确认应用，取消保留本地位置。同步时暂停文件上传与删除；自动上传每次联网一次。兼容 KOReader 与 kosync 服务器；自建服务器 http/https 均可，https 需有效证书。",
                      24, 5);
+    // 底栏补一格“返回”，与右上返回同效；不再留空底栏。
+    // The bar gains a Return cell matching the header back; the bar is never empty again.
+    if (s_pressed == 915) ui_draw_pressed_round_rect(fb, ui_bar_rect(0, 1), UI_BTN_RADIUS);
+    ui_draw_button(fb, ui_bar_rect(0, 1), "返回", false);
     ui_draw_menu_handle(fb, false);
 }
 static void cancel_sync(void) {
@@ -506,17 +552,34 @@ static app_redraw_t sync_action(app_ctx_t* ctx, int id) {
     else return APP_REDRAW_NONE;
     return APP_REDRAW_PAGE;
 }
+// 底栏返回与右上返回同效。/ The bar return matches the header back.
+static int sync_hit_rect_id(int id) { return id == 915 ? 914 : id; }
+static EpdRect sync_hit_rect(int id) {
+    if (id == 914) return sync_back_rect();
+    if (id == 915) return ui_bar_rect(0, 1);
+    if (id >= 910) return sync_action_rect(id - 910);
+    return sync_row_rect(id - 900);
+}
 static int sync_hit(uint16_t x, uint16_t y) {
     if (ui_rect_hit(sync_back_rect(), x, y)) return 914;
+    if (ui_rect_hit(ui_bar_rect(0, 1), x, y)) return 915;
     for (int i = 0; i < 4; ++i) if (ui_rect_hit(sync_row_rect(i), x, y)) return 900 + i;
     for (int i = 0; i < 4; ++i) if (ui_rect_hit(sync_action_rect(i), x, y)) return 910 + i;
     return -1;
 }
 static app_redraw_t sync_gesture(app_ctx_t* ctx, const ui_gesture_event_t* ev) {
-    if (ev->type != UI_GESTURE_TAP) return APP_REDRAW_NONE;
-    int id = sync_hit(ev->x0, ev->y0);
-    if (id >= 0 && id == sync_hit(ev->x, ev->y)) return sync_action(ctx, id);
-    return APP_REDRAW_NONE;
+    // 与首页同款按下反馈：按下铺灰底局推，抬起命中同一目标才执行。
+    // The same press feedback as Home: a gray bed on press, executing only a release over the same target.
+    int old = s_pressed;
+    int origin = sync_hit(ev->x0, ev->y0);
+    s_pressed = ev->type == UI_GESTURE_PRESS ? origin : -1;
+    if (ev->type == UI_GESTURE_TAP && old >= 0 && old == origin && sync_hit(ev->x, ev->y) == origin)
+        return sync_action(ctx, sync_hit_rect_id(origin));
+    if (s_pressed == old) return APP_REDRAW_NONE;
+    render(ctx, ctx->fb);
+    s_settle = false;
+    s_area = sync_hit_rect(old >= 0 ? old : s_pressed);
+    return APP_REDRAW_AREA;
 }
 static uint64_t free_bytes(void* arg) { return book_store_free_bytes(arg); }
 
@@ -533,7 +596,7 @@ static void draw_status(uint8_t* fb) {
     ui_clear_rect_fast(fb, area);
     const char* state = "网络已停止";
     if (s_start_pending || s_status.state == READ_PICO_TRANSFER_STARTING) state = "正在准备传书…";
-    else if (s_status.state == READ_PICO_TRANSFER_READY) state = "等待上传";
+    else if (s_status.state == READ_PICO_TRANSFER_READY) state = s_status.done_count ? "上传完成，可继续添加" : "等待上传";
     else if (s_status.state == READ_PICO_TRANSFER_UPLOADING) state = "正在接收";
     else if (s_status.state == READ_PICO_TRANSFER_ERROR) state = s_status.network_ready ? "上传失败，请重试" : "连接失败，可重试或切回热点";
     if (s_media_lost) state = "存储已移除，传书已停止";
@@ -544,32 +607,41 @@ static void draw_status(uint8_t* fb) {
         snprintf(line, sizeof(line), "已连接 %u 台 · 已完成 %u 个文件", s_status.sta_count, s_status.done_count);
     else snprintf(line, sizeof(line), "同网浏览器上传 · 已完成 %u 个文件", s_status.done_count);
     ui_text(fb, area.x, area.y + 56, UI_PX_CAPTION, line, EPD_DRAW_ALIGN_LEFT, false);
-    snprintf(line, sizeof(line), "%s", s_status.cur_name);
+    snprintf(line, sizeof(line), "%s", s_status.cur_name[0] ? s_status.cur_name :
+             s_status.last_error != ESP_OK ? esp_err_to_name(s_status.last_error) : "");
     while (*line && ttf_text_width_px(UI_PX_CAPTION, line) > area.width) {
         size_t n = strlen(line) - 1;
         while (n && ((unsigned char)line[n] & 0xc0) == 0x80) --n;
         line[n] = 0;
     }
     ui_text(fb, area.x, area.y + 98, UI_PX_CAPTION, line, EPD_DRAW_ALIGN_LEFT, false);
-    snprintf(line, sizeof(line), "%.1f / %.1f MB", s_status.cur_bytes / 1048576.0, s_status.cur_total / 1048576.0);
-    ui_text(fb, area.x, area.y + 140, UI_PX_BODY, line, EPD_DRAW_ALIGN_LEFT, false);
-    EpdRect track = {area.x, area.y + 188, area.width, 12};
-    epd_fill_rect(track, UI_GRAY_LIGHT, fb);
     if (s_status.cur_total) {
+        snprintf(line, sizeof(line), "%.1f / %.1f MB", s_status.cur_bytes / 1048576.0, s_status.cur_total / 1048576.0);
+        ui_text(fb, area.x, area.y + 140, UI_PX_BODY, line, EPD_DRAW_ALIGN_LEFT, false);
+        EpdRect track = {area.x, area.y + 188, area.width, 12};
+        epd_fill_rect(track, UI_GRAY_LIGHT, fb);
         uint64_t width = (uint64_t)s_status.cur_bytes * track.width / s_status.cur_total;
         track.width = width > (uint64_t)track.width ? track.width : (int)width;
         epd_fill_rect(track, UI_GRAY_BLACK, fb);
+    } else if (!s_media_lost && s_status.state == READ_PICO_TRANSFER_READY) {
+        ui_product_title(fb, (EpdRect){area.x, area.y + 120, area.width, 100},
+                         "打开上方网址，在网页选择文件上传。图书、字体、图片会存入各自目录。", 26, 2);
     }
     if (s_status.last_error != ESP_OK)
         ui_text(fb, area.x, area.y + 222, UI_PX_CAPTION, s_status.network_ready ? "上传未完成，请在浏览器查看原因" : "检查WiFi配置后重新选择接入方式", EPD_DRAW_ALIGN_LEFT, false);
-    ui_text(fb, area.x, area.y + 262, UI_PX_CAPTION, s_status.state == READ_PICO_TRANSFER_UPLOADING ? "上传完成后可切换接入方式" : "离开本页会断开网络", EPD_DRAW_ALIGN_LEFT, false);
+    else if (s_status.done_count)
+        ui_text(fb, area.x, area.y + 222, 24, "图书在书架，字体和图片在对应设置", EPD_DRAW_ALIGN_LEFT, false);
+    ui_text(fb, area.x, area.y + 262, UI_PX_CAPTION,
+            s_hint[0] ? s_hint : s_status.state == READ_PICO_TRANSFER_UPLOADING ? "接收中，请保持本页和网络连接" : s_status.done_count ? "可继续上传，或去书架查看图书" : "离开本页会断开网络",
+            EPD_DRAW_ALIGN_LEFT, false);
     ui_text(fb, area.x, area.y + 300, UI_PX_CAPTION, "同名文件上传后将覆盖", EPD_DRAW_ALIGN_LEFT, false);
 }
 
 static EpdRect control_rect(int id) {
     if (id == 3) return (EpdRect){UI_MARGIN, 454, 350, 60};
     if (id == 4) return (EpdRect){UI_MARGIN, 596, ui_content_width(), 84};
-    return id == 2 ? ui_bar_rect(0, 1) : ui_row_rect(id, 2, UI_CONTENT_TOP, UI_BTN_H);
+    if (id == 5) return ui_bar_rect(1, 2);
+    return id == 2 ? ui_bar_rect(0, s_status.done_count ? 2 : 1) : ui_row_rect(id, 2, UI_CONTENT_TOP, UI_BTN_H);
 }
 
 static void render(app_ctx_t* ctx, uint8_t* fb) {
@@ -584,36 +656,40 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
         if (s_pressed == i) ui_draw_pressed_round_rect(fb, r, UI_BTN_RADIUS);
         ui_draw_button(fb, r, i == 0 ? "设备热点" : "已有 WiFi", (int)s_mode == i);
     }
-    // 连接卡片：网络名、口令/状态与二维码同框。/ Connection card: network name, secret/state and the QR in one frame.
-    EpdRect card = {UI_MARGIN - 8, 262, ui_content_width() + 16, 246};
+    // 两步连接与单个二维码共用卡片，不增加重复扫码目标。
+    // Both steps and one switchable QR share a card without duplicate scan targets.
+    EpdRect card = {UI_MARGIN - 8, 274, ui_content_width() + 16, 244};
     ui_draw_round_rect(fb, card, UI_BTN_RADIUS, UI_GRAY_BLACK);
+    ui_text(fb, UI_MARGIN, 280, 24,
+            s_mode == READ_PICO_TRANSFER_MODE_AP ? "1  连接设备热点" : "1  连接同一 WiFi",
+            EPD_DRAW_ALIGN_LEFT, false);
     char name[64];
     snprintf(name, sizeof(name), "%s", s_mode == READ_PICO_TRANSFER_MODE_AP ? s_status.ssid : s_status.wifi_ssid);
-    int name_px = UI_PX_CAPTION;
-    int name_width = 330;
-    while (name_px > 12 && ttf_text_width_px(name_px, name) > name_width) --name_px;
-    ui_text(fb, UI_MARGIN, 282, name_px, name, EPD_DRAW_ALIGN_LEFT, false);
-    ui_text(fb, UI_MARGIN, 334, UI_PX_CAPTION,
-            s_mode == READ_PICO_TRANSFER_MODE_AP ? "口令：" READ_PICO_TRANSFER_PASSWORD :
-            s_status.network_ready ? "设备已连接；手机需同网" :
-            s_start_pending || s_status.state == READ_PICO_TRANSFER_STARTING ? "正在连接已保存网络…" :
-            s_status.wifi_configured ? "已保存，尚未连接" : "点已有 WiFi 扫描选网",
-            EPD_DRAW_ALIGN_LEFT, false);
-    int url_px = UI_PX_CAPTION;
-    while (url_px > 12 && ttf_text_width_px(url_px, s_status.url) > 330) --url_px;
-    ui_text(fb, UI_MARGIN, 378, url_px,
+    fit_label(name, 24, 344);
+    ui_text(fb, UI_MARGIN, 316, 24, name, EPD_DRAW_ALIGN_LEFT, false);
+    char status_hint[96];
+    if (s_mode == READ_PICO_TRANSFER_MODE_AP) snprintf(status_hint, sizeof(status_hint), "口令：%s", READ_PICO_TRANSFER_PASSWORD);
+    else if (s_status.network_ready) snprintf(status_hint, sizeof(status_hint), "手机 / 电脑也连接此网络");
+    else if (s_start_pending || s_status.state == READ_PICO_TRANSFER_STARTING) snprintf(status_hint, sizeof(status_hint), "正在连接已保存网络…");
+    else snprintf(status_hint, sizeof(status_hint), "%s", s_status.wifi_configured ? "连接失败，点已有 WiFi 重选" : "点已有 WiFi 扫描选网");
+    fit_label(status_hint, 22, 344);
+    ui_text(fb, UI_MARGIN, 350, 22, status_hint, EPD_DRAW_ALIGN_LEFT, false);
+    ui_text(fb, UI_MARGIN, 384, 24, "2  打开上传网页", EPD_DRAW_ALIGN_LEFT, false);
+    int url_px = 24;
+    while (url_px > 12 && ttf_text_width_px(url_px, s_status.url) > 344) --url_px;
+    ui_text(fb, UI_MARGIN, 418, url_px,
             s_status.network_ready ? s_status.url : "等待网络地址…", EPD_DRAW_ALIGN_LEFT, false);
-    ui_text(fb, UI_MARGIN, 420, 24,
-            !s_status.network_ready ? "等待网络连接…" : !s_qr_ready ? "二维码失败，请手输网址" :
-            s_qr_url || s_mode == READ_PICO_TRANSFER_MODE_STA ? "扫码打开网页" : "扫码连接 WiFi",
+    ui_text(fb, 410, 280, 22,
+            !s_status.network_ready ? "等待连接" : !s_qr_ready ? "请手输网址" :
+            s_qr_url || s_mode == READ_PICO_TRANSFER_MODE_STA ? "网页二维码" : "热点二维码",
             EPD_DRAW_ALIGN_LEFT, false);
     if (s_mode == READ_PICO_TRANSFER_MODE_AP && s_status.network_ready) {
         EpdRect toggle = control_rect(3);
         if (s_pressed == 3) ui_draw_pressed_round_rect(fb, toggle, UI_BTN_RADIUS);
-        ui_draw_button(fb, toggle, s_qr_url ? "切换为 WiFi 码" : "切换为网页码", false);
-    }
+        ui_draw_button(fb, toggle, s_qr_url ? "切换为连接码" : "切换为网页码", false);
+    } else ui_text(fb, UI_MARGIN, 470, 22, "连接后扫码或手输网址", EPD_DRAW_ALIGN_LEFT, false);
     if (s_status.network_ready && s_qr_ready)
-        ui_wifi_qr_draw(fb, (EpdRect){404, 282, 224, 224});
+        ui_wifi_qr_draw(fb, (EpdRect){410, 308, 208, 208});
     draw_capacity(fb);
     ui_hairline(fb, 578, UI_MARGIN, ui_content_width(), UI_GRAY_BLACK);
     if (s_pressed == 4) ui_draw_pressed_round_rect(fb, control_rect(4), UI_BTN_RADIUS);
@@ -625,17 +701,33 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
     EpdRect back = control_rect(2);
     if (s_pressed == 2) ui_draw_pressed_round_rect(fb, back, UI_BTN_RADIUS);
     ui_draw_button(fb, back, "停止并返回", false);
+    if (s_status.done_count) {
+        if (s_pressed == 5) ui_draw_pressed_round_rect(fb, control_rect(5), UI_BTN_RADIUS);
+        ui_draw_button(fb, control_rect(5), "去书架", false);
+    }
     ui_draw_menu_handle(fb, false);
 }
 
-static bool transfer_prepare_sleep(void) { os_sync_job_request_cancel(); return true; }
+// 锁屏停会话：WiFi 在跑会拒绝浅睡，锁屏循环退化成空转轮询；停掉并在解锁后自动重启。
+// Locking must stop the session: a running radio rejects light sleep and degrades the
+// lock into a busy loop; restart automatically after unlocking.
+static bool s_restart_after_lock;
+static bool transfer_prepare_sleep(void) {
+    os_sync_job_request_cancel();
+    if (s_session_started || s_start_pending) {
+        stop_session();
+        s_start_pending = false;
+        s_restart_after_lock = true;
+    }
+    return true;
+}
 static void on_enter(app_ctx_t* ctx) {
     book_cover_join();
     app_sleep_prepare_register(transfer_prepare_sleep);
     (void)ctx;
     // 先关闭卡上字库，再开放替换；主循环的字体重试也会被暂停。
     // Close the card font before allowing replacement; event-loop font retries are suspended too.
-    s_font_error = ttf_font_suspend_sd(true);
+    s_font_error = os_page_turner_pause() ? ttf_font_suspend_sd(true) : ESP_ERR_INVALID_STATE;
     display_set_bulk_io(true);
     s_media_lost = false;
     memset(&s_status, 0, sizeof(s_status));
@@ -645,6 +737,8 @@ static void on_enter(app_ctx_t* ctx) {
     s_heap_before = heap_caps_get_free_size(MALLOC_CAP_8BIT);
     s_internal_before = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     s_start_pending = true;
+    s_restart_after_lock = false;
+    s_start_failed_ms = 0; s_start_retry_used = false;
     s_view = TRANSFER_HOME;
     s_forget_confirm = false;
     s_scan_pending = false;
@@ -670,6 +764,7 @@ static void stop_session(void) {
     // Join reception before reading counts and retain file changes across mode switches.
     read_pico_transfer_stop();
     read_pico_transfer_get_status(&s_status);
+    s_restart_after_lock = false;
     if (s_session_started && s_status.changed_count) s_any_changed = true;
     s_session_started = false;
 }
@@ -696,7 +791,7 @@ static void transfer_on_exit(app_ctx_t* ctx) {
     s_scan_pending = false;
     stop_session();
     os_time_network(false);
-    ttf_font_suspend_sd(false);
+    ttf_font_resume_sd();
     display_set_bulk_io(false);
     guard_draw_result(ctx->hl, update_display_white(ctx->hl));
     if (s_any_changed) book_store_notify_changed();
@@ -709,16 +804,47 @@ static app_redraw_t on_tick(app_ctx_t* ctx) {
     if (os_sync_job_poll(s_sync_message, sizeof(s_sync_message))) {
         return APP_REDRAW_PAGE;
     }
+    // 解锁回到本页：锁屏停掉的会话自动重启，恢复锁屏前的使用状态。
+    // Returning to this page after unlock: a session stopped for locking restarts,
+    // restoring the pre-lock state.
+    if (s_restart_after_lock) {
+        s_restart_after_lock = false;
+        if (s_view == TRANSFER_HOME) s_start_pending = true;
+    }
+    // 启动失败 3 秒后自动重试一次：覆盖解锁重启与瞬时故障；用户点按重新武装。
+    // Retry a failed start once after three seconds: covers unlock-restarts and
+    // transient faults; an explicit tap re-arms it.
+    if (s_start_failed_ms && !s_session_started && !s_start_pending &&
+        s_view == TRANSFER_HOME && ctx->now_ms - s_start_failed_ms >= 3000) {
+        s_start_failed_ms = 0;
+        if (!s_start_retry_used) { s_start_retry_used = true; s_start_pending = true; }
+    }
+    // 会话在线（含启动中与自动同步）报告无触摸活动：锁屏浅睡会断开网页与设备的连接。
+    // Report touchless activity while a session is live (starting or auto-syncing):
+    // lock light-sleep drops the link between the webpage and the device.
+    if (s_session_started || s_start_pending || os_sync_job_busy()) app_loop_stay_awake();
+    // 拒绝提示到时撤下：只局部重画状态卡提示行，不做整页闪。
+    // / Expire the rejection note in place: repaint only the status card's hint line without a page flash.
+    if (s_hint[0] && s_view == TRANSFER_HOME && ctx->now_ms - s_hint_ms >= 4000) {
+        s_hint[0] = 0;
+        draw_status(ctx->fb);
+        s_area = (EpdRect){status_rect().x, status_rect().y + 250, status_rect().width, 40};
+        s_settle = false;
+        return APP_REDRAW_AREA;
+    }
     if (s_view != TRANSFER_HOME && s_view != TRANSFER_SYNC) return network_ui_tick(ctx);
     if (s_view == TRANSFER_HOME && s_start_pending) {
         s_start_pending = false;
-        if (s_font_error != ESP_OK) s_font_error = ttf_font_suspend_sd(true);
-        esp_err_t err = s_font_error == ESP_OK ? book_store_upload_root(&s_root) : s_font_error;
+        if (s_font_error != ESP_OK)
+            s_font_error = os_page_turner_pause() ? ttf_font_suspend_sd(true) : ESP_ERR_INVALID_STATE;
+        esp_err_t err = !os_page_turner_pause() ? ESP_ERR_INVALID_STATE :
+            s_font_error == ESP_OK ? book_store_upload_root(&s_root) : s_font_error;
         if (err == ESP_OK) {
             s_media_lost = false;
             s_free = book_store_free_bytes(&s_root);
             read_pico_transfer_cfg_t cfg = {.mode = s_mode, .root_dir = s_root.path, .is_flash = s_root.is_flash,
                 .font_dir = s_root.is_flash ? NULL : "/sdcard/fonts",
+                .image_dir = s_root.is_flash ? NULL : "/sdcard/images",
                 .file_limit = book_store_file_limit(&s_root), .free_bytes_cb = free_bytes, .free_bytes_ctx = &s_root, .file_changed_cb = book_progress_forget};
             err = read_pico_transfer_start(&cfg);
             s_session_started = err == ESP_OK;
@@ -726,7 +852,13 @@ static app_redraw_t on_tick(app_ctx_t* ctx) {
             if (err == ESP_OK) s_free = book_store_free_bytes(&s_root);
         }
         s_status.mode = s_mode;
-        if (err != ESP_OK) { s_status.state = READ_PICO_TRANSFER_ERROR; s_status.last_error = err; }
+        if (err != ESP_OK) {
+            s_status.state = READ_PICO_TRANSFER_ERROR; s_status.last_error = err; s_start_failed_ms = ctx->now_ms;
+            // 自动重试不再是隐形动作：3 秒后的重试在状态卡预告。
+            // The automatic retry is no longer invisible: the status card announces the three-second retry.
+            if (!s_start_retry_used) snprintf(s_hint, sizeof(s_hint), "连接失败，3 秒后自动重试");
+            s_hint_ms = ctx->now_ms + 1000;
+        }
         if (err == ESP_OK) prepare_qr();
         else clear_qr();
         ESP_LOGI(TAG, "start root=%s result=%s", s_root.path, esp_err_to_name(err));
@@ -771,6 +903,7 @@ static app_redraw_t on_tick(app_ctx_t* ctx) {
 }
 
 static int hit_control(uint16_t x, uint16_t y) {
+    if (s_status.done_count && ui_rect_hit(control_rect(5), x, y)) return 5;
     if (s_mode == READ_PICO_TRANSFER_MODE_AP && s_status.network_ready && ui_rect_hit(control_rect(3), x, y)) return 3;
     if (ui_rect_hit(control_rect(4), x, y)) return 4;
     for (int i = 0; i < 3; ++i) if (ui_rect_hit(control_rect(i), x, y)) return i;
@@ -789,6 +922,18 @@ static app_redraw_t on_gesture(app_ctx_t* ctx, const ui_gesture_event_t* ev) {
             s_qr_url = !s_qr_url;
             prepare_qr();
             return APP_REDRAW_PAGE;
+        } else if (origin == 5) {
+            // 原子检查接收是否空闲；先汇合网络任务，再请求书架，避免后台继续写入。
+            // Atomically check reception is idle; join network tasks before requesting Library to prevent background writes.
+            if (!read_pico_transfer_try_stop_if_idle()) {
+                snprintf(s_hint, sizeof(s_hint), "正在上传或删除，完成后再去书架");
+                s_hint_ms = ctx->now_ms;
+                return APP_REDRAW_PAGE;
+            }
+            s_start_pending = false;
+            stop_session();
+            if (book_entry_request(BOOK_ENTRY_SHELF, NULL)) ctx->request_app = app_by_id(OS_APP_LIBRARY);
+            return APP_REDRAW_PAGE;
         } else if (origin == 2) {
             // 即使没有切页历史也先停服，取消尚未执行的启动请求。
             // Stop even without navigation history and cancel a queued start.
@@ -804,8 +949,9 @@ static app_redraw_t on_gesture(app_ctx_t* ctx, const ui_gesture_event_t* ev) {
         } else {
             read_pico_transfer_status_t latest;
             read_pico_transfer_get_status(&latest);
-            if (((int)s_mode != origin || !latest.network_ready) &&
-                read_pico_transfer_try_stop_if_idle()) {
+            if ((int)s_mode == origin && latest.network_ready) {
+                // 点当前模式且在线：维持原行为，不停服不切换。/ Tapping the live mode stays a no-op: no stop, no switch.
+            } else if (read_pico_transfer_try_stop_if_idle()) {
                 stop_session();
                 s_mode = origin == 0 ? READ_PICO_TRANSFER_MODE_AP : READ_PICO_TRANSFER_MODE_STA;
                 s_qr_url = s_mode == READ_PICO_TRANSFER_MODE_STA;
@@ -814,6 +960,14 @@ static app_redraw_t on_gesture(app_ctx_t* ctx, const ui_gesture_event_t* ev) {
                 s_status.mode = s_mode;
                 read_pico_transfer_get_saved_wifi(s_status.wifi_ssid, &s_status.wifi_configured);
                 s_start_pending = true;
+                s_hint[0] = 0;
+                return APP_REDRAW_PAGE;
+            } else {
+                // 上传或删除进行中：拒绝切换并就地说明，不再无声恢复按钮。
+                // / While uploading or deleting: refuse the switch and say so instead of silently restoring the button.
+                s_pressed = -1;
+                snprintf(s_hint, sizeof(s_hint), "正在上传或删除，完成后再切换");
+                s_hint_ms = ctx->now_ms;
                 return APP_REDRAW_PAGE;
             }
         }

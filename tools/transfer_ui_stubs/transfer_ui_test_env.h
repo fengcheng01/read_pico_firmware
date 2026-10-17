@@ -16,6 +16,7 @@ typedef int esp_err_t;
 #define ESP_OK 0
 #define ESP_FAIL -1
 #define ESP_ERR_INVALID_ARG 0x102
+#define ESP_ERR_INVALID_STATE 0x103
 #define ESP_ERR_WIFI_TIMEOUT 0x3006
 typedef struct { int x,y,width,height; } EpdRect;
 typedef enum { APP_REDRAW_NONE, APP_REDRAW_AREA, APP_REDRAW_PAGE, APP_REDRAW_FULL, APP_REDRAW_DONE } app_redraw_t;
@@ -29,6 +30,7 @@ enum EpdDrawMode { MODE_DU,MODE_GL16,MODE_GC16 };
 #define UI_CONTENT_TOP 176
 #define UI_BTN_H 84
 #define UI_BTN_RADIUS 14
+#define UI_CHIP_RADIUS 8
 #define UI_PX_CAPTION 28
 #define UI_PX_BODY 38
 #define UI_PX_BTN 34
@@ -59,6 +61,8 @@ static inline void ui_draw_header(uint8_t* f,...) {(void)f;}
 static inline void ui_draw_button(uint8_t* f,...) {(void)f;}
 static inline void ui_draw_pressed_round_rect(uint8_t* f,...) {(void)f;}
 static inline void ui_draw_round_rect(uint8_t* f,...) {(void)f;}
+static inline void ui_draw_selected_round_rect(uint8_t* f,...) {(void)f;}
+static inline void ui_fill_round_rect(uint8_t* f,...) {(void)f;}
 static inline void ui_draw_menu_handle(uint8_t* f,...) {(void)f;}
 static inline void ui_hairline(uint8_t* f,...) {(void)f;}
 static inline void ui_text(uint8_t* f,...) {(void)f;}
@@ -66,7 +70,9 @@ static inline void ui_text_vc(uint8_t* f,...) {(void)f;}
 static inline void epd_fill_rect(EpdRect r,...) {(void)r;}
 static inline int ttf_text_width_px(int px,const char* s) {return (int)strlen(s)*px/2;}
 static bool test_font_suspended;
-static inline int ttf_font_suspend_sd(bool suspend) {test_font_suspended=suspend;return ESP_OK;}
+static int test_font_error;
+static inline int ttf_font_suspend_sd(bool suspend) {test_font_suspended=suspend && !test_font_error;return test_font_error;}
+static inline int ttf_font_resume_sd(void) {test_font_suspended=false;return ESP_OK;}
 static inline void display_set_bulk_io(bool b) {(void)b;}
 static inline int update_display_area_with(void* p,...) {(void)p;return 0;}
 static inline int update_display_white(void* p) {(void)p;return 0;}
@@ -84,7 +90,7 @@ static inline int app_count(void) {return 0;}
 static inline const app_desc_t* app_at(int i) {(void)i;return NULL;}
 typedef enum {READ_PICO_TRANSFER_MODE_AP,READ_PICO_TRANSFER_MODE_STA} read_pico_transfer_mode_t;
 typedef enum {READ_PICO_TRANSFER_STOPPED,READ_PICO_TRANSFER_STARTING,READ_PICO_TRANSFER_READY,READ_PICO_TRANSFER_UPLOADING,READ_PICO_TRANSFER_ERROR} read_pico_transfer_state_t;
-typedef struct {read_pico_transfer_mode_t mode;const char* root_dir;const char* font_dir;bool is_flash;size_t file_limit;uint64_t(*free_bytes_cb)(void*);void* free_bytes_ctx;int(*file_changed_cb)(const char*);} read_pico_transfer_cfg_t;
+typedef struct {read_pico_transfer_mode_t mode;const char* root_dir;const char* font_dir;const char* image_dir;bool is_flash;size_t file_limit;uint64_t(*free_bytes_cb)(void*);void* free_bytes_ctx;int(*file_changed_cb)(const char*);} read_pico_transfer_cfg_t;
 typedef struct {read_pico_transfer_mode_t mode;read_pico_transfer_state_t state;bool wifi_configured,network_ready;char ssid[33],wifi_ssid[33],url[64],cur_name[121];unsigned sta_count,done_count,changed_count;size_t cur_bytes,cur_total;int last_error;} read_pico_transfer_status_t;
 #define READ_PICO_TRANSFER_PASSWORD "readpico"
 static read_pico_transfer_status_t test_status;

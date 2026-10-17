@@ -27,6 +27,8 @@ const app_desc_t* app_at(int index);
 int app_index_of(const app_desc_t* app);
 /// 按稳定产品 ID 查找，未实现入口返回 NULL。/ Resolve a stable product ID; unimplemented entries return NULL.
 const app_desc_t* app_by_id(os_app_id_t id);
+/// 反查稳定产品 ID，演示页与未知页按首页。/ Reverse lookup of the stable product ID; demo and unknown pages count as home.
+os_app_id_t app_id_of(const app_desc_t* app);
 
 /// 开机默认页与设备功能自检页，供 app_main 与首页引用。/ Boot default page and device self-test page, for app_main and the home page.
 const app_desc_t* app_home_page(void);

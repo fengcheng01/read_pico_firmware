@@ -21,10 +21,12 @@ cover = r'''
 #include <string.h>
 #define BOOK_STORE_PATH_MAX 288
 #define BOOK_ROWS 3
+static int shelf_rows(void){return BOOK_ROWS;}
 static struct {char path[288];} s_shelf[30];
 static int s_visible_count=30;
 ''' + cache + r'''
 int main(void){
+    (void)s_cover_batch_grid;(void)s_cover_batch_due;
     for(int i=0;i<30;++i)snprintf(s_shelf[i].path,288,"/books/%d.epub",i);
     for(int leaf=0;leaf<10;++leaf){
         for(int row=0;row<3;++row){int i=leaf*3+row;uint8_t* gray=row==0?malloc(4):NULL;cover_store(s_shelf[i].path,gray,leaf);}
@@ -47,8 +49,16 @@ time = r'''
 #include <sys/time.h>
 #define ESP_LOGI(...) ((void)TAG)
 #define ESP_OK 0
+// 断电续读标记替身：不触 NVS，按测试需要读端恒为关。/ Power-cut reading-marker
+// stand-in: no NVS; the read side always reports off unless a test arms it.
+__attribute__((unused)) static bool test_lock_reading_armed;
+__attribute__((unused)) static void app_settings_set_lock_reading(bool on){(void)on;}
+__attribute__((unused)) static bool app_settings_take_lock_reading(void){bool r=test_lock_reading_armed;test_lock_reading_armed=false;return r;}
 static int16_t app_settings_tz_qh(void){return 32;}
 static int32_t app_settings_sleep_clock_ppm(void){return 0;}
+static bool app_settings_sleep_clock_valid(void){return false;}
+static __attribute__((unused)) size_t feedback_strlen(const char*s){size_t n=0;while(s&&s[n])++n;return n;}
+#define strlen feedback_strlen
 static struct {bool time_ok;uint32_t unix_sec;} snapshot;
 static bool read_pico_pmu_ready(void){return true;}
 static int read_pico_pmu_refresh(void){return ESP_OK;}

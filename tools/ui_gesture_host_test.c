@@ -45,12 +45,16 @@ int main(void) {
     const ui_gesture_type_t kinds[] = {UI_GESTURE_SWIPE_L, UI_GESTURE_SWIPE_R, UI_GESTURE_SWIPE_U, UI_GESTURE_SWIPE_D};
     for (int i = 0; i < 4; ++i) {
         press(200, 300, 100);
-        assert(!feed(200 + dx[i], 300 + dy[i], 150, true, false, false, false));
+        // 越容差的中途移动先发 DRAG；松手终态仍是 SWIPE。
+        // The mid-sequence move beyond slop first emits DRAG; release still classifies SWIPE.
+        assert(feed(200 + dx[i], 300 + dy[i], 150, true, false, false, false));
+        assert(event.type == UI_GESTURE_DRAG);
         assert(feed(200 + dx[i], 300 + dy[i], 200, false, false, true, false));
         assert(event.type == kinds[i]);
     }
     press(100, 100, 0);
-    assert(!feed(125, 100, 500, true, false, false, false));
+    assert(feed(125, 100, 500, true, false, false, false));
+    assert(event.type == UI_GESTURE_DRAG);
     assert(feed(100, 100, 600, false, false, true, false));
     assert(event.type == UI_GESTURE_CANCEL);
     press(100, 100, 0);
@@ -60,10 +64,12 @@ int main(void) {
     press(100, 100, 0);
     assert(feed(100, 163, 100, false, false, true, false)); assert(event.type == UI_GESTURE_CANCEL);
     press(200, 300, 0);
-    assert(!feed(136, 300, 500, true, false, false, false));
+    assert(feed(136, 300, 500, true, false, false, false));
+    assert(event.type == UI_GESTURE_DRAG);
     assert(feed(136, 300, 501, false, false, true, false)); assert(event.type == UI_GESTURE_SWIPE_L);
     press(100, 100, 0);
-    assert(!feed(117, 117, 500, true, false, false, false));
+    assert(feed(117, 117, 500, true, false, false, false));
+    assert(event.type == UI_GESTURE_DRAG);
     assert(feed(117, 117, 600, false, false, true, false)); assert(event.type == UI_GESTURE_CANCEL);
     press(100, 100, 0);
     assert(feed(100, 100, 10, true, false, false, true)); assert(event.type == UI_GESTURE_CANCEL);
@@ -100,5 +106,28 @@ int main(void) {
     assert(feed(150, 150, 25, false, false, true, false));
     assert(event.type == UI_GESTURE_TAP && event.x0 == 150);
     assert(!ui_gesture_feed(NULL, &ctx, &event));
+    // DRAG 逐段跟手：坐标每次变化各发一次，坐标不变保持安静，长按后不再发 DRAG。
+    // DRAG tracks segment by segment: each coordinate change emits once, unchanged
+    // coordinates stay quiet, and no DRAG follows a fired long press.
+    ui_gesture_reset(&g);
+    assert(feed(400, 1000, 0, true, true, false, false));
+    assert(event.type == UI_GESTURE_PRESS);
+    assert(!feed(400, 1000, 10, true, false, false, false));
+    assert(!feed(410, 1000, 20, true, false, false, false));
+    assert(feed(430, 1000, 40, true, false, false, false));
+    assert(event.type == UI_GESTURE_DRAG && event.x == 430 && event.y == 1000);
+    assert(!feed(430, 1000, 60, true, false, false, false));
+    assert(feed(500, 1000, 80, true, false, false, false));
+    assert(event.type == UI_GESTURE_DRAG && event.x == 500);
+    assert(feed(560, 1000, 100, false, false, true, false));
+    assert(event.type == UI_GESTURE_SWIPE_R);
+    ui_gesture_reset(&g);
+    assert(feed(100, 100, 0, true, true, false, false));
+    assert(!feed(100, 100, 400, true, false, false, false));
+    assert(feed(100, 100, 500, true, false, false, false));
+    assert(event.type == UI_GESTURE_LONG_PRESS);
+    assert(!feed(160, 100, 520, true, false, false, false));
+    assert(feed(160, 100, 540, false, false, true, false));
+    assert(event.type == UI_GESTURE_CANCEL);
     puts("gesture host tests passed");
 }

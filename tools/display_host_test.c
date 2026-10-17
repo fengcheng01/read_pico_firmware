@@ -14,11 +14,14 @@
 #include "display.h"
 #include "display_pixels.h"
 #include "e0470_epaper_waveform.h"
+#include "e0470_page_turn.h"
+#include "esp_heap_caps.h"
 
 #define FB_BYTES 128
 const EpdWaveform E0470_WAVEFORM = {0}, E0470_FOLLOW_WAVEFORM = {1}, E0470_FULL_WAVEFORM = {2}, E0470_TEXTTURN_WAVEFORM = {3}, E0470_NAVIGATION_WAVEFORM = {4}, E0470_NAVIGATION_ENTRY_WAVEFORM = {7};
 const EpdWaveform E0470_DIRECT_WAVEFORM = {5}, E0470_WHITE_CLEANUP_WAVEFORM = {6}, E0470_TEXTTURN_NIGHT_WAVEFORM = {8};
 const EpdWaveform E0470_GRAY_DIRECT_WAVEFORM = {10};
+const EpdWaveform E0470_NIGHT_PREWIPE_GL_WAVEFORM = {11}, E0470_DIRECT_PREWIPE_WAVEFORM = {12}, E0470_GRAY_DIRECT_PREWIPE_WAVEFORM = {13};
 static uint8_t target[FB_BYTES], presented[FB_BYTES];
 static uint8_t expected_old[FB_BYTES];
 static bool check_old_at_draw;
@@ -37,14 +40,26 @@ int epd_width(void) { return 16; }
 int epd_height(void) { return 16; }
 uint8_t app_settings_gc_every(void) { return (uint8_t)cleanup_every; }
 bool app_settings_book_night(void) { return true; }
+// 夜间白预驱开关替身：默认关，检查函数按需翻转。/ Night white pre-drive switch shim: off by default, flipped by checks.
+static bool night_prewipe;
+bool app_settings_book_night_prewipe(void) { return night_prewipe; }
 // 仅测试保留的旧符号：撤回后真实显示路径不得读取旧实验档位。
 // Test-only legacy symbol: the withdrawn production display path must never read old experiment tiers.
 static uint8_t legacy_night_cleanup;
 static unsigned legacy_cleanup_reads;
 uint8_t app_settings_book_night_cleanup(void) { ++legacy_cleanup_reads; return legacy_night_cleanup; }
 
+// 错相揭页替身：记录方向并可注入失败；成功按引擎契约提交基准。/ Staggered-turn shim: record direction, inject failures; success commits the baseline per the engine contract.
+static int turn_calls;
+static enum EpdDrawError turn_result = EPD_DRAW_SUCCESS;
+static bool turn_forward[8];
+static bool turn_busy;
 void read_pico_epd_set_pclk(int mhz) { ++clocks; safe_clock = mhz; }
-void read_pico_epd_use_scan(read_pico_epd_scan_t scan) { assert(scan == READ_PICO_EPD_SCAN_FULL); }
+// FAST 现有两条合法路径（跟随 DU、错相揭页），替身无法区分调用者，只拒绝其他值。
+// FAST now has two sanctioned callers (follow DU, staggered page turn); the stub cannot tell them apart and rejects other values only.
+void read_pico_epd_use_scan(read_pico_epd_scan_t scan) {
+    assert(scan == READ_PICO_EPD_SCAN_FULL || scan == READ_PICO_EPD_SCAN_FAST);
+}
 void epd_lcd_set_prefill_lines(int lines) { prefill = lines; }
 void epd_poweron(void) { ++powerons; hv_on = !fail_power; }
 void epd_poweroff(void) { ++poweroffs; hv_on = false; }
@@ -96,15 +111,39 @@ enum EpdDrawError epd_hl_update_area_full(EpdiyHighlevelState* hl, enum EpdDrawM
     (void)area; last_area = true; return draw(hl, mode, temperature, true);
 }
 static unsigned mask_draws;
+static unsigned masked_draws;  // 携带夜间保持掩码的选择性扫描 / Selective scans carrying the night hold mask
 static bool fail_mask, fail_alloc;
 static unsigned allocations;
 void* heap_caps_calloc(size_t n, size_t size, unsigned caps) {
     ++allocations; assert(caps == 3 && !hv_on); return fail_alloc ? NULL : calloc(n, size);
 }
+void* heap_caps_malloc(size_t size, unsigned caps) {
+    // 掩码与固件同寿命不释放；替身用静态槽避免泄漏检测误报。
+    // The mask lives as long as the firmware and is never freed; the stub uses a static slot to keep leak checks quiet.
+    static uint8_t slot[256];
+    ++allocations; assert(caps == MALLOC_CAP_SPIRAM);
+    return fail_alloc || size > sizeof(slot) ? NULL : slot;
+}
 void epd_leading_skip_discard(void) {}
+// 掩码仅在预驱表下出现，且每位都等于“目标非纯黑”；其余选择性扫描保持无掩码。
+// The mask appears only under pre-drive tables with every bit meaning "target not pure black";
+// all other selective scans stay unmasked.
+static void check_night_mask_content(const EpdiyHighlevelState* hl, const uint8_t* mask) {
+    if (!mask) return;
+    ++masked_draws;
+    const bool prewipe = hl->waveform == &E0470_NIGHT_PREWIPE_GL_WAVEFORM ||
+        hl->waveform == &E0470_DIRECT_PREWIPE_WAVEFORM || hl->waveform == &E0470_GRAY_DIRECT_PREWIPE_WAVEFORM;
+    assert(prewipe);
+    for (int y = 0; y < epd_height(); ++y) for (int x = 0; x < epd_width(); ++x) {
+        const size_t pixel = (size_t)y * epd_width() + x;
+        const unsigned goal = hl->front_fb[pixel / 2] >> ((pixel % 2) * 4) & 15;
+        assert(((mask[pixel / 8] >> (pixel % 8)) & 1) == (goal != 0));
+    }
+}
 enum EpdDrawError epd_hl_update_screen_selective(EpdiyHighlevelState* hl, enum EpdDrawMode mode, int temperature, const uint8_t* mask) {
-    // 产品页不得再按历史字形补擦白底。/ Product pages must never re-erase white backgrounds in historical glyph shapes.
-    assert(mask == NULL);
+    // 产品页不得再按历史字形补擦白底；夜间预驱例外是保持掩码，不是字形补擦。/ Product pages must never re-erase
+    // white backgrounds in historical glyph shapes; the night pre-drive exception is a hold mask, not glyph cleanup.
+    check_night_mask_content(hl, mask);
     ++mask_draws;
     if (fail_mask) return EPD_DRAW_OTHER_ERROR;
     return epd_hl_update_screen_full(hl, mode, temperature);
@@ -119,6 +158,33 @@ enum EpdDrawError epd_draw_base(EpdRect area, const uint8_t* data, EpdRect crop,
     (void)lines; (void)columns; (void)waveform;
     assert(!"withdrawn night post scan must remain disabled");
     return EPD_DRAW_OTHER_ERROR;
+}
+
+void e0470_page_turn_set_tick_us(int us) { assert(us == E0470_TURN_FAST_TICK_US); }
+int e0470_page_turn_tick_us(void) { return E0470_TURN_FAST_TICK_US; }
+void e0470_page_turn_release(void) {}
+enum EpdDrawError e0470_page_turn(EpdiyHighlevelState* hl, EpdRect area, e0470_turn_dir_t dir) {
+    return e0470_page_turn_with_waveform_compact(hl, area, dir, &E0470_TEXTTURN_WAVEFORM, 16);
+}
+enum EpdDrawError e0470_page_turn_with_waveform(
+    EpdiyHighlevelState* hl, EpdRect area, e0470_turn_dir_t dir,
+    const EpdWaveform* waveform, unsigned bands) {
+    return e0470_page_turn_with_waveform_compact(hl, area, dir, waveform, bands);
+}
+enum EpdDrawError e0470_page_turn_with_waveform_compact(
+    EpdiyHighlevelState* hl, EpdRect area, e0470_turn_dir_t dir,
+    const EpdWaveform* waveform, unsigned bands) {
+    (void)area; (void)waveform;
+    assert(bands == 16 && waveform == &E0470_TEXTTURN_WAVEFORM);
+    if (turn_calls < 8) turn_forward[turn_calls] = dir != E0470_TURN_LTR;
+    ++turn_calls;
+    turn_busy = true;
+    // 成功即按引擎契约提交基准；失败不回写，留给原出口恢复。
+    // Success commits the baseline per the engine contract; failure keeps it for the original exit.
+    enum EpdDrawError result = turn_result;
+    if (result == EPD_DRAW_SUCCESS) memcpy(hl->back_fb, hl->front_fb, FB_BYTES);
+    turn_busy = false;
+    return result;
 }
 
 // 随机帧与朴素邻域实现对照，覆盖四像素组边界及非整除宽度。
@@ -359,8 +425,67 @@ static void check_night_cycles(EpdiyHighlevelState* hl) {
     assert(update_display_full(hl) == EPD_DRAW_SUCCESS);
 }
 
-static void check_withdrawn_night_tiers(EpdiyHighlevelState* hl) {
-    // 升级残留1/2不能唤起补扫或分配；交替两种夜间效果仍只在第3/6页清理。
+// 白预驱开时三档夜间普通翻页换预驱波形且仍走选择性整页；到期/入口清理与日间完全不变。
+// With white pre-drive on, the three ordinary night profiles swap to pre-drive waveforms and keep selective
+// whole-page scans; due/entry cleaning and day turns stay exactly as before.
+static void check_night_prewipe(EpdiyHighlevelState* hl) {
+    cleanup_every = 3;
+    night_prewipe = true;
+    assert(update_display_full(hl) == EPD_DRAW_SUCCESS);
+    for (int turn = 1; turn <= 6; ++turn) {
+        memset(hl->front_fb, turn & 1 ? 0xf0 : 0x0f, FB_BYTES);
+        const bool direct = turn % 2 == 0, gray = turn % 3 == 0;
+        int before_draws = draws, before_clears = clears;
+        unsigned before_selected = mask_draws;
+        memcpy(expected_old, hl->back_fb, FB_BYTES);
+        const bool due = turn % 3 == 0;
+        if (due) memset(expected_old, 255, FB_BYTES);
+        check_old_at_draw = true;
+        enum EpdDrawError err = gray ? update_display_text_gray_direct(hl, true)
+            : direct ? update_display_text_direct(hl, true) : update_display_text_turn(hl, true);
+        check_old_at_draw = false;
+        assert(err == EPD_DRAW_SUCCESS && draws == before_draws + 1);
+        assert(clears == before_clears + due);
+        if (due) assert(last_mode == MODE_GC16 && last_waveform == &E0470_FULL_WAVEFORM);
+        else {
+            assert(last_mode == MODE_GL16 && mask_draws == before_selected + 1);
+            assert(last_waveform == (gray ? &E0470_GRAY_DIRECT_PREWIPE_WAVEFORM :
+                direct ? &E0470_DIRECT_PREWIPE_WAVEFORM : &E0470_NIGHT_PREWIPE_GL_WAVEFORM));
+        }
+        assert(!memcmp(hl->front_fb, hl->back_fb, FB_BYTES) && hl->waveform == &E0470_WAVEFORM);
+    }
+    // 白重画普通夜间翻页同样换预驱表；日间调用不受开关影响。
+    // Night white-repaint ordinary turns swap likewise, while day calls ignore the switch.
+    memset(hl->front_fb, 0x0f, FB_BYTES);
+    int before_draws2 = draws;
+    assert(update_display_night_white_repaint(hl, DISPLAY_NIGHT_TURN, true, true) == EPD_DRAW_SUCCESS);
+    assert(draws == before_draws2 + 1 && last_waveform == &E0470_GRAY_DIRECT_PREWIPE_WAVEFORM && last_mode == MODE_GL16);
+    memset(hl->front_fb, 0x37, FB_BYTES);
+    assert(update_display_night_white_repaint(hl, DISPLAY_NIGHT_TURN, false, false) == EPD_DRAW_SUCCESS);
+    assert(last_waveform == &E0470_NIGHT_PREWIPE_GL_WAVEFORM && last_mode == MODE_GL16);
+    assert(update_display_text_turn(hl, false) == EPD_DRAW_SUCCESS && last_waveform == &E0470_TEXTTURN_WAVEFORM);
+    assert(update_display_text_direct(hl, false) == EPD_DRAW_SUCCESS && last_waveform == &E0470_DIRECT_WAVEFORM);
+    assert(update_display_text_gray_direct(hl, false) == EPD_DRAW_SUCCESS && last_waveform == &E0470_GRAY_DIRECT_WAVEFORM);
+    // 入口清理在预驱开时仍先物理清白再厂家GC。/ Entry cleaning still physically clears white before vendor GC with pre-drive on.
+    memset(hl->front_fb, 0x5a, FB_BYTES);
+    display_request_navigation_settle();
+    int before_clears2 = clears;
+    assert(update_display_text_turn(hl, true) == EPD_DRAW_SUCCESS);
+    assert(clears == before_clears2 + 1 && last_mode == MODE_GC16 && last_waveform == &E0470_FULL_WAVEFORM);
+    // 六次预驱选择性扫描全部携带保持掩码且内容逐位核对；非预驱与清理扫描不带掩码。
+    // All six pre-drive selective scans carry the hold mask verified bit by bit;
+    // non-pre-drive and cleaning scans carry none.
+    assert(masked_draws == 6);
+    night_prewipe = false;
+    memset(hl->front_fb, 0x0f, FB_BYTES);
+    assert(update_display_text_turn(hl, true) == EPD_DRAW_SUCCESS && last_waveform == &E0470_TEXTTURN_NIGHT_WAVEFORM);
+    assert(update_display_text_gray_direct(hl, true) == EPD_DRAW_SUCCESS && last_waveform == &E0470_GRAY_DIRECT_WAVEFORM);
+    assert(masked_draws == 6);
+    memcpy(hl->front_fb, target, FB_BYTES);
+    assert(update_display_full(hl) == EPD_DRAW_SUCCESS);
+}
+
+static void check_withdrawn_night_tiers(EpdiyHighlevelState* hl) {    // 升级残留1/2不能唤起补扫或分配；交替两种夜间效果仍只在第3/6页清理。
     // Legacy upgrade tiers 1/2 cannot activate post scans or allocation; alternating night profiles still clean only on turns three and six.
     cleanup_every = 3;
     unsigned before_alloc = allocations;
@@ -374,6 +499,54 @@ static void check_withdrawn_night_tiers(EpdiyHighlevelState* hl) {
     }
     fail_alloc = false;
     assert(legacy_cleanup_reads == 0 && allocations == before_alloc);
+}
+
+// 产品日间入口统一按实际成功翻页计数；旧低层API仍供控件和兼容路径使用。
+// The product day entry counts successful body turns; legacy primitives remain for controls/compatibility.
+static void check_day_product_cycles(EpdiyHighlevelState* hl) {
+    const unsigned intervals[] = {1, 3, 5, 30};
+    EpdRect area = {0, 0, 16, 16};
+    for (unsigned i = 0; i < sizeof(intervals) / sizeof(intervals[0]); ++i) {
+        cleanup_every = intervals[i];
+        for (int profile = DISPLAY_READER_STANDARD; profile <= DISPLAY_READER_ANIMATED; ++profile) {
+            assert(update_display_full(hl) == EPD_DRAW_SUCCESS);
+            int old_clears = clears;
+            for (unsigned turn = 1; turn <= intervals[i] * 2 + 1; ++turn) {
+                memset(hl->front_fb, (int)(turn * 17), FB_BYTES);
+                last_mode = MODE_DU;
+                int previous_draws = draws;
+                assert(update_display_reader_turn(hl, (display_reader_mode_t)profile, area, turn % 2) == EPD_DRAW_SUCCESS);
+                if (turn % intervals[i] == 0) {
+                    assert(last_mode == MODE_GC16 && last_waveform == &E0470_FULL_WAVEFORM);
+                    assert(draws == previous_draws + 1);
+                } else assert(last_mode != MODE_GC16);
+                assert(clears == old_clears);
+                assert(!memcmp(hl->front_fb, hl->back_fb, FB_BYTES));
+                if (profile == DISPLAY_READER_BINARY)
+                    for (size_t j = 0; j < FB_BYTES; ++j) assert((hl->front_fb[j] & 15) == 0 || (hl->front_fb[j] & 15) == 15);
+            }
+        }
+    }
+    cleanup_every = 3;
+    assert(update_display_full(hl) == EPD_DRAW_SUCCESS);
+    assert(update_display_reader_turn(hl, DISPLAY_READER_STANDARD, area, true) == EPD_DRAW_SUCCESS);
+    for (int i = 0; i < 20; ++i)
+        assert(update_display_area_with(hl, &E0470_WAVEFORM, MODE_GL16, (EpdRect){1,2,3,4}) == EPD_DRAW_SUCCESS);
+    assert(update_display_reader_turn(hl, DISPLAY_READER_GRAY, area, true) == EPD_DRAW_SUCCESS && last_mode == MODE_GL16);
+    fail_power = true;
+    assert(update_display_reader_turn(hl, DISPLAY_READER_BINARY, area, true) == EPD_DRAW_POWER_NOT_READY);
+    fail_power = false;
+    assert(update_display_reader_turn(hl, DISPLAY_READER_BINARY, area, true) == EPD_DRAW_SUCCESS && last_mode == MODE_GC16);
+    assert(update_display_reader_turn(hl, DISPLAY_READER_STANDARD, area, true) == EPD_DRAW_SUCCESS && last_mode == MODE_GL16);
+    assert(update_display_full(hl) == EPD_DRAW_SUCCESS);
+    assert(update_display_reader_turn(hl, DISPLAY_READER_STANDARD, area, true) == EPD_DRAW_SUCCESS && last_mode == MODE_GL16);
+    cleanup_every = 0;
+    for (int i = 0; i < 64; ++i)
+        assert(update_display_reader_turn(hl, DISPLAY_READER_STANDARD, area, true) == EPD_DRAW_SUCCESS && last_mode == MODE_GL16);
+    int previous_draws = draws;
+    assert(update_display_reader_turn(hl, (display_reader_mode_t)99, area, true) == EPD_DRAW_INVALID_CROP && draws == previous_draws);
+    cleanup_every = 5;
+    puts("product day cleanup: standard/binary/gray/animation intervals1/3/5/30/off, one GC target/no preclear, shared mixed modes, controls excluded, failed power retry and manual reset PASS");
 }
 
 int main(void) {
@@ -708,6 +881,40 @@ int main(void) {
     assert(mask_draws == clean_count);
     assert(allocations == 0);
     check_withdrawn_night_tiers(&hl);
+    check_night_prewipe(&hl);
+    // 错相揭页：成功提交基准并下电；失败按未知基准整屏恢复；入口补偿不进引擎。
+    // Staggered page turns: success commits the baseline and powers off; failure recovers whole-screen from an unknown
+    // baseline; entry compensation bypasses the engine entirely.
+    {
+        int before_turns = turn_calls, before_draws = draws, before_clears = clears, before_offs = poweroffs;
+        memset(front, 0x5A, FB_BYTES);
+        memset(back, 0xA5, FB_BYTES);
+        assert(update_display_page_turn(&hl, (EpdRect){0, 0, 16, 16}, true) == EPD_DRAW_SUCCESS);
+        assert(turn_calls == before_turns + 1 && turn_forward[turn_calls - 1]);
+        assert(!memcmp(front, back, FB_BYTES) && draws == before_draws && clears == before_clears);
+        assert(poweroffs == before_offs + 1);
+        assert(update_display_page_turn(&hl, (EpdRect){0, 0, 16, 16}, false) == EPD_DRAW_SUCCESS);
+        assert(turn_calls == before_turns + 2 && !turn_forward[turn_calls - 1]);
+        // 引擎失败：不提交基准，标未知后由原出口物理清白整屏重放。
+        // Engine failure: keep the baseline, mark unknown and let the original exit physically clear and replay.
+        memset(front, 0x33, FB_BYTES);
+        memset(back, 0xCC, FB_BYTES);
+        turn_result = EPD_DRAW_OTHER_ERROR;
+        int clears_at_fail = clears;
+        assert(update_display_page_turn(&hl, (EpdRect){0, 0, 16, 16}, true) == EPD_DRAW_SUCCESS);
+        assert(turn_calls == before_turns + 3 && clears == clears_at_fail + 1);
+        assert(!memcmp(front, back, FB_BYTES));
+        turn_result = EPD_DRAW_SUCCESS;
+        // 入口补偿在场时直接走原文字翻页，不调度条带。
+        // With entry compensation pending, take the original text turn without scheduling bands.
+        display_request_navigation_settle();
+        int turns_at_entry = turn_calls;
+        memset(back, 0x77, FB_BYTES);
+        assert(update_display_page_turn(&hl, (EpdRect){0, 0, 16, 16}, true) == EPD_DRAW_SUCCESS);
+        assert(turn_calls == turns_at_entry && last_waveform == &E0470_FULL_WAVEFORM);
+    }
+    check_day_product_cycles(&hl);
     puts("display: physical night cleanup preserves targets and establishes actual white, shared cycles 1/3/5/30/off, excluded day/controls/footer, successful resets, failed retry and underrun recovery passed");
     puts("display: legacy night experiment tiers 1/2 remain unread; no post scans or allocation, both night profiles retain their shared cleanup interval");
+    puts("display: white pre-drive swaps only the three ordinary night turn waveforms, keeps selective scans, due/entry cleaning and day profiles unchanged");
 }

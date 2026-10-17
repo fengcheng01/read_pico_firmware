@@ -3,11 +3,19 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * 可变 TTF：卡上按需读扇区，glyf/gvar 能装下就整表进 PSRAM；字形按
- * codepoint/字号/字重缓存。内置字体是 ChillDuanSans 子集。
+ * codepoint/字号/字重/覆盖率微调缓存。内置字体是 ChillDuanSans 子集。
  *
  * Variable TTF: sector I/O from the card; glyf/gvar map into PSRAM when
- * they fit. Glyphs are cached by codepoint, size and weight. The built-in
+ * they fit. Glyphs are cached by codepoint, size, weight and coverage adjustment. The built-in
  * font is a ChillDuanSans subset.
+ * 冻结修订：停服解除暂停时，同任务同步恢复所选字体，避免返回首帧内置再重载；失败回退且不改设置。
+ * Frozen revision: After service shutdown, resume restores the selected font on this task before painting the return page, retaining safe fallback and saved settings.
+ * 冻结修订：速度灰阶正文可减小曲线展平误差0.35→0.15像素，独立缓存，不加粗或改度量；UI/画质保留原光栅。
+ * Frozen revision: Gray-speed body may reduce curve flattening error from0.35to0.15px in a separate cache identity, without stroke/metric changes; UI/quality retain the original raster.
+ * 冻结修订：内置字体解包前保留可用卡字体，先释放可重建缓存；切换失败恢复原字体且不开放传输，禁止把页面留在无字状态。
+ * Frozen revision: Keep a usable SD font until built-in inflation succeeds, releasing rebuildable caches first; failed switching restores the original font and gates transfer instead of leaving blank labels.
+ * 冻结修订：光栅化分配失败不得发布缺字缓存；回收可重建资源后有界重试，原字库、度量与字体设置保持。
+ * Frozen revision: Raster allocation failures never publish incomplete glyphs; reclaim rebuildable resources and retry once while retaining source, metrics and preferences.
  */
 
 #include "ttf_font.h"
@@ -28,9 +36,12 @@
 #include "esp_timer.h"
 #include "asset_pack.h"
 
+static bool raster_allocation_failed;
 static void* ttf_malloc(size_t size, void* userdata) {
     (void)userdata;
-    return heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    void* result = heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!result && size) raster_allocation_failed = true;
+    return result;
 }
 
 static void ttf_free(void* ptr, void* userdata) {
@@ -94,6 +105,8 @@ typedef struct glyph_entry {
     uint32_t codepoint;
     uint16_t size;
     uint16_t weight;
+    int8_t stroke;
+    bool precise_curves;
     int16_t width;
     int16_t height;
     int16_t left;
@@ -168,6 +181,8 @@ static bool sd_suspended; // 字体传输期间仅允许内置字体。/ Only bu
 static ttf_size_metrics_t size_metrics[2];
 static int raw_ascent_units;
 static int current_weight = TTF_WGHT_DEF;
+static int current_stroke;
+static bool current_precise_curves;
 static int wght_min = TTF_WGHT_MIN;
 static int wght_def = TTF_WGHT_DEF;
 static int wght_max = TTF_WGHT_MAX;
@@ -1402,6 +1417,9 @@ static bool pack_glyph_tree(int root_gid) {
     if (root_gid == packed_root && current_weight == packed_weight) {
         return true;
     }
+    // 工作窗口即将改写；中途失败后旧字形身份不能继续命中。
+    // Invalidate the mutable window identity before writes so partial failures cannot hit an older glyph.
+    packed_root = packed_weight = -1;
     if (root_gid < 0 || root_gid >= num_glyphs) return true;
 
     int tree[TTF_TREE_MAX];
@@ -1650,7 +1668,7 @@ static glyph_entry_t* cache_lookup(uint32_t codepoint, int size) {
     unsigned bucket = cache_bucket(codepoint, size);
     for (glyph_entry_t* entry = cache_buckets[bucket]; entry != NULL; entry = entry->hash_next) {
         if (entry->codepoint == codepoint && entry->size == (uint16_t)size
-            && entry->weight == (uint16_t)current_weight) {
+            && entry->weight == (uint16_t)current_weight && entry->stroke == current_stroke && entry->precise_curves == current_precise_curves) {
             lru_touch(entry);
             return entry;
         }
@@ -1669,6 +1687,7 @@ static int resolve_glyph_index(uint32_t codepoint) {
 }
 
 static glyph_entry_t* rasterize_glyph(uint32_t codepoint, int pixel_height) {
+    raster_allocation_failed = false;
     int gid = resolve_glyph_index(codepoint);
     if (!pack_glyph_tree(gid)) return NULL;
 
@@ -1697,9 +1716,48 @@ static glyph_entry_t* rasterize_glyph(uint32_t codepoint, int pixel_height) {
             heap_caps_free(entry);
             return NULL;
         }
-        stbtt_MakeGlyphBitmap(
+        memset(entry->bitmap, 0, bitmap_bytes);
+        if (current_precise_curves) {
+            // 仅减小轮廓曲线的展平误差，不扩张笔画、不改灰阶或字宽；缓存命中不再光栅化。
+            // Reduce outline flattening error only, without dilating strokes or changing grays/advances; cache hits never rasterize again.
+            stbtt_vertex* vertices = NULL;
+            int count = stbtt_GetGlyphShape(&font_info, gid, &vertices);
+            memset(entry->bitmap, 0, bitmap_bytes);
+            stbtt__bitmap bitmap = {.w=width,.h=height,.stride=width,.pixels=entry->bitmap};
+            if (count > 0 && vertices)
+                stbtt_Rasterize(&bitmap, 0.15f, vertices, count, scale, scale, 0, 0, x0, y0, 1, font_info.userdata);
+            STBTT_free(vertices, font_info.userdata);
+        } else stbtt_MakeGlyphBitmap(
             &font_info, entry->bitmap, width, height, width, scale, scale, gid
         );
+        if (raster_allocation_failed) {
+            heap_caps_free(entry->bitmap);
+            heap_caps_free(entry);
+            return NULL;
+        }
+    }
+
+    // 对相邻像素形态作覆盖率插值，保留原字宽与基线；零档不改变原位图。
+    // Interpolate neighboring pixel coverage, preserving advances/baseline; zero retains native bitmaps.
+    if (current_stroke && width > 0 && height > 0) {
+        int stride = width + 2, rows = height + 2;
+        size_t tuned_bytes = (size_t)stride * rows;
+        uint8_t* tuned = heap_caps_calloc(tuned_bytes, 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (!tuned) { heap_caps_free(entry->bitmap); heap_caps_free(entry); return NULL; }
+        int strength = current_stroke < 0 ? -current_stroke : current_stroke;
+        for (int y = -1; y <= height; ++y) for (int x = -1; x <= width; ++x) {
+            int original = x >= 0 && x < width && y >= 0 && y < height ? entry->bitmap[(size_t)y * width + x] : 0;
+            int edge = original;
+            for (int dy = -1; dy <= 1; ++dy) for (int dx = -1; dx <= 1; ++dx) {
+                int sx = x + dx, sy = y + dy;
+                int value = sx >= 0 && sx < width && sy >= 0 && sy < height ? entry->bitmap[(size_t)sy * width + sx] : 0;
+                if (current_stroke > 0 ? value > edge : value < edge) edge = value;
+            }
+            tuned[(size_t)(y + 1) * stride + x + 1] = (uint8_t)((original * (16 - strength) + edge * strength + 8) / 16);
+        }
+        heap_caps_free(entry->bitmap); entry->bitmap = tuned;
+        width = stride; height = rows; --x0; --y0; bitmap_bytes = tuned_bytes;
+        cache_reserve(bitmap_bytes + sizeof(*entry));
     }
 
     int advance = 0;
@@ -1709,6 +1767,8 @@ static glyph_entry_t* rasterize_glyph(uint32_t codepoint, int pixel_height) {
     entry->codepoint = codepoint;
     entry->size = (uint16_t)pixel_height;
     entry->weight = (uint16_t)current_weight;
+    entry->stroke = (int8_t)current_stroke;
+    entry->precise_curves = current_precise_curves;
     entry->width = (int16_t)width;
     entry->height = (int16_t)height;
     entry->left = (int16_t)x0;
@@ -1736,8 +1796,24 @@ static const glyph_entry_t* get_glyph(uint32_t codepoint, int pixel_height) {
     if (bench_on) bench.misses++;
     int64_t t0 = bench_on ? esp_timer_get_time() : 0;
     entry = rasterize_glyph(codepoint, pixel_height);
+    if (!entry) {
+        // 字体映射和旧字形可重建，失败不能永久污染其它页面的文字。
+        // Maps and old glyphs are rebuildable; failed output must not permanently poison text on other pages.
+        ttf_font_reclaim();
+        entry = rasterize_glyph(codepoint, pixel_height);
+    }
     if (bench_on) bench.raster_us += esp_timer_get_time() - t0;
     return entry;
+}
+
+bool ttf_font_prepare_text_px(int pixel_height, const char* text) {
+    if (!font_ready || !text || !*text) return false;
+    const char* cursor = text;
+    while (*cursor) {
+        uint32_t cp = decode_utf8(&cursor);
+        if (!resolve_glyph_index(cp) || !get_glyph(cp, clamp_px(pixel_height))) return false;
+    }
+    return true;
 }
 
 static void warm_text_io(int pixel_height, const char* text) {
@@ -1814,6 +1890,11 @@ void ttf_set_weight(int wght) {
     current_weight = clamp_weight(wght);
 }
 
+void ttf_set_stroke(int steps) { current_stroke = steps < -16 ? -16 : steps > 16 ? 16 : steps; }
+int ttf_get_stroke(void) { return current_stroke; }
+void ttf_set_precise_curves(bool precise) { current_precise_curves = precise; }
+bool ttf_get_precise_curves(void) { return current_precise_curves; }
+
 int ttf_get_weight(void) {
     return current_weight;
 }
@@ -1835,6 +1916,11 @@ void ttf_font_cache_clear(void) {
     packed_root = -1;
     packed_weight = -1;
     io_reset();
+}
+
+void ttf_font_reclaim(void) {
+    ttf_font_cache_clear();
+    io_unmap();
 }
 
 void ttf_bench_begin(void) {
@@ -1950,7 +2036,13 @@ static esp_err_t load_opened_font(void) {
 }
 
 esp_err_t ttf_font_open_builtin(void) {
-    ttf_font_unload();
+    if (ttf_font_is_builtin()) return ESP_OK;
+    char previous[TTF_FONT_PATH_MAX] = {0};
+    if (font_ready && font_fd >= 0) strlcpy(previous, font_path, sizeof(previous));
+    // 回收非必需映射和字形，但保留原文件、度量与工作表，解包失败仍能绘字。
+    // Reclaim optional maps/glyphs while retaining the original file, metrics and working tables for failed-inflation drawing.
+    ttf_font_cache_clear();
+    io_unmap();
     if (!ensure_work()) return ESP_ERR_NO_MEM;
 
     // 有界解压常用中文字库；与卡字体共用生命周期，不额外常驻第二份字体。
@@ -1958,22 +2050,53 @@ esp_err_t ttf_font_open_builtin(void) {
     size_t packed = (size_t)(builtin_pack_end - builtin_pack_start);
     size_t length = asset_pack_size(builtin_pack_start, packed);
     if (length < 12 || length > 3u * 1024u * 1024u) return ESP_ERR_INVALID_SIZE;
-    builtin_memory = heap_caps_malloc(length, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!builtin_memory) return ESP_ERR_NO_MEM;
-    if (!asset_pack_unpack(builtin_pack_start, packed, builtin_memory, length)) {
-        abandon_font_source(); return ESP_ERR_INVALID_RESPONSE;
+    uint8_t* candidate = heap_caps_malloc(length, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!candidate) return ESP_ERR_NO_MEM;
+    if (!asset_pack_unpack(builtin_pack_start, packed, candidate, length)) {
+        heap_caps_free(candidate);
+        return ESP_ERR_INVALID_RESPONSE;
     }
+    ttf_font_unload();
+    builtin_memory = candidate;
     font_mem = builtin_memory;
     font_mem_len = length;
     font_fd = -1;
     strlcpy(font_path, TTF_FONT_BUILTIN, sizeof(font_path));
     ESP_LOGI(TAG, "using builtin (%u KB)", (unsigned)(font_mem_len / 1024));
-    return load_opened_font();
+    esp_err_t err = load_opened_font();
+    if (err != ESP_OK) {
+        // 完成解包后的建表失败也释放候选，再原路重开；不递归触发另一轮内置加载。
+        // On post-inflation table failure, release the candidate and reopen the old source without recursive built-in loading.
+        ttf_font_unload();
+        if (previous[0]) {
+            font_fd = try_open_path(previous);
+            if (font_fd >= 0 && load_opened_font() != ESP_OK) ttf_font_unload();
+        }
+    }
+    return err;
 }
 
 esp_err_t ttf_font_suspend_sd(bool suspend) {
+    if (suspend && (!font_ready || !ttf_font_is_builtin())) {
+        esp_err_t err = ttf_font_open_builtin();
+        sd_suspended = err == ESP_OK;
+        return err;
+    }
     sd_suspended = suspend;
-    if (suspend && (!font_ready || !ttf_font_is_builtin())) return ttf_font_open_builtin();
+    return ESP_OK;
+}
+
+esp_err_t ttf_font_resume_sd(void) {
+    bool was_suspended = sd_suspended;
+    sd_suspended = false;
+    // HTTP停止后在下一页首帧前恢复所选字体；USB重新挂载仍保留其独立的延迟读取策略。
+    // Restore the selected font before the first return frame after HTTP stops; USB remounts retain their separate deferred-read policy.
+    if (was_suspended || !font_ready) {
+        const char* saved = app_settings_font_path();
+        if (ttf_font_path_is_builtin(saved)) return font_ready ? ESP_OK : ttf_font_open_builtin();
+        if (!ttf_font_path_is_builtin(saved) && (!font_ready || ttf_font_is_builtin() || strcmp(saved, font_path)))
+            return ttf_font_open(saved);
+    }
     return ESP_OK;
 }
 

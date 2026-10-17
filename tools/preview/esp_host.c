@@ -10,6 +10,7 @@
  * Frozen: NVS is process-memory only; tasks/semaphores map onto pthreads; sensors stay powered off.
  */
 #include "preview_host.h"
+#include "os/os_page_turner.h"
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdlib.h>
@@ -130,9 +131,18 @@ esp_err_t nvs_get_blob(nvs_handle_t h, const char* key, void* out, size_t* cap) 
     pthread_mutex_unlock(&s_nvs_lock);
     return err;
 }
+static unsigned s_quote_save_failures;
+// 只向摘录命名空间注入一次写失败，验证界面保留记录与重试。
+// Inject failures only into excerpt writes to check retained records and UI retry.
+void preview_quote_save_fail(unsigned count) { s_quote_save_failures = count; }
 esp_err_t nvs_set_blob(nvs_handle_t h, const char* key, const void* value, size_t len) {
     if (!value && len) return ESP_ERR_INVALID_ARG;
     pthread_mutex_lock(&s_nvs_lock);
+    if ((!strcmp(h, "rp_quotes") || !strcmp(h,"rp_lockquote")) && s_quote_save_failures) {
+        --s_quote_save_failures;
+        pthread_mutex_unlock(&s_nvs_lock);
+        return ESP_ERR_NO_MEM;
+    }
     nvs_entry_t* e = nvs_upsert(h, key, NVS_KIND_BLOB);
     char* copy = len ? malloc(len) : (char*)1;
     if (copy) {
@@ -159,7 +169,13 @@ esp_err_t nvs_get_str(nvs_handle_t h, const char* key, char* out, size_t* cap) {
     pthread_mutex_unlock(&s_nvs_lock);
     return err;
 }
+static unsigned s_style_save_failures, s_goal_save_failures;
+void preview_goal_save_fail(unsigned count) { s_goal_save_failures=count; }
+// 启用锁屏样式的独立写失败边界。/ Independent failed-write boundary for lock-style activation.
+void preview_style_save_fail(unsigned count) { s_style_save_failures=count; }
 esp_err_t nvs_set_u8(nvs_handle_t h, const char* key, uint8_t value) {
+    if(!strcmp(h,"read_pico")&&!strcmp(key,"lk_style")&&s_style_save_failures){--s_style_save_failures;return ESP_ERR_NO_MEM;}
+    if(!strcmp(h,"read_pico")&&!strcmp(key,"daily_goal")&&s_goal_save_failures){--s_goal_save_failures;return ESP_ERR_NO_MEM;}
     pthread_mutex_lock(&s_nvs_lock);
     nvs_upsert(h, key, NVS_KIND_U8)->u8 = value;
     pthread_mutex_unlock(&s_nvs_lock);
@@ -359,7 +375,16 @@ void xTaskNotifyGive(void* handle) {
 }
 
 /* ---- 内存堆与杂项 / Heap and misc ---- */
-void* heap_caps_malloc(size_t size, uint32_t caps) { (void)caps; return malloc(size); }
+// 只供宿主的定次分配失败，用来验收产品缩略预览的低内存回退。
+// Host-only counted allocation failures validate low-memory fallback for product thumbnail previews.
+static atomic_int s_alloc_failures;
+void preview_heap_fail(int count) { atomic_store(&s_alloc_failures, count > 0 ? count : 0); }
+static bool fail_preview_alloc(void) {
+    int count = atomic_load(&s_alloc_failures);
+    while (count > 0) if (atomic_compare_exchange_weak(&s_alloc_failures, &count, count - 1)) return true;
+    return false;
+}
+void* heap_caps_malloc(size_t size, uint32_t caps) { (void)caps; return fail_preview_alloc() ? NULL : malloc(size); }
 void* heap_caps_realloc(void* pointer, size_t size, uint32_t caps) { (void)caps; return realloc(pointer, size); }
 void* heap_caps_calloc(size_t count, size_t size, uint32_t caps) { (void)caps; return calloc(count, size); }
 void* heap_caps_aligned_alloc(size_t alignment, size_t size, uint32_t caps) {
@@ -397,4 +422,6 @@ esp_err_t sc7a20h_read_events(sc7a20h_handle_t handle, sc7a20h_events_t* events)
 void read_pico_sensor_sleep(sc7a20h_handle_t handle) { (void)handle; }
 
 size_t heap_caps_get_largest_free_block(uint32_t caps) { (void)caps; return 64u * 1024 * 1024; }
+unsigned preview_lock_requests;
+void app_loop_request_lock(void) { ++preview_lock_requests; os_page_turner_pause(); }
 void app_loop_stay_awake(void) { /* 预览无空闲锁屏；声明与设备一致。/ No idle lock in preview; declaration matches the device. */ }

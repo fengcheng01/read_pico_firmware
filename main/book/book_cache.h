@@ -15,6 +15,7 @@
 typedef enum {
     BOOK_CACHE_COVER = 1, ///< 封面缩略图 / Cover thumbnail
     BOOK_CACHE_TXT_TOC = 2, ///< TXT 原始字节目录 / TXT source-byte index
+    BOOK_CACHE_EPUB = 3, ///< EPUB 解析结构（章节表/标题）/ EPUB parsed structure (chapters/titles)
 } book_cache_kind_t;
 
 typedef struct {

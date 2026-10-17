@@ -33,6 +33,8 @@ EpdRect epd_full_screen(void) { return (EpdRect){0, 0, WIDTH, HEIGHT}; }
 enum EpdRotation epd_get_rotation(void) { return EPD_ROT_LANDSCAPE; }
 uint8_t app_settings_gc_every(void) { return every; }
 bool app_settings_book_night(void) { return night; }
+// 白预驱桩固定关：本回归只验证清白直绘路径本身。/ Pre-drive shim stays off: this regression covers the white-repaint path only.
+bool app_settings_book_night_prewipe(void) { return false; }
 void read_pico_epd_set_pclk(int mhz) { (void)mhz; }
 void read_pico_epd_use_scan(read_pico_epd_scan_t scan) { assert(scan == READ_PICO_EPD_SCAN_FULL); }
 void epd_lcd_set_prefill_lines(int lines) { assert(lines == 127); }
@@ -151,7 +153,7 @@ static void clean_start(EpdiyHighlevelState* hl) {
     prepare(hl, false, false, &E0470_FULL_WAVEFORM, MODE_GC16);
     assert(update_display_full(hl) == EPD_DRAW_SUCCESS);
 }
-static void scan(EpdiyHighlevelState* hl, display_crossmux_action_t action, unsigned effect, bool clean) {
+static void scan(EpdiyHighlevelState* hl, display_night_action_t action, unsigned effect, bool clean) {
     assert(effect < 3);
     const bool direct = effect != 0, gray = effect == 2;
     const EpdWaveform* ordinary = effect == 0 ? &E0470_TEXTTURN_NIGHT_WAVEFORM :
@@ -169,7 +171,7 @@ static void scan(EpdiyHighlevelState* hl, display_crossmux_action_t action, unsi
 static void recover(EpdiyHighlevelState* hl, unsigned effect) {
     unsigned before = scans, before_pushes = pushes, before_gc = gc_scans;
     prepare(hl, effect == 1, true, &E0470_FULL_WAVEFORM, MODE_GC16);
-    assert(update_display_night_white_repaint(hl, DISPLAY_CROSSMUX_TURN, effect != 0, effect == 2) == EPD_DRAW_SUCCESS);
+    assert(update_display_night_white_repaint(hl, DISPLAY_NIGHT_TURN, effect != 0, effect == 2) == EPD_DRAW_SUCCESS);
     assert(scans == before + 1 && pushes == before_pushes + CLEAR_PUSHES && gc_scans == before_gc + 1);
     assert(!memcmp(hl->front_fb, expected_front, BYTES) && !memcmp(hl->back_fb, expected_front, BYTES));
 }
@@ -181,23 +183,23 @@ int main(void) {
     current = &hl; e0470_waveform_init(); targets(&hl, 0);
     for (unsigned effect = 0; effect < 3; ++effect) {
         clean_start(&hl); targets(&hl, effect);
-        scan(&hl, DISPLAY_CROSSMUX_CLEAN, effect, true);
+        scan(&hl, DISPLAY_NIGHT_CLEAN, effect, true);
         targets(&hl, effect + 1);
-        scan(&hl, DISPLAY_CROSSMUX_ENTRY, effect, true);
+        scan(&hl, DISPLAY_NIGHT_ENTRY, effect, true);
         targets(&hl, effect + 2); display_request_navigation_settle();
-        scan(&hl, DISPLAY_CROSSMUX_REDRAW, effect, true);
-        scan(&hl, DISPLAY_CROSSMUX_REDRAW, effect, false);
+        scan(&hl, DISPLAY_NIGHT_REDRAW, effect, true);
+        scan(&hl, DISPLAY_NIGHT_REDRAW, effect, false);
     }
     const unsigned periods[] = {1, 3, 5, 10, 30};
     for (unsigned c = 0; c < sizeof(periods)/sizeof(periods[0]); ++c) {
         every = periods[c]; clean_start(&hl);
         for (unsigned turn = 1; turn <= every * 2 + 2; ++turn) {
             targets(&hl, turn);
-            scan(&hl, DISPLAY_CROSSMUX_TURN, turn % 3, turn % every == 0);
+            scan(&hl, DISPLAY_NIGHT_TURN, turn % 3, turn % every == 0);
         }
     }
     every = 3; clean_start(&hl);
-    scan(&hl, DISPLAY_CROSSMUX_TURN, 0, false);
+    scan(&hl, DISPLAY_NIGHT_TURN, 0, false);
     // 灰缘局部控件只提交实际区域，不能消耗正文周期或把其它灰目标偷偷写回参考。
     // Gray-edge controls commit only their actual area, without consuming body intervals or silently advancing other gray targets.
     targets(&hl, 4);
@@ -213,12 +215,12 @@ int main(void) {
     // 同布局重绘、日间正文不推进夜间周期，也不会顺带重新擦白。
     // Same-layout redraws and daytime body updates never advance night cycles or incidentally clear again.
     for (int c = 0; c < 32; ++c) {
-        targets(&hl, c); scan(&hl, DISPLAY_CROSSMUX_REDRAW, c % 3, false);
+        targets(&hl, c); scan(&hl, DISPLAY_NIGHT_REDRAW, c % 3, false);
         prepare(&hl, false, false, &E0470_GRAY_DIRECT_WAVEFORM, MODE_GL16);
         assert(update_display_text_gray_direct(&hl, false) == EPD_DRAW_SUCCESS);
     }
-    scan(&hl, DISPLAY_CROSSMUX_TURN, 1, false);
-    scan(&hl, DISPLAY_CROSSMUX_TURN, 2, true);
+    scan(&hl, DISPLAY_NIGHT_TURN, 1, false);
+    scan(&hl, DISPLAY_NIGHT_TURN, 2, true);
 
     night = false; every = 1;
     // 新API误从日间调用仍保持原一次导航GC或普通正文出口，不触发物理清白。
@@ -226,27 +228,27 @@ int main(void) {
     for (unsigned effect = 0; effect < 3; ++effect) for (unsigned action = 0; action < 4; ++action) {
         targets(&hl, effect + action); clean_start(&hl); targets(&hl, effect + action + 1);
         unsigned before = scans, before_pushes = pushes;
-        const bool gc = action == DISPLAY_CROSSMUX_ENTRY || action == DISPLAY_CROSSMUX_CLEAN;
+        const bool gc = action == DISPLAY_NIGHT_ENTRY || action == DISPLAY_NIGHT_CLEAN;
         prepare(&hl, effect == 1, false, gc ? &E0470_FULL_WAVEFORM :
             effect == 0 ? &E0470_TEXTTURN_WAVEFORM : effect == 1 ? &E0470_DIRECT_WAVEFORM : &E0470_GRAY_DIRECT_WAVEFORM,
             gc ? MODE_GC16 : MODE_GL16);
-        assert(update_display_night_white_repaint(&hl, (display_crossmux_action_t)action, effect != 0, effect == 2) == EPD_DRAW_SUCCESS);
+        assert(update_display_night_white_repaint(&hl, (display_night_action_t)action, effect != 0, effect == 2) == EPD_DRAW_SUCCESS);
         assert(scans == before + 1 && pushes == before_pushes);
         assert(!memcmp(hl.front_fb, expected_front, BYTES) && !memcmp(hl.back_fb, expected_front, BYTES));
     }
     night = true; every = 0; clean_start(&hl);
-    for (unsigned c = 0; c < 64; ++c) scan(&hl, DISPLAY_CROSSMUX_TURN, c % 3, false);
+    for (unsigned c = 0; c < 64; ++c) scan(&hl, DISPLAY_NIGHT_TURN, c % 3, false);
     every = 3;
-    scan(&hl, DISPLAY_CROSSMUX_TURN, 0, false);
-    scan(&hl, DISPLAY_CROSSMUX_TURN, 1, false);
-    scan(&hl, DISPLAY_CROSSMUX_TURN, 2, true);
+    scan(&hl, DISPLAY_NIGHT_TURN, 0, false);
+    scan(&hl, DISPLAY_NIGHT_TURN, 1, false);
+    scan(&hl, DISPLAY_NIGHT_TURN, 2, true);
 
     const enum EpdDrawError errors[] = {EPD_DRAW_FAILED_ALLOC, EPD_DRAW_NO_PHASES_AVAILABLE, EPD_DRAW_EMPTY_LINE_QUEUE};
     for (unsigned e = 0; e < sizeof(errors)/sizeof(errors[0]); ++e) for (unsigned effect = 0; effect < 3; ++effect) {
         for (unsigned clean = 0; clean < 2; ++clean) {
             clean_start(&hl); targets(&hl, e + effect); display_request_navigation_settle();
             if (!clean) {
-                scan(&hl, DISPLAY_CROSSMUX_ENTRY, effect, true);
+                scan(&hl, DISPLAY_NIGHT_ENTRY, effect, true);
                 targets(&hl, e + effect + 1);
             }
             prepare(&hl, effect == 1, clean, clean ? &E0470_FULL_WAVEFORM :
@@ -254,15 +256,15 @@ int main(void) {
                 clean && effect == 1 ? MODE_DU : MODE_GL16);
             unsigned before = scans, before_pushes = pushes;
             failure = errors[e]; fail_scan = scans + 1;
-            assert(update_display_night_white_repaint(&hl, clean ? DISPLAY_CROSSMUX_CLEAN : DISPLAY_CROSSMUX_TURN,
+            assert(update_display_night_white_repaint(&hl, clean ? DISPLAY_NIGHT_CLEAN : DISPLAY_NIGHT_TURN,
                 effect != 0, effect == 2) == failure);
             assert(scans == before + 1 && pushes == before_pushes + clean * CLEAR_PUSHES && !powered);
             assert(!memcmp(hl.front_fb, expected_front, BYTES) && !memcmp(hl.back_fb, expected_prior, BYTES));
             fail_scan = 0;
             recover(&hl, effect);
-            scan(&hl, DISPLAY_CROSSMUX_TURN, effect, false);
-            scan(&hl, DISPLAY_CROSSMUX_TURN, effect, false);
-            scan(&hl, DISPLAY_CROSSMUX_TURN, effect, true);
+            scan(&hl, DISPLAY_NIGHT_TURN, effect, false);
+            scan(&hl, DISPLAY_NIGHT_TURN, effect, false);
+            scan(&hl, DISPLAY_NIGHT_TURN, effect, true);
         }
     }
     for (unsigned effect = 0; effect < 3; ++effect) {
@@ -270,7 +272,7 @@ int main(void) {
         prepare(&hl, effect == 1, true, &E0470_FULL_WAVEFORM, effect == 1 ? MODE_DU : MODE_GL16);
         unsigned before = scans, before_pushes = pushes;
         fail_power = true;
-        assert(update_display_night_white_repaint(&hl, DISPLAY_CROSSMUX_CLEAN, effect != 0, effect == 2) == EPD_DRAW_POWER_NOT_READY);
+        assert(update_display_night_white_repaint(&hl, DISPLAY_NIGHT_CLEAN, effect != 0, effect == 2) == EPD_DRAW_POWER_NOT_READY);
         assert(scans == before && pushes == before_pushes && !powered);
         assert(!memcmp(hl.front_fb, expected_front, BYTES) && !memcmp(hl.back_fb, clear_prior, BYTES));
         fail_power = false; recover(&hl, effect);
@@ -279,7 +281,7 @@ int main(void) {
         clean_start(&hl); targets(&hl, effect + 1);
         prepare(&hl, effect == 1, true, &E0470_FULL_WAVEFORM, effect == 1 ? MODE_DU : MODE_GL16);
         failure = EPD_DRAW_EMPTY_LINE_QUEUE; fail_scan = scans + 1;
-        enum EpdDrawError result = update_display_night_white_repaint(&hl, DISPLAY_CROSSMUX_CLEAN,
+        enum EpdDrawError result = update_display_night_white_repaint(&hl, DISPLAY_NIGHT_CLEAN,
             effect != 0, effect == 2);
         assert(result == failure);
         fail_scan = 0;
@@ -290,9 +292,9 @@ int main(void) {
         guard_draw_result(&hl, result);
         assert(scans == before + 1 && pushes == before_pushes + CLEAR_PUSHES);
         assert(!memcmp(hl.front_fb, expected_front, BYTES) && !memcmp(hl.back_fb, expected_front, BYTES));
-        scan(&hl, DISPLAY_CROSSMUX_TURN, effect, false);
-        scan(&hl, DISPLAY_CROSSMUX_TURN, effect, false);
-        scan(&hl, DISPLAY_CROSSMUX_TURN, effect, true);
+        scan(&hl, DISPLAY_NIGHT_TURN, effect, false);
+        scan(&hl, DISPLAY_NIGHT_TURN, effect, false);
+        scan(&hl, DISPLAY_NIGHT_TURN, effect, true);
     }
     // 新灰缘当前档保持真实灰目标与原周期GC，日间不计周期。
     // Current-profile gray edges retain real gray targets and original periodic GC, with daytime excluded.

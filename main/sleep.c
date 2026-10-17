@@ -1,7 +1,15 @@
 /*
  * SPDX-FileCopyrightText: 2026 mindreset
  * SPDX-License-Identifier: Apache-2.0
+ * 冻结：蓝牙翻页器在画锁屏与睡眠前完整停栈；停止失败留在原页，成功唤醒后由原页恢复连接，不支持蓝牙唤醒。
+ * Frozen: Stop the page-turner stack before painting/entering sleep; retain the page after stop failure, reconnect from the resumed page, and never claim Bluetooth wake.
  *
+ * 冻结修订：用户要求摘录时钟走时；浅睡按分钟局刷底栏，深睡选择保留浅睡，摘录不因30分钟无操作冻结。
+ * Frozen revision: User feedback requires a live excerpt clock; repaint its lower band each minute in light sleep, retain light sleep under Deep, and exempt excerpts from thirty-minute idle descent.
+ * 显式关机仍断电并标注关机前时刻；无摘录回退内置图，不改变所选摘录。
+ * Explicit Off still powers down with a pre-off time label; missing excerpts use the built-in face without changing the selected quote.
+ * 第三批修订：时钟与黄历的关机提示改为长按开机，不改变电源策略。
+ * Batch-three revision: Clock/almanac power-off hints say hold to boot, without changing power policy.
  * 锁屏、浅睡等待、软睡/关机下电、锁屏密码。
  *
  * Lock, light-sleep wait, soft-sleep / power-off, and the lock PIN.
@@ -15,12 +23,45 @@
  * Revision: User-requested drift repair permits brief saved-WiFi sessions on minute wakes when enabled; the power key cancels them.
  * 修订：静态浅睡锁屏按自动校时期限定时维护但不刷新画面，补齐整夜无第二锚点的缺口；静态深睡仍由PMU断电。
  * Revision: Static light-sleep locks service automatic-sync deadlines without repainting, closing overnight missing-second-anchor coverage; static deep sleep still powers off through the PMU.
+ * 修订：用户要求自定义锁屏图；样式4=壁纸读取 TF 图片整屏绘制，读取失败回退默认静态图；
+ * 壁纸不随分钟变化，沿用静态的时间维护与深睡策略。
+ * Revision: User-requested custom lock images; style 4=wallpaper draws a TF image full
+ * screen, falling back to the default static image when unreadable; wallpapers never change
+ * per minute and reuse the static time-maintenance and deep-sleep policy.
+ * 修订：用户要求去掉静态图选项、统一图片：样式0=图片（有壁纸画壁纸，缺图回退内置图），
+ * 时钟/日历/黄历不变；旧值4读取时并入0。壁纸仍不随分钟变化，深睡策略同内置图。
+ * Revision: The user removes the static option, unifying on image: style 0=image (wallpaper
+ * when present, built-in image otherwise) with clock/calendar/almanac unchanged; legacy
+ * value 4 merges into 0 at load. Wallpapers still never change per minute and share the
+ * built-in image's deep-sleep policy.
+ * 实机修订：壁纸锁屏后照片透出上一页残影——混合灰阶照片单次差分GC16擦不净；锁屏入口
+ * 改为先物理清白再厂家GC16重画（update_display_clean），其余锁屏面保持单次GC16。
+ * Device revision: wallpaper locks ghosted the previous page — mixed-gray photos need more
+ * than one differential GC16; the lock entry now physically clears white and repaints with
+ * vendor GC16 (update_display_clean), while other faces keep the single GC16 pass.
+ * 实机修订：已设壁纸偶发回退内置图一次——整幅解码在阅读后的内存压力下偶发分配失败；
+ * 改为路径+大小+mtime 键控的解码缓存（首次成功后不再依赖临时内存），stat 与解码失败
+ * 均留日志。
+ * Device revision: a configured wallpaper once fell back to the built-in image — full-image
+ * decoding intermittently fails allocation under post-reading memory pressure; the decoded
+ * gray is now cached keyed by path+size+mtime (after the first success it never depends on
+ * transient memory), with stat and decode failures logged.
+ * 实机修订：误触电源键锁屏后无人操作会分钟唤醒整夜刷新；浅睡锁屏累计30分钟只有定时唤醒
+ * 即降级软睡（摘录时钟除外）；任何按键/拿起唤醒照常立即返回原页。
+ * Device revision: an accidental power-key lock used to minute-refresh all night untouched;
+ * after 30 minutes of nothing but timer wakes non-excerpt locks descend to soft sleep
+ * (the panel keeps the face; a short press re-powers), while any key or pickup still
+ * returns to the page immediately as before.
  */
 
 #include "sleep.h"
 
+#include <sys/stat.h>
+
 #include "app.h"
+#include "esp_heap_caps.h"
 #include "app_sleep_hooks.h"
+#include "os_page_turner.h"
 #include "display.h"
 #include "driver/gpio.h"
 #include "esp_log.h"
@@ -37,8 +78,11 @@
 #include "sc7a20h_lab.h"
 #include "settings.h"
 #include "ui_kit.h"
+#include "ui_image.h"
 #include "ttf_font.h"
 #include "ui/product/ui_product.h"
+#include "book_quotes.h"
+#include "book_stats.h"
 
 static const char* TAG = "read_pico";
 
@@ -104,6 +148,10 @@ static bool pickup_ia(sc7a20h_handle_t acc) {
 }
 
 // 第一次低电平不够：高通余波还会再拉高。要连续安静一段时间才进浅睡。
+// 浅睡锁屏只剩分钟唤醒的降级时限：误锁后被搁置的面板停止逐分钟刷新，转软睡。
+// How long a light lock may run on timer wakes alone before descending to soft sleep.
+#define LOCK_IDLE_SOFT_SLEEP_MIN 30u
+
 // A first low is not enough: high-pass ringing can rise again. Wait for a quiet stretch before light sleep.
 static bool pickup_wait_quiet(sc7a20h_handle_t acc, int quiet_ms, int timeout_ms) {
     int64_t start = esp_timer_get_time() / 1000;
@@ -134,7 +182,10 @@ static void arm_minute_wake(void) {
 }
 
 static void arm_lock_wake(void) {
-    if (app_settings_lock_style() != 0) { arm_minute_wake(); return; }
+    // 时钟/日历/黄历随分钟走时；静态与壁纸只做时间维护。
+    // Clock/calendar/almanac faces tick per minute; static and wallpaper faces only maintain time.
+    uint8_t style = app_settings_lock_style();
+    if ((style >= 1 && style <= 3) || style == APP_LOCK_STYLE_QUOTE) { arm_minute_wake(); return; }
     int64_t now_ms = esp_timer_get_time() / 1000;
     int64_t delay_ms = os_time_lock_sync_delay_ms(now_ms);
     if (!delay_ms) return;
@@ -145,6 +196,18 @@ static void arm_lock_wake(void) {
 void app_sleep_disarm_minute_wake(void) {
     esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_TIMER);
     s_minute_deadline_ms = 0;
+}
+
+static bool lock_idle_tick(unsigned* idle_minutes) {
+    if (app_settings_lock_style() == APP_LOCK_STYLE_QUOTE) return false;
+    return ++*idle_minutes >= LOCK_IDLE_SOFT_SLEEP_MIN;
+}
+
+static EpdRect lock_time_band(uint8_t style) {
+    if (style == APP_LOCK_STYLE_QUOTE) return (EpdRect){0, 1036, UI_LOCK_WIDTH, UI_LOCK_HEIGHT - 1036};
+    if (style == 1) return (EpdRect){0, 260, UI_LOCK_WIDTH, 380};
+    if (style == 2) return (EpdRect){0, 980, UI_LOCK_WIDTH, 90};
+    return (EpdRect){0, 780, UI_LOCK_WIDTH, 120};
 }
 
 void app_sleep_alarm_clock(bool on) {
@@ -299,7 +362,7 @@ static void draw_lock_clock(uint8_t* fb) {
     while (px > 100 && ttf_text_width_px(px, clock) > UI_LOCK_WIDTH - 64) px -= 4;
     ui_text(fb, UI_LOCK_WIDTH / 2, 300, px, clock, EPD_DRAW_ALIGN_CENTER, false);
     ui_text(fb, UI_LOCK_WIDTH / 2, 680, 48, date, EPD_DRAW_ALIGN_CENTER, false);
-    ui_text(fb, UI_LOCK_WIDTH / 2, 780, 28, "已锁定 · 短按电源键唤醒", EPD_DRAW_ALIGN_CENTER, false);
+    ui_text(fb, UI_LOCK_WIDTH / 2, 780, 28, app_settings_sleep_mode() == APP_SLEEP_OFF ? "已锁定 · 长按电源键开机" : "已锁定 · 短按电源键唤醒", EPD_DRAW_ALIGN_CENTER, false);
 }
 // 当月日历锁屏：周标题 + 六行网格，今日加框；时间未校准时由调用方回退。
 // Monthly calendar face: weekday header and six rows with today boxed; uncalibrated time falls back.
@@ -350,20 +413,101 @@ static void draw_lock_almanac(uint8_t* fb) {
     }
     ui_text(fb, UI_LOCK_WIDTH / 2, 726, 36, "宜读书", EPD_DRAW_ALIGN_CENTER, false);
     ui_text(fb, UI_LOCK_WIDTH / 2, 838, 44, clock, EPD_DRAW_ALIGN_CENTER, false);
-    ui_text(fb, UI_LOCK_WIDTH / 2, 960, 26, "已锁定 · 短按电源键唤醒", EPD_DRAW_ALIGN_CENTER, false);
+    ui_text(fb, UI_LOCK_WIDTH / 2, 960, 26, app_settings_sleep_mode() == APP_SLEEP_OFF ? "已锁定 · 长按电源键开机" : "已锁定 · 短按电源键唤醒", EPD_DRAW_ALIGN_CENTER, false);
 }
-// 按设置画锁屏面；时钟/日历/黄历需要有效时间，否则回退静态图。/ Paint the configured face; clock/calendar/almanac need valid time or fall back.
-static void draw_lock_face(uint8_t* framebuffer) {
-    uint8_t style = app_settings_lock_style();
-    if (style) {
-        os_time_force_poll();
-        os_time_poll(esp_timer_get_time() / 1000);
-        bool valid = os_time_info()->state == OS_TIME_VALID;
-        if (style == 1 && valid) { draw_lock_clock(framebuffer); return; }
-        if (style == 2 && valid) { draw_lock_calendar(framebuffer); return; }
-        if (style == 3 && valid) { draw_lock_almanac(framebuffer); return; }
+// 壁纸解码缓存：每次锁屏都整幅解码既慢又在阅读后的内存压力下偶发失败回退内置图；
+// 以路径+大小+mtime 为键缓存解码灰度，stat 命中直接绘制，失败留日志定位。
+// Wallpaper decode cache: decoding per lock is slow and intermittently fails under
+// post-reading memory pressure, falling back to the built-in image; cache the decoded
+// gray keyed by path+size+mtime, blit on stat hits and log failures for diagnosis.
+typedef struct {
+    char path[192];
+    long size;
+    long mtime;
+    uint8_t* gray;
+    uint16_t width, height;
+} wallpaper_cache_t;
+static wallpaper_cache_t s_wallpaper;
+
+static bool draw_lock_wallpaper(uint8_t* framebuffer) {
+    const char* path = app_settings_lock_image();
+    if (!path[0]) {
+        if (s_wallpaper.gray) { free(s_wallpaper.gray); s_wallpaper.gray = NULL; s_wallpaper.path[0] = 0; }
+        return false;
     }
+    struct stat st;
+    if (stat(path, &st) || st.st_size <= 0) {
+        ESP_LOGW(TAG, "wallpaper stat failed: %s", path);
+        return false;
+    }
+    if (!s_wallpaper.gray || strcmp(s_wallpaper.path, path) ||
+        s_wallpaper.size != st.st_size || s_wallpaper.mtime != st.st_mtime) {
+        free(s_wallpaper.gray);
+        s_wallpaper.gray = NULL;
+        uint16_t width = 0, height = 0;
+        // 先读设壁纸时存的灰度快照（免解码、内存峰值 ~600KB）；未命中再实时解码，
+        // 解码成功回写快照自愈（旧固件设置的壁纸或替换过的图片）。
+        // Read the snapshot stored when the wallpaper was set (no decode, ~600KB peak);
+        // fall back to a live decode and write the snapshot back to self-heal (wallpapers
+        // set on older firmware or replaced images).
+        if (!ui_image_wallpaper_cache_load(UI_IMAGE_WALLPAPER_CACHE, path, st.st_size, st.st_mtime,
+                                           &s_wallpaper.gray, &width, &height)) {
+            if (!ui_image_load_path(path, &s_wallpaper.gray, &width, &height)) {
+                ESP_LOGW(TAG, "wallpaper decode failed size=%ld psram=%u", (long)st.st_size,
+                         (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+                return false;
+            }
+            if (!ui_image_wallpaper_cache_store(UI_IMAGE_WALLPAPER_CACHE, path, st.st_size, st.st_mtime,
+                                                s_wallpaper.gray, width, height))
+                ESP_LOGW(TAG, "wallpaper snapshot store failed");
+        }
+        snprintf(s_wallpaper.path, sizeof(s_wallpaper.path), "%s", path);
+        s_wallpaper.size = st.st_size;
+        s_wallpaper.mtime = st.st_mtime;
+        s_wallpaper.width = width;
+        s_wallpaper.height = height;
+    }
+    ui_image_blit(framebuffer, s_wallpaper.gray, s_wallpaper.width, s_wallpaper.height,
+                  (EpdRect){0, 0, UI_LOCK_WIDTH, UI_LOCK_HEIGHT});
+    return true;
+}
+
+static bool draw_lock_excerpt(uint8_t* framebuffer) {
+    book_quote_t quote;
+    if (!book_quotes_lock_get(&quote)) return false;
+    os_time_poll(esp_timer_get_time() / 1000);
+    const os_time_info_t* time = os_time_info();
+    uint32_t date = (*time).state==OS_TIME_VALID ? (*time).year*10000u+(*time).month*100u+(*time).day : 0;
+    unsigned minutes = date ? book_stats_minutes(date) : 0, days = 0;
+    if (date) for (int i=0;i<30;++i) if (book_stats_minutes(os_time_date_shift(date,-i))) ++days;
+    ui_product_excerpt_lock(framebuffer, quote.text, quote.path, quote.chapter_title, app_settings_lock_wake_hint(),time,minutes,days,
+                           app_settings_effective_lock_mode() != APP_SLEEP_OFF,false);
+    return true;
+}
+// 按设置画锁屏面；图片样式先画壁纸、缺图回退内置静态图；时钟/日历/黄历需有效时间。
+// 返回 true 表示画的是 TF 壁纸（大面积灰阶照片需要物理清白基线）。
+// Paint the configured face; the image style draws the wallpaper first with the built-in
+// image as fallback, while clock/calendar/almanac need valid time. True means a TF wallpaper
+// was painted (full-screen photo grays need the physically cleaned baseline).
+static bool draw_lock_face(uint8_t* framebuffer) {
+    uint8_t style = app_settings_lock_style();
+    if (style == APP_LOCK_STYLE_QUOTE) {
+        if (!draw_lock_excerpt(framebuffer)) draw_static_lock(framebuffer);
+        return false;
+    }
+    if (!style) {
+        if (draw_lock_wallpaper(framebuffer)) return true;
+        draw_static_lock(framebuffer);
+        return false;
+    }
+    os_time_force_poll();
+    os_time_poll(esp_timer_get_time() / 1000);
+    bool valid = os_time_info()->state == OS_TIME_VALID;
+    if (style == 1 && valid) { draw_lock_clock(framebuffer); return false; }
+    if (style == 2 && valid) { draw_lock_calendar(framebuffer); return false; }
+    if (style == 3 && valid) { draw_lock_almanac(framebuffer); return false; }
     draw_static_lock(framebuffer);
+    return false;
 }
 
 /* ---- 锁屏密码 / Lock PIN ---- */
@@ -377,6 +521,12 @@ bool app_lock_pin_challenge(EpdiyHighlevelState* hl, cst836u_handle_t tp) {
     char message[64] = {0};
     unsigned count = 0;
     uint8_t* fb = epd_hl_get_framebuffer(hl);
+    // 唤醒用的这次按键在松开瞬间还会补一条 SHORT 事件：先等松开并抽干，
+    // 否则入口循环会立刻把残余事件误读成“回锁屏”请求，密码页一闪而过。
+    // The wake press completes with a SHORT event at release: wait for the
+    // release and drain it, or the entry loop instantly mistakes the leftover
+    // for a relock request and the keypad flashes away.
+    app_lock_wait_key_idle(800);
     ui_product_lock_keypad(fb, "输入锁屏密码", message, count, false);
     // 唤醒首帧用真实旧帧进行 GC16 清理，避免丢失锁屏参考。
     // Clean the first wake frame with GC16 against the real previous lock image.
@@ -390,7 +540,9 @@ bool app_lock_pin_challenge(EpdiyHighlevelState* hl, cst836u_handle_t tp) {
         for (;;) {
             vTaskDelay(pdMS_TO_TICKS(20));
             rails_idle_check(esp_timer_get_time() / 1000);
-            read_pico_pmu_drain_events();
+            // 输入途中按电源键＝回锁屏重睡；事件不吞掉。
+            // A power-key press during entry returns to the lock face; the event is not drained away.
+            if (read_pico_pmu_take_wake_events() & READ_PICO_PMU_WAKE_KEY) return false;
             cst836u_touch_t touch;
             if (cst836u_read(tp, &touch) != ESP_OK || !touch.touched || touch.count != 1) continue;
             int held = ui_product_lock_keypad_hit(touch.x, touch.y);
@@ -466,32 +618,50 @@ bool app_lock_pin_challenge(EpdiyHighlevelState* hl, cst836u_handle_t tp) {
 
 void enter_lock_and_sleep(
     EpdiyHighlevelState* hl, int64_t* ignore_until_ms, sc7a20h_handle_t acc,
-    cst836u_handle_t tp
+    cst836u_handle_t tp, uint8_t origin_app
 ) {
+lock_again:
+    // 无线仍在运行时不能进入浅睡；保留界面供关闭后重试。
+    // Never enter light sleep while the radio still runs; retain the page for an explicit retry.
+    if (!os_page_turner_pause()) return;
     // 先统一保存（正文进度、统计检查点），再画锁屏下电；失败不阻塞睡眠。
     // Save uniformly first (reader progress, stats checkpoints), then paint the lock face; failures never block sleep.
     app_sleep_prepare_run();
     uint8_t* framebuffer = epd_hl_get_framebuffer(hl);
-    draw_lock_face(framebuffer);
-    guard_draw_result(hl, update_display_full(hl));
+    // 壁纸照片是大面积混合灰阶，单次差分 GC16 会透出上一页残影；锁屏入口先物理清白
+    // 再按厂家 GC16 重画，其余锁屏面保持单次 GC16。
+    // Wallpaper photos are full-screen mixed grays that ghost the previous page through a
+    // single differential GC16; the lock entry physically clears white first and repaints
+    // with vendor GC16, while other faces keep the single GC16 pass.
+    bool wallpaper = draw_lock_face(framebuffer);
+    guard_draw_result(hl, wallpaper ? update_display_clean(hl) : update_display_full(hl));
     app_lock_wait_key_idle(800);
     app_sleep_mode_t mode = app_settings_sleep_mode();
-    // 动态锁屏保留本地钟与帧缓冲；显式关机仍服从用户选择。
-    // Dynamic faces retain the local clock and framebuffer; explicit power-off keeps its meaning.
-    if (mode == APP_SLEEP_DEEP && app_settings_lock_style() != 0) mode = APP_SLEEP_LIGHT;
+    // 动态锁屏保留本地钟与帧缓冲；壁纸与静态不随分钟变化可深睡；显式关机仍服从用户选择。
+    // Dynamic faces retain the local clock and framebuffer; wallpaper and static faces never
+    // change per minute so deep sleep stands; explicit power-off keeps its meaning.
+    {
+        uint8_t style = app_settings_lock_style();
+        if (mode == APP_SLEEP_DEEP && ((style >= 1 && style <= 3) || style == APP_LOCK_STYLE_QUOTE)) mode = APP_SLEEP_LIGHT;
+    }
     app_sleep_alarm_clock(false);
     ESP_LOGI(TAG, "lock %s", app_sleep_mode_name(mode));
 
     switch (mode) {
         case APP_SLEEP_OFF:
         case APP_SLEEP_DEEP:
+            // 断电级睡眠前记录锁屏来源：下次开机直达该页；阅读标记由页内睡眠回调按需置位。
+            // Record the lock origin before a power-cut sleep: the next boot returns to
+            // it; the reading marker is set by the page's sleep callback when applicable.
+            app_settings_set_lock_origin(origin_app);
             app_enter_host_sleep(mode);
             break;
         case APP_SLEEP_LIGHT:
         default: {
             // 分钟更新不离开锁屏；只按键/拿起返回页面。/ Minute updates stay locked; only keys/pickup return to the page.
             unsigned prev_day = os_time_info()->day;
-            unsigned minutes = 0;
+            bool prev_valid = os_time_info()->state == OS_TIME_VALID;
+            unsigned minutes = 0, idle_minutes = 0;
             for (;;) {
                 epd_poweroff();
                 arm_lock_wake();
@@ -505,26 +675,39 @@ void enter_lock_and_sleep(
                 }
                 os_time_lock_sync_cancel();
                 if (wake != APP_WAKE_TIMER) break;
+                // 锁屏久置降级：只剩分钟唤醒累计满30分钟说明是误锁后被搁置，转软睡省电。
+                // Long-idle descent: thirty minutes of nothing but timer wakes means an
+                // accidental lock left sitting; descend to soft sleep to save battery.
+                if (lock_idle_tick(&idle_minutes)) break;
                 os_time_poll(esp_timer_get_time() / 1000);
-                // 静态锁屏只维护时间；画面未改变，不重复推屏。
-                // Static locks maintain time only; their unchanged frame needs no extra presentation.
-                if (app_settings_lock_style() == 0) continue;
+                // 静态与壁纸锁屏只维护时间；画面未改变，不重复推屏。
+                // Static and wallpaper locks maintain time only; their unchanged frames need no extra presentation.
+                if (app_settings_lock_style() == 0 || app_settings_lock_style() == 4) continue;
                 draw_lock_face(framebuffer);
                 const os_time_info_t* info = os_time_info();
                 uint8_t style = app_settings_lock_style();
                 // 时钟在 y=300 绘制；区域必须覆盖整字高及旧笔画，不能截在 y=360。
                 // The clock starts at y=300; cover the entire glyph and previous ink, never cut at y=360.
-                EpdRect band = style == 1 ? (EpdRect){0, 260, UI_LOCK_WIDTH, 380}
-                    : style == 2 ? (EpdRect){0, 980, UI_LOCK_WIDTH, 90}
-                    : (EpdRect){0, 780, UI_LOCK_WIDTH, 120};
-                if (info->state != OS_TIME_VALID || info->day != prev_day || ++minutes >= 15) {
+                EpdRect band = lock_time_band(style);
+                if (info->state != OS_TIME_VALID || !prev_valid || info->day != prev_day || ++minutes >= 15) {
                     guard_draw_result(hl, update_display_area_quiet(hl,
                         (EpdRect){0, 0, UI_LOCK_WIDTH, UI_LOCK_HEIGHT}));
                     minutes = 0;
                     prev_day = info->day;
+                    prev_valid = info->state == OS_TIME_VALID;
                 } else {
                     guard_draw_result(hl, update_display_area_quiet(hl, band));
                 }
+            }
+            if (idle_minutes >= LOCK_IDLE_SOFT_SLEEP_MIN) {
+                app_sleep_alarm_clock(false);
+                app_sleep_disarm_minute_wake();
+                // 降级同样断电：记录锁屏来源，开机回到锁屏那一刻的页面。
+                // The descent also cuts power: record the lock origin so boot
+                // returns to the page showing when locking happened.
+                app_settings_set_lock_origin(origin_app);
+                ESP_LOGI(TAG, "lock idle %u min, soft sleep", idle_minutes);
+                app_enter_host_sleep(APP_SLEEP_DEEP);
             }
             app_sleep_alarm_clock(false);
             app_sleep_disarm_minute_wake();
@@ -536,7 +719,13 @@ void enter_lock_and_sleep(
     // Light-sleep wake keeps the original first-push path (no garble in testing);
     // the garble lives in the post-deep-sleep cold boot, handled by app_main's double clear.
     read_pico_pmu_drain_events();
-    if (tp && app_settings_lock_pin_wake()) app_lock_pin_challenge(hl, tp);
+    if (tp && app_settings_lock_pin_wake() && !app_lock_pin_challenge(hl, tp)) {
+        // 密码页按了电源键：重画锁屏面再睡一轮（入口的等键释放避免同键立刻唤醒）。
+        // The power key was pressed on the PIN page: repaint the lock face and sleep
+        // another round (the entry key-idle wait stops the same key waking it instantly).
+        ESP_LOGI(TAG, "relock from pin challenge");
+        goto lock_again;
+    }
     read_pico_pmu_drain_events();
     if (ignore_until_ms) {
         *ignore_until_ms = esp_timer_get_time() / 1000 + APP_LOCK_IGNORE_BOOT_MS;

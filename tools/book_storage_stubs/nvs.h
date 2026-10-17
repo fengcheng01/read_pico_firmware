@@ -3,6 +3,13 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "esp_err.h"
+// IDF 的 nvs.h 自带错误码；替身补齐同值定义。/ The IDF nvs.h ships these codes; the fake mirrors the same values.
+#ifndef ESP_ERR_NVS_NOT_FOUND
+#define ESP_ERR_NVS_NOT_FOUND 0x1102
+#endif
+#ifndef ESP_ERR_NVS_NOT_ENOUGH_SPACE
+#define ESP_ERR_NVS_NOT_ENOUGH_SPACE 0x1103
+#endif
 typedef int nvs_handle_t;
 #define NVS_READONLY 0
 #define NVS_READWRITE 1

@@ -36,6 +36,7 @@ esp_err_t read_pico_transfer_start(const read_pico_transfer_cfg_t* cfg) {
         strcpy(s_status.url, "http://192.168.4.1");
     } else {
         strcpy(s_status.url, "http://192.168.1.42:8000");
+        snprintf(s_status.wifi_ssid, sizeof(s_status.wifi_ssid), "%s", s_wifi_ssid);
     }
     return ESP_OK;
 }
@@ -52,6 +53,19 @@ void read_pico_transfer_get_status(read_pico_transfer_status_t* out) {
     if (out) *out = s_status;
 }
 void read_pico_transfer_service_poll(void) {}
+// 只改变隔离的网络快照，用于真实传书页的接收、完成和失败验收。
+// Change only the isolated network snapshot for real transfer-page receiving, completion and error checks.
+void preview_transfer_fixture(int value) {
+    if (!s_running) return;
+    s_status.done_count = value == 2 ? 1 : 0;
+    s_status.changed_count = s_status.done_count;
+    s_status.state = value == 1 ? READ_PICO_TRANSFER_UPLOADING : value == 3 ? READ_PICO_TRANSFER_ERROR : READ_PICO_TRANSFER_READY;
+    s_status.last_error = value == 3 ? ESP_FAIL : ESP_OK;
+    s_status.cur_total = value ? 1048576 : 0;
+    s_status.cur_bytes = value == 2 ? 1048576 : value ? 524288 : 0;
+    snprintf(s_status.cur_name, sizeof(s_status.cur_name), "%s", value ? "示例图书.epub" : "");
+}
+
 esp_err_t read_pico_transfer_get_saved_wifi(char ssid[33], bool* configured) {
     if (ssid) snprintf(ssid, 33, "%s", s_wifi_configured ? s_wifi_ssid : "");
     if (configured) *configured = s_wifi_configured;

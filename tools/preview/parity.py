@@ -22,6 +22,7 @@ ROOT = Path(__file__).resolve().parents[2]
 # Device-boundary files excluded from the preview: drivers, factory wiring, the
 # real loop assembly and ESP-only bridges.
 DEVICE_ONLY = {
+    "os/os_ble_radio_pico.c", # 无线硬件，独立 API 故障回归 / radio hardware with independent API fault regression
     "app_main.c",          # 板级装配与真机引导 / board assembly and boot
     "display.c",           # 波形/推屏驱动 / waveform and present driver
     "sleep.c",             # PMU/GPIO 睡眠路径 / PMU/GPIO sleep path
@@ -34,6 +35,7 @@ DEVICE_ONLY = {
     "os/os_sync_pico.c",
     "os/os_crash_pico.c",  # esp_reset_reason 与内置 FAT 追加 / reset reason + internal-FAT append   # HTTP/MD5 设备桥 / HTTP/MD5 bridge
     "book/book_store.c",   # FATFS 挂载策略（预览用夹具根）/ FATFS policy (preview uses fixture roots)
+    "boot_state.c",        # NVS 启动记录，设备侧开机流向 / NVS boot record on the device boot path
     "factory/pmu_selftest.c",
     "factory/vcom_setup.c",
 }

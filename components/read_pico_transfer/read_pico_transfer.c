@@ -14,8 +14,22 @@
  * Frozen: Hardware feedback requires on-demand sync networking; network-only STA never accesses files or starts HTTP and the owner serializes its lifecycle.
  * 冻结：实机漏扫反馈要求完整驻留及一次空结果被动兜底；保留驱动国家策略，不由语言或时区修改地区。
  * Frozen: Missing-network feedback requires full dwell and one passive retry on empty results; keep driver country policy, independent of language or timezone.
- * 冻结：锁屏后NO_MEM反馈要求扫描和仅联网使用较小静态缓冲；传书保留默认，释放失败不冒充已停止。
- * Frozen: Post-lock NO_MEM feedback requires smaller static buffers for scans and network-only sessions; keep transfer defaults and retain ownership on failed release.
+ * 冻结修订：反复NO_MEM反馈要求全部会话使用有界收发/管理缓冲，初始化内存不足仅重试一次最小配置。
+ * Frozen revision: Repeated NO_MEM feedback bounds RX/TX/management buffers for every session, retrying initialization once with the minimal profile.
+ * 用户修订：上传允许短暂接收超时但连续30秒无数据即终止，停止优先；传书STA关闭省电避免接收休眠，不增加常驻收发缓冲。
+ * User revision: Uploads tolerate transient receive timeouts but stop after30seconds without data, honoring cancellation; transfer STA disables power saving without enlarging resident buffers.
+ * 继续使用PSRAM机型要求的静态TX；释放失败不得冒充已停止。
+ * Retain static TX required by PSRAM builds and never report stopped after release failure.
+ * 冻结：用户要求网页可浏览目录结构并预览TXT内容；/fs只读书库根子树（分块JSON限400条），隐藏点文件与上传临时/备份，预览仅TXT前4KB原始字节，由网页解码编码。
+ * 用户追加要求可见字体目录：root=fonts 以同一规则只读浏览字体根，缺省仍书库根。
+ * Frozen: The user asks the webpage to browse directory structure and preview TXT contents; /fs is a read-only view of the book-root subtree (chunked JSON capped at 400 entries), hiding dot files and upload temps/backups, previewing only the first 4KB raw TXT bytes with decoding left to the page.
+ * The user adds font-directory visibility: root=fonts browses the font root read-only under the same rules, still defaulting to the book root.
+ * 用户追加要求在线传图：JPG/PNG 经 /images 上传到 TF images 目录（≤20 MiB，提交前按魔数校验），供锁屏图片页使用。
+ * The user adds online image transfer: JPG/PNG arrive through /images into the TF images directory (<=20 MiB, magic-checked before commit) for the lock-image page.
+ * 冻结修订：上传先用独立临时文件检查写入能力，4KiB无stdio缓冲流式落盘；错误保留阶段/errno，未提交不改原文件。
+ * Frozen revision: Preflight a separate temporary file, stream unbuffered4KiB writes, and retain error stage/errno without changing originals before commit.
+ * 用户要求网页直接管理卡上内容：/fonts、/images 与图书删除共用同一准入与进度语义（字体图片无阅读进度，省回调）；/fs 保持只读。
+ * Frozen: the user asks the webpage to manage on-card content directly: /fonts and /images deletions share the book-deletion admission and result semantics (no progress callback for fonts and images); /fs stays read-only.
  */
 #include "read_pico_search.h"
 #include <stdbool.h>
@@ -37,7 +51,10 @@ static int hex_value(unsigned char c) {
     return -1;
 }
 
-static bool decode_name_type(const char *encoded, char *out, size_t cap, bool font) {
+// 名字按类别限扩展名：图书 TXT/EPUB、字体 TTF、图片 JPG/JPEG/PNG。
+// Names restrict extensions by kind: books TXT/EPUB, fonts TTF, images JPG/JPEG/PNG.
+enum { NAME_KIND_BOOKS, NAME_KIND_FONT, NAME_KIND_IMAGE };
+static bool decode_name_type(const char *encoded, char *out, size_t cap, int kind) {
     if (!cap) return false;
     size_t n = 0;
     while (*encoded) {
@@ -54,7 +71,19 @@ static bool decode_name_type(const char *encoded, char *out, size_t cap, bool fo
     out[n] = 0;
     if (!n || out[0] == '.' || out[0] == ' ' || out[n - 1] == ' ' || strstr(out, "..")) return false;
     const char *ext = strrchr(out, '.');
-    if (!ext || (font ? strcasecmp(ext, ".ttf") : (strcasecmp(ext, ".txt") && strcasecmp(ext, ".epub")))) return false;
+    bool allowed = false;
+    if (ext) switch (kind) {
+        case NAME_KIND_FONT:
+            allowed = !strcasecmp(ext, ".ttf");
+            break;
+        case NAME_KIND_IMAGE:
+            allowed = !strcasecmp(ext, ".jpg") || !strcasecmp(ext, ".jpeg") || !strcasecmp(ext, ".png");
+            break;
+        default:
+            allowed = !strcasecmp(ext, ".txt") || !strcasecmp(ext, ".epub");
+            break;
+    }
+    if (!allowed) return false;
     // 拒绝非规范 UTF-8、代理项与越界码点。/ Reject noncanonical UTF-8, surrogates and out-of-range code points.
     for (size_t i = 0; i < n;) {
         uint32_t cp; unsigned more; unsigned char c = (unsigned char)out[i++];
@@ -74,9 +103,10 @@ static bool decode_name_type(const char *encoded, char *out, size_t cap, bool fo
     return true;
 }
 
-static bool decode_name_limit(const char *encoded, char *out, size_t cap) { return decode_name_type(encoded, out, cap, false); }
+static bool decode_name_limit(const char *encoded, char *out, size_t cap) { return decode_name_type(encoded, out, cap, NAME_KIND_BOOKS); }
 static bool decode_name(const char *encoded, char out[121]) { return decode_name_limit(encoded, out, 121); }
-static bool decode_font_name(const char *encoded, char out[121]) { return decode_name_type(encoded, out, 121, true); }
+static bool decode_font_name(const char *encoded, char out[121]) { return decode_name_type(encoded, out, 121, NAME_KIND_FONT); }
+static bool decode_image_name(const char *encoded, char out[121]) { return decode_name_type(encoded, out, 121, NAME_KIND_IMAGE); }
 
 static bool raw_book_name(const char *entry, char *name, size_t cap) {
     size_t len = strlen(entry);
@@ -162,7 +192,7 @@ static bool temporary_basename(const char *entry, const char *suffix, char name[
         encoded[i * 3] = '%'; encoded[i * 3 + 1] = digits[c >> 4]; encoded[i * 3 + 2] = digits[c & 15];
     }
     encoded[(len - tail) * 3] = 0;
-    return decode_name(encoded, name) || decode_font_name(encoded, name);
+    return decode_name(encoded, name) || decode_font_name(encoded, name) || decode_image_name(encoded, name);
 }
 
 static int cleanup_interrupted(const char *root, unsigned *removed, unsigned *restored) {
@@ -217,36 +247,69 @@ static int commit_file(const char *part, const char *path) {
 typedef int (*receive_cb_t)(void *, char *, size_t);
 typedef void (*progress_cb_t)(size_t);
 enum { TRANSFER_COMMITTED_BACKUP_RETAINED = 299 };
-static int receive_file(const char *path, const char *part, size_t total, char *buf,
-                        size_t cap, receive_cb_t recv, void *ctx, progress_cb_t progress) {
+// 图片按魔数预检：JPEG FF D8 FF 或 PNG 签名，改名的非图片在提交前拒绝。
+// Preflight images by magic: JPEG FF D8 FF or the PNG signature; renamed non-images reject before commit.
+static bool valid_image(const char *part) {
+    FILE *f = fopen(part, "rb");
+    if (!f) return false;
+    unsigned char head[8] = {0};
+    size_t got = fread(head, 1, sizeof(head), f);
+    fclose(f);
+    return (got >= 3 && head[0] == 0xff && head[1] == 0xd8 && head[2] == 0xff) ||
+           (got >= 8 && !memcmp(head, "\x89PNG\r\n\x1a\n", 8));
+}
+typedef struct { const char *stage; int error; size_t received, written; } upload_io_t;
+static int receive_file_detail(const char *path, const char *part, size_t total, char *buf,
+                        size_t cap, receive_cb_t recv, void *ctx, progress_cb_t progress, upload_io_t *io) {
+    *io = (upload_io_t){.stage = "open"};
+    errno = 0;
     FILE *f = fopen(part, "wb");
-    if (!f) return 507;
+    if (!f) { io->error = errno; return 507; }
+    // 避免联网后再为stdio申请缓冲；4KiB块也限制SD的临时DMA需求。
+    // Avoid allocating stdio buffers after networking;4KiB chunks bound temporary SD DMA demand.
+    setvbuf(f, NULL, _IONBF, 0);
     int error = 0;
     size_t done = 0;
     while (done < total) {
         size_t n = total - done < cap ? total - done : cap;
-        int got = recv(ctx, buf, n);
-        if (got <= 0 || (size_t)got > n) { error = 408; break; }
-        if (fwrite(buf, 1, (size_t)got, f) != (size_t)got) { error = 507; break; }
+        if (n > 4096) n = 4096;
+        errno = 0; int got = recv(ctx, buf, n);
+        if (got <= 0 || (size_t)got > n) { error = 408; io->stage = "receive"; io->error = errno; break; }
+        io->received += (size_t)got;
+        errno = 0; size_t wrote = fwrite(buf, 1, (size_t)got, f);
+        io->written += wrote;
+        if (wrote != (size_t)got) { error = 507; io->stage = "write"; io->error = errno; break; }
         done += (size_t)got;
         if (progress) progress(done);
     }
-    if (fclose(f) != 0) error = 507;
+    errno = 0;
+    if (fclose(f) != 0 && !error) { error = 507; io->stage = "close"; io->error = errno; }
     const char *ext = strrchr(path, '.');
-    if (!error && ext && !strcasecmp(ext, ".ttf") && !valid_ttf(part)) error = 422;
+    if (!error && ext && !strcasecmp(ext, ".ttf") && !valid_ttf(part)) { error = 422; io->stage = "font"; }
+    if (!error && ext && (!strcasecmp(ext, ".jpg") || !strcasecmp(ext, ".jpeg") || !strcasecmp(ext, ".png")) &&
+        !valid_image(part)) { error = 422; io->stage = "image"; }
     if (!error) {
-        int committed = commit_file(part, path);
-        if (committed < 0) error = 507;
+        errno = 0; int committed = commit_file(part, path);
+        if (committed < 0) { error = 507; io->stage = "commit"; io->error = errno; }
         else if (committed > 0) return TRANSFER_COMMITTED_BACKUP_RETAINED;
     }
     if (error) remove(part);
     return error;
 }
+#ifdef READ_PICO_TRANSFER_HOST_TEST
+static int receive_file(const char *path, const char *part, size_t total, char *buf,
+                        size_t cap, receive_cb_t recv, void *ctx, progress_cb_t progress) {
+    upload_io_t io;
+    return receive_file_detail(path, part, total, buf, cap, recv, ctx, progress, &io);
+}
+
+#endif
 
 typedef int (*file_changed_cb_t)(const char *);
 typedef struct {
     int status;
     bool changed, progress_cleanup_failed, storage_cleanup_failed;
+    upload_io_t io;
 } file_result_t;
 
 static file_result_t changed_result(const char *path, file_changed_cb_t callback) {
@@ -267,11 +330,13 @@ static int destination_status(const char *path, bool overwrite) {
 static file_result_t upload_managed(const char *path, const char *part, size_t total, size_t limit,
         uint64_t available, bool overwrite, char *buf, size_t cap, receive_cb_t recv, void *ctx,
         progress_cb_t progress, file_changed_cb_t changed) {
-    int status = destination_status(path, overwrite);
-    if (!status) status = check_length(total, limit, available);
-    if (!status) status = receive_file(path, part, total, buf, cap, recv, ctx, progress);
-    if (status && status != TRANSFER_COMMITTED_BACKUP_RETAINED) return (file_result_t){.status = status};
+    upload_io_t io = {.stage = "destination"};
+    errno = 0; int status = destination_status(path, overwrite); io.error = errno;
+    if (!status) { status = check_length(total, limit, available); io.stage = total > available ? "capacity" : "length"; io.error = 0; }
+    if (!status) status = receive_file_detail(path, part, total, buf, cap, recv, ctx, progress, &io);
+    if (status && status != TRANSFER_COMMITTED_BACKUP_RETAINED) return (file_result_t){.status = status, .io = io};
     file_result_t result = changed_result(path, changed);
+    result.io = io;
     result.storage_cleanup_failed = status == TRANSFER_COMMITTED_BACKUP_RETAINED;
     return result;
 }
@@ -357,15 +422,23 @@ static int list_books(const char *root, const char *query, size_t page, transfer
 #include "freertos/task.h"
 
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
+// 图片上传上限 20 MiB（对齐参考固件）：解码端已改为 FILE* 流式，普通手机照片直传；
+// 查看端解码的字节上限独立为 50 MiB，卡上原有大图不受上传闸门约束。
+// Image upload cap is 20 MiB (matching the reference firmwares): the decoder now
+// streams from FILE*, so ordinary phone photos upload directly; the viewer's own
+// decode cap stays 50 MiB and existing large files on the card are unaffected.
+#define TRANSFER_IMAGE_MAX (20u * 1024u * 1024u)
 static read_pico_transfer_status_t s_status;
 static read_pico_transfer_cfg_t s_cfg;
 static char s_root[160];
 static char s_font_root[160];
+static char s_image_root[160];
 static httpd_handle_t s_http;
 static esp_netif_t *s_netif;
 static esp_event_handler_instance_t s_events, s_ip_events;
 static bool s_wifi, s_started, s_loop_owned;
 static char *s_buffer;
+static struct { uint32_t seq; char name[121]; size_t total; file_result_t result; } s_last_upload;
 static bool s_stopping, s_upload_active, s_sync_active;
 static bool s_config_busy;
 static transfer_connection_t s_connection;
@@ -425,14 +498,16 @@ esp_err_t read_pico_transfer_save_wifi(const char *ssid, const char *password) {
 
 static wifi_init_config_t wifi_init_for_session(bool network_only) {
     wifi_init_config_t init = WIFI_INIT_CONFIG_DEFAULT();
-    if (!network_only) return init;
-    // IDF的静态收发缓冲各约1.6KiB；低流量会话不预留传书的16+16个缓冲。
-    // IDF static RX/TX buffers each use about 1.6 KiB; low-traffic sessions do not reserve the transfer's 16+16 buffers.
-    if (init.static_rx_buf_num > 6) init.static_rx_buf_num = 6;
-    if (init.static_tx_buf_num > 4) init.static_tx_buf_num = 4;
-    if (init.dynamic_rx_buf_num == 0 || init.dynamic_rx_buf_num > 12) init.dynamic_rx_buf_num = 12;
+    // 每个静态缓冲约1.6KiB；传书也不再一次预留16+16，低流量进一步缩减。
+    // Each static buffer costs about1.6 KiB; transfers no longer reserve16+16, and low traffic uses fewer.
+    int rx = network_only ? 4 : 8, tx = network_only ? 3 : 6;
+    if (init.static_rx_buf_num > rx) init.static_rx_buf_num = rx;
+    if (init.static_tx_buf_num > tx) init.static_tx_buf_num = tx;
+    int dynamic = network_only ? 8 : 16;
+    if (init.dynamic_rx_buf_num == 0 || init.dynamic_rx_buf_num > dynamic) init.dynamic_rx_buf_num = dynamic;
     if (init.rx_ba_win > init.static_rx_buf_num) init.rx_ba_win = init.static_rx_buf_num;
-    if (init.cache_tx_buf_num > 4) init.cache_tx_buf_num = 4;
+    if (init.cache_tx_buf_num > (network_only ? 2 : 4)) init.cache_tx_buf_num = network_only ? 2 : 4;
+    if (init.mgmt_sbuf_num > 6) init.mgmt_sbuf_num = 6;
     return init;
 }
 
@@ -445,6 +520,21 @@ static void wifi_heap_log(const char *operation, const char *stage, esp_err_t re
              (unsigned)heap_caps_get_free_size(dma), (unsigned)heap_caps_get_largest_free_block(dma));
 }
 
+static esp_err_t wifi_driver_init(bool network_only, const char* operation) {
+    wifi_init_config_t init = wifi_init_for_session(network_only);
+    esp_err_t err = esp_wifi_init(&init);
+    if (err != ESP_ERR_NO_MEM) return err;
+    wifi_heap_log(operation, "wifi-init-minimal-retry", err);
+    // IDF v6.1允许至少2个静态RX、1个TX和6个管理短缓冲；回退仍保留两个TX。
+    // IDF v6.1 permits at least2 static RX,1 TX and6 management short buffers; retain two TX in fallback.
+    init.static_rx_buf_num = 2;
+    if (init.static_tx_buf_num > 2) init.static_tx_buf_num = 2;
+    init.dynamic_rx_buf_num = 4;
+    init.rx_ba_win = 2;
+    if (init.cache_tx_buf_num > 2) init.cache_tx_buf_num = 2;
+    return esp_wifi_init(&init);
+}
+
 static esp_err_t release_wifi_driver(bool *initialized, bool *started) {
     if (*started) {
         esp_wifi_scan_stop(); esp_wifi_clear_ap_list();
@@ -454,7 +544,12 @@ static esp_err_t release_wifi_driver(bool *initialized, bool *started) {
     }
     if (*initialized) {
         esp_err_t err = esp_wifi_deinit();
-        if (err != ESP_OK && err != ESP_ERR_WIFI_NOT_INIT) return err;
+        // INVALID_STATE在此语义是目标已不在（并发释放或先前失败已实际回收），
+        // 当作已释放清标志，否则一次失败会把所有权闩死，后续start永远INVALID_STATE。
+        // INVALID_STATE here means the target is already gone (concurrent release or a
+        // prior failure that actually reclaimed it); treat it as released, otherwise one
+        // failure latches ownership and every later start returns INVALID_STATE forever.
+        if (err != ESP_OK && err != ESP_ERR_WIFI_NOT_INIT && err != ESP_ERR_INVALID_STATE) return err;
         *initialized = false;
     }
     return ESP_OK;
@@ -509,10 +604,9 @@ esp_err_t read_pico_transfer_scan_wifi(read_pico_transfer_network_t out[READ_PIC
     err = esp_event_loop_create_default();
     if (err == ESP_OK) loop_owned = true;
     else if (err != ESP_ERR_INVALID_STATE) goto cleanup;
-    wifi_init_config_t init = wifi_init_for_session(true);
     stage = "wifi-init";
     wifi_heap_log("scan", stage, ESP_OK);
-    err = esp_wifi_init(&init); if (err != ESP_OK) goto cleanup;
+    err = wifi_driver_init(true, "scan"); if (err != ESP_OK) goto cleanup;
     initialized = true;
     stage = "storage";
     err = esp_wifi_set_storage(WIFI_STORAGE_RAM); if (err != ESP_OK) goto cleanup;
@@ -704,6 +798,41 @@ static esp_err_t index_handler(httpd_req_t *req) {
     return httpd_resp_send(req, upload_start, upload_end - upload_start - 1);
 }
 
+static const char *upload_stage_name(const char *stage) {
+    if (!stage) return "接收文件";
+    if (!strcmp(stage,"open")) return "创建临时文件";
+    if (!strcmp(stage,"write")) return "写入TF卡";
+    if (!strcmp(stage,"close")) return "保存文件";
+    if (!strcmp(stage,"commit")) return "替换文件";
+    if (!strcmp(stage,"probe-cleanup")) return "清理写入检查文件";
+    if (!strcmp(stage,"capacity")) return "检查剩余容量";
+    if (!strcmp(stage,"destination")) return "检查目标路径";
+    return "接收文件";
+}
+static void upload_error_text(file_result_t result, char *out, size_t cap) {
+    const char *stage = result.io.stage;
+    if (result.changed) { snprintf(out,cap,"文件已保存，后续记录或备份清理失败，请刷新文件列表确认"); return; }
+    if (result.status == 400) { snprintf(out,cap,"文件名、路径或文件大小无效"); return; }
+    if (result.status == 422) { snprintf(out,cap,"%s",stage && !strcmp(stage,"image") ? "图片校验失败，需要真实JPG或PNG文件" : "字体校验失败，需要完整的TrueType TTF"); return; }
+    if (result.status == 409) { snprintf(out,cap,"同名文件已存在，请明确选择替换或跳过"); return; }
+    if (result.status == 413) { snprintf(out,cap,"文件超过单文件上限"); return; }
+    if (result.status == 408) { snprintf(out,cap,"连接中断或接收超时，设备收到%u字节",(unsigned)result.io.received); return; }
+    const char *why = result.io.error == ENOSPC ? "剩余空间不足" :
+        result.io.error == ENOMEM ? "临时内存不足" :
+        result.io.error == EMFILE || result.io.error == ENFILE ? "打开的文件过多" :
+        result.io.error == EROFS || result.io.error == EACCES ? "目录不可写" :
+        stage && !strcmp(stage,"capacity") ? "剩余空间不足或容量读取失败" : "TF卡读写失败";
+    snprintf(out,cap,"%s：%s（errno=%d）；原文件未替换",upload_stage_name(stage),why,result.io.error);
+}
+static void add_upload_result(cJSON *json, file_result_t result) {
+    char message[256]; upload_error_text(result,message,sizeof(message));
+    cJSON_AddNumberToObject(json,"status",result.status);
+    cJSON_AddStringToObject(json,"stage",result.io.stage ? result.io.stage : "request");
+    cJSON_AddNumberToObject(json,"errno",result.io.error);
+    cJSON_AddNumberToObject(json,"received",result.io.received);
+    cJSON_AddNumberToObject(json,"written",result.io.written);
+    if (result.status >= 400) cJSON_AddStringToObject(json,"error",message);
+}
 static esp_err_t info_handler(httpd_req_t *req) {
     read_pico_transfer_status_t status;
     read_pico_transfer_get_status(&status);
@@ -719,6 +848,13 @@ static esp_err_t info_handler(httpd_req_t *req) {
     cJSON_AddBoolToObject(json, "fonts_enabled", s_font_root[0] != 0);
     cJSON_AddStringToObject(json, "font_root", s_font_root);
     cJSON_AddNumberToObject(json, "font_limit", TRANSFER_FONT_MAX);
+    cJSON_AddBoolToObject(json, "images_enabled", s_image_root[0] != 0);
+    cJSON_AddStringToObject(json, "image_root", s_image_root);
+    cJSON_AddNumberToObject(json, "image_limit", TRANSFER_IMAGE_MAX);
+    portENTER_CRITICAL(&s_lock); __typeof__(s_last_upload) last = s_last_upload; portEXIT_CRITICAL(&s_lock);
+    cJSON *upload = cJSON_AddObjectToObject(json,"last_upload");
+    if (upload) { cJSON_AddNumberToObject(upload,"seq",last.seq); cJSON_AddStringToObject(upload,"name",last.name); cJSON_AddNumberToObject(upload,"total",last.total); add_upload_result(upload,last.result); }
+
     char *body = cJSON_PrintUnformatted(json);
     cJSON_Delete(json);
     if (!body) return ESP_ERR_NO_MEM;
@@ -805,9 +941,17 @@ static esp_err_t wifi_handler(httpd_req_t *req) {
 }
 
 static int receive_http(void *ctx, char *buf, size_t n) {
-    portENTER_CRITICAL(&s_lock); bool stopping = s_stopping; portEXIT_CRITICAL(&s_lock);
-    if (stopping) return -1;
-    return httpd_req_recv(ctx, buf, n);
+    int64_t deadline = esp_timer_get_time() + 30000000;
+    for (;;) {
+        portENTER_CRITICAL(&s_lock); bool stopping = s_stopping; portEXIT_CRITICAL(&s_lock);
+        if (stopping) return -1;
+        int got = httpd_req_recv(ctx, buf, n);
+        if (got != HTTPD_SOCK_ERR_TIMEOUT) return got;
+        if (esp_timer_get_time() >= deadline) {
+            ESP_LOGW("transfer", "upload receive idle timeout");
+            return got;
+        }
+    }
 }
 
 static void upload_progress(size_t n) {
@@ -825,6 +969,25 @@ static bool decode_query(const char *src, char out[121]) {
             c = (unsigned char)((a << 4) | b); src += 2;
         }
         if (!c || n == 64) return false;
+        out[n++] = (char)c;
+    }
+    out[n] = 0; return true;
+}
+
+// 目录浏览的相对路径解码：比搜索词更长，仍拒绝空字节；控制字符交给逐段校验拒绝。
+// Relative-path decoding for browsing: longer than search terms, still rejecting NUL;
+// control characters fall through to component validation.
+static bool decode_path(const char *src, char out[193]) {
+    size_t n = 0;
+    while (*src) {
+        unsigned char c = (unsigned char)*src++;
+        if (c == '%') {
+            if (!src[0] || !src[1]) return false;
+            int a = hex_value(src[0]), b = hex_value(src[1]);
+            if (a < 0 || b < 0) return false;
+            c = (unsigned char)((a << 4) | b); src += 2;
+        }
+        if (!c || n == 192) return false;
         out[n++] = (char)c;
     }
     out[n] = 0; return true;
@@ -935,17 +1098,244 @@ static esp_err_t books_handler(httpd_req_t *req) {
     return file_response(req, result, true, path);
 }
 
+/* ---- 只读目录浏览 / Read-only directory browser ---- */
+// 网页目录浏览与TXT开头预览；只读，不进上传/删除/换网准入，也不暴露内部临时与备份文件。
+// Web directory browsing with TXT head preview; read-only, outside upload/delete/network admission,
+// hiding internal temp and backup files.
+
+#define TRANSFER_FS_MAX_ENTRIES 400
+#define TRANSFER_FS_HEAD_BYTES 4096
+
+typedef struct { char name[256]; uint64_t size; bool dir, txt; } transfer_fs_entry_t;
+
+// 相对路径逐段非空且不得为「.」「..」，拼在书库根下；任何越界都按无效处理。
+// Every relative component must be non-empty and neither "." nor "..", joined under the book root;
+// anything escaping it counts as invalid.
+static int resolve_listing_path(const char *root, const char *rel, char *out, size_t cap) {
+    if (!*rel) return snprintf(out, cap, "%s", root) >= (int)cap ? 400 : 0;
+    const char *component = rel;
+    for (const char *p = rel;; ++p) {
+        if (*p && *p != '/') continue;
+        size_t len = (size_t)(p - component);
+        bool dot = component[0] == '.' && (len == 1 || (component[1] == '.' && len == 2));
+        if (!len || len > 255 || dot) return 400;
+        if (!*p) break;
+        component = p + 1;
+    }
+    return snprintf(out, cap, "%s/%s", root, rel) >= (int)cap ? 400 : 0;
+}
+
+// 按JSON规则转义追加；高位字节原样保留，与cJSON打印行为一致。
+// Append a JSON-escaped copy; high bytes stay raw, matching cJSON printing.
+static size_t json_escape_append(char *dst, size_t used, size_t cap, const char *src) {
+    for (; *src; ++src) {
+        unsigned char c = (unsigned char)*src;
+        char piece[7];
+        size_t n;
+        if (c == '"' || c == '\\') { piece[0] = '\\'; piece[1] = (char)c; n = 2; }
+        else if (c < 0x20) { n = (size_t)snprintf(piece, sizeof(piece), "\\u%04x", c); }
+        else { piece[0] = (char)c; n = 1; }
+        if (used + n + 1 > cap) return 0;
+        memcpy(dst + used, piece, n);
+        used += n;
+    }
+    dst[used] = 0;
+    return used;
+}
+
+static int fs_compare(const void *a, const void *b) {
+    const transfer_fs_entry_t *x = a, *y = b;
+    if (x->dir != y->dir) return x->dir ? -1 : 1;
+    return strcmp(x->name, y->name);
+}
+
+// 目录先于文件、各自字典序；隐藏点开头文件与上传临时/备份后缀；超限置截断标志。
+// Directories precede files, each alphabetically; dot-prefixed files and upload temp/backup
+// suffixes stay hidden; exceeding the cap sets the truncation flag.
+static int list_dir_sorted(const char *path, transfer_fs_entry_t **out, size_t *count, bool *truncated) {
+    *out = NULL; *count = 0; *truncated = false;
+    DIR *dir = opendir(path);
+    if (!dir) return errno == ENOENT ? 404 : 507;
+    transfer_fs_entry_t *items = NULL;
+    size_t used = 0, cap = 0;
+    int status = 0;
+    struct dirent *entry;
+    while (errno = 0, (entry = readdir(dir)) != NULL) {
+        const char *name = entry->d_name;
+        size_t len = strlen(name);
+        if (!len || len >= 256 || name[0] == '.') continue;
+        if (len > 5 && !strcmp(name + len - 5, ".part")) continue;
+        if (len > 14 && !strcmp(name + len - 14, ".rename-backup")) continue;
+        char full[448];
+        if (snprintf(full, sizeof(full), "%s/%s", path, name) >= (int)sizeof(full)) { status = 507; break; }
+        struct stat st;
+        if (stat(full, &st)) { status = errno == ENOENT ? 0 : 507; if (status) break; continue; }
+        if (used == TRANSFER_FS_MAX_ENTRIES) { *truncated = true; break; }
+        if (used == cap) {
+            size_t grown = cap ? cap * 2 : 32;
+            if (grown > TRANSFER_FS_MAX_ENTRIES) grown = TRANSFER_FS_MAX_ENTRIES;
+            transfer_fs_entry_t *enlarged = heap_caps_realloc(items, grown * sizeof(*items), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+            if (!enlarged) { status = 507; break; }
+            items = enlarged; cap = grown;
+        }
+        transfer_fs_entry_t *item = &items[used++];
+        strcpy(item->name, name);
+        item->dir = S_ISDIR(st.st_mode);
+        item->size = item->dir || st.st_size < 0 ? 0 : (uint64_t)st.st_size;
+        const char *ext = strrchr(name, '.');
+        item->txt = ext && !strcasecmp(ext, ".txt");
+        if (!S_ISDIR(st.st_mode) && !S_ISREG(st.st_mode)) { --used; continue; }
+    }
+    if (!entry && errno && !status) status = 507;
+    if (closedir(dir) && !status) status = 507;
+    if (status) { free(items); return status; }
+    qsort(items, used, sizeof(*items), fs_compare);
+    *out = items; *count = used;
+    return 0;
+}
+
+static esp_err_t fs_handler(httpd_req_t *req) {
+    if (!management_request(req)) return wifi_response(req, "403 Forbidden", "{\"error\":\"请从设备显示的地址打开管理页面\"}");
+    char query[512] = {0}, encoded[766], rel[193] = {0}, path[448];
+    if (httpd_req_get_url_query_len(req) && httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK) return respond_error(req, 400);
+    esp_err_t path_err = httpd_query_key_value(query, "path", encoded, sizeof(encoded));
+    if (path_err != ESP_OK && path_err != ESP_ERR_NOT_FOUND) return respond_error(req, 400);
+    if (path_err == ESP_OK && !decode_path(encoded, rel)) return respond_error(req, 400);
+    // root=fonts 浏览字体目录、root=images 浏览图片目录，缺省书库根；各侧同样逐段校验，互不越界。
+    // root=fonts browses the font directory and root=images the image directory, defaulting
+    // to the book root; every side shares per-component validation and cannot escape.
+    char area[8];
+    esp_err_t root_err = httpd_query_key_value(query, "root", area, sizeof(area));
+    const bool fonts = root_err == ESP_OK && !strcmp(area, "fonts");
+    const bool images = root_err == ESP_OK && !strcmp(area, "images");
+    const char *base = fonts ? s_font_root : images ? s_image_root : s_root;
+    if (fonts && !s_font_root[0]) return wifi_response(req, "409 Conflict", "{\"error\":\"字体需要 TF 卡，请挂载后重新进入传书\"}");
+    if (images && !s_image_root[0]) return wifi_response(req, "409 Conflict", "{\"error\":\"图片需要 TF 卡，请挂载后重新进入传书\"}");
+    if (resolve_listing_path(base, rel, path, sizeof(path))) return respond_error(req, 400);
+    struct stat st;
+    if (stat(path, &st)) return respond_error(req, errno == ENOENT ? 404 : 507);
+    char preview[8];
+    if (httpd_query_key_value(query, "preview", preview, sizeof(preview)) == ESP_OK && !strcmp(preview, "1")) {
+        if (!S_ISREG(st.st_mode)) return respond_error(req, 400);
+        const char *ext = strrchr(rel, '.');
+        if (!ext || strcasecmp(ext, ".txt")) return wifi_response(req, "415 Unsupported Media Type", "{\"error\":\"仅支持预览 TXT 文本\"}");
+        FILE *f = fopen(path, "rb");
+        if (!f) return respond_error(req, 507);
+        uint8_t *head = heap_caps_malloc(TRANSFER_FS_HEAD_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (!head) { fclose(f); return respond_error(req, 507); }
+        size_t n = fread(head, 1, TRANSFER_FS_HEAD_BYTES, f);
+        int broken = ferror(f);
+        fclose(f);
+        if (broken) { free(head); return respond_error(req, 507); }
+        httpd_resp_set_type(req, "application/octet-stream");
+        httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+        esp_err_t err = httpd_resp_send(req, (const char *)head, n);
+        free(head);
+        return err;
+    }
+    if (!S_ISDIR(st.st_mode)) return respond_error(req, 400);
+    transfer_fs_entry_t *entries = NULL;
+    size_t count = 0;
+    bool truncated = false;
+    int result = list_dir_sorted(path, &entries, &count, &truncated);
+    if (result) { free(entries); return respond_error(req, result); }
+    httpd_resp_set_type(req, "application/json; charset=utf-8");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    char piece[640];
+    char parent[193] = "";
+    // 上一级直接截字符串，不再转义：rel本身已按段校验，仅路径分隔符与普通字节。
+    // The parent is a plain prefix cut; rel is component-validated, so only separators and ordinary bytes appear.
+    const char *slash = strrchr(rel, '/');
+    if (slash) { size_t plen = (size_t)(slash - rel); if (plen < sizeof(parent)) { memcpy(parent, rel, plen); parent[plen] = 0; } }
+    char escaped_rel[384];
+    if (!json_escape_append(escaped_rel, 0, sizeof(escaped_rel), rel)) snprintf(escaped_rel, sizeof(escaped_rel), "%.255s", rel);
+    int written = snprintf(piece, sizeof(piece), "{\"root\":\"%s\",\"root_label\":\"%s\",\"path\":\"%s\",\"parent\":\"%s\",\"truncated\":%s,\"entries\":[",
+        base, s_cfg.is_flash ? "内置存储" : "TF 卡", escaped_rel, parent, truncated ? "true" : "false");
+    if (written < 0 || (size_t)written >= sizeof(piece)) { free(entries); return respond_error(req, 500); }
+    esp_err_t err = httpd_resp_send_chunk(req, piece, written);
+    for (size_t i = 0; err == ESP_OK && i < count; ++i) {
+        const transfer_fs_entry_t *item = &entries[i];
+        char name[516];
+        if (!json_escape_append(name, 0, sizeof(name), item->name)) { err = ESP_ERR_NO_MEM; break; }
+        written = snprintf(piece, sizeof(piece), "%s{\"name\":\"%s\",\"dir\":%s,\"size\":%llu,\"txt\":%s}",
+            i ? "," : "", name, item->dir ? "true" : "false", (unsigned long long)item->size, item->txt ? "true" : "false");
+        if (written < 0 || (size_t)written >= sizeof(piece)) { err = ESP_ERR_NO_MEM; break; }
+        err = httpd_resp_send_chunk(req, piece, written);
+    }
+    free(entries);
+    if (err == ESP_OK) err = httpd_resp_send_chunk(req, "]}", 2);
+    if (err == ESP_OK) err = httpd_resp_send_chunk(req, NULL, 0);
+    return err == ESP_OK ? ESP_OK : ESP_FAIL;
+}
+
+static esp_err_t upload_error_response(httpd_req_t *req, file_result_t result) {
+    cJSON *json = cJSON_CreateObject(); if (!json) return ESP_ERR_NO_MEM;
+    add_upload_result(json,result);
+    if (result.status == 409) cJSON_AddBoolToObject(json,"conflict",true);
+    char status[48]; snprintf(status,sizeof(status),"%d Upload Rejected",result.status);
+    httpd_resp_set_status(req,status);
+    esp_err_t err = send_json(req,json);
+    // 主体未收齐时仍关闭会话，错误可从只读/info恢复；不继续解析未读主体。
+    // Close incomplete-body sessions; read-only/info retains the reason, never parse unread bytes as another request.
+    return req->content_len ? ESP_FAIL : err;
+}
+static esp_err_t upload_check_handler(httpd_req_t *req) {
+    if (!management_request(req)) return wifi_response(req,"403 Forbidden","{\"error\":\"请从设备显示的地址打开管理页面\"}");
+    if (req->content_len) return respond_error(req,400);
+    char query[512],encoded[361],name[121],type[8],length[24],path[288],part[296];
+    if (httpd_req_get_url_query_str(req,query,sizeof(query)) != ESP_OK ||
+        httpd_query_key_value(query,"name",encoded,sizeof(encoded)) != ESP_OK ||
+        httpd_query_key_value(query,"kind",type,sizeof(type)) != ESP_OK ||
+        httpd_query_key_value(query,"size",length,sizeof(length)) != ESP_OK) return respond_error(req,400);
+    int kind = !strcmp(type,"book") ? NAME_KIND_BOOKS : !strcmp(type,"font") ? NAME_KIND_FONT : !strcmp(type,"image") ? NAME_KIND_IMAGE : -1;
+    char *end; errno = 0; unsigned long long total = strtoull(length,&end,10);
+    if (kind < 0 || !length[0] || length[0] == '-' || *end || errno || !total || total > SIZE_MAX ||
+        !(kind == NAME_KIND_BOOKS ? decode_name(encoded,name) : kind == NAME_KIND_FONT ? decode_font_name(encoded,name) : decode_image_name(encoded,name))) return respond_error(req,400);
+    const char *root = kind == NAME_KIND_BOOKS ? s_root : kind == NAME_KIND_FONT ? s_font_root : s_image_root;
+    file_result_t result = {.status = 200, .io = {.stage = "destination"}};
+    if (!root[0]) { result.status=507; result.io.error=ENOENT; return upload_error_response(req,result); }
+    portENTER_CRITICAL(&s_lock); bool claim = admission_begin(s_stopping || s_sync_active,&s_upload_active); portEXIT_CRITICAL(&s_lock);
+    if (!claim) return wifi_response(req,"503 Service Unavailable","{\"error\":\"有文件操作正在进行，请稍后重试\"}");
+    errno=0; result.status=resolve_mutation_path(root,name,path,sizeof(path)); result.io.error=errno;
+    bool exists=false;
+    if (!result.status) { errno=0; int status=destination_status(path,false); exists=status==409; if(status && !exists){result.status=status;result.io.error=errno;} }
+    if (!result.status) { result.status=check_length((size_t)total,kind==NAME_KIND_IMAGE?TRANSFER_IMAGE_MAX:kind==NAME_KIND_FONT?TRANSFER_FONT_MAX:s_cfg.file_limit,s_cfg.free_bytes_cb(s_cfg.free_bytes_ctx)); result.io.stage="capacity";result.io.error=0; }
+    if (!result.status) {
+        snprintf(part,sizeof(part),"%s.part",path);
+        // 单次512字节检查只操作独立暂存，取消或失败不改变目标文件。
+        // The512-byte probe touches only staging; cancellation/failure never changes the target.
+        upload_io_t io; char probe[512]={0};
+        FILE *f; errno=0; f=fopen(part,"wb");
+        io=(upload_io_t){.stage="open",.error=errno};
+        if (!f) result.status=507;
+        else { setvbuf(f,NULL,_IONBF,0); errno=0; if(fwrite(probe,1,sizeof(probe),f)!=sizeof(probe)){result.status=507;io.stage="write";io.error=errno;} errno=0; if(fclose(f)&&!result.status){result.status=507;io.stage="close";io.error=errno;} errno=0; if(remove(part)&&!result.status){result.status=507;io.stage="probe-cleanup";io.error=errno;} }
+        result.io=io;
+    }
+    portENTER_CRITICAL(&s_lock); s_upload_active=false; uint32_t seq=s_last_upload.seq; portEXIT_CRITICAL(&s_lock);
+    if (result.status) return upload_error_response(req,result);
+    cJSON *json=cJSON_CreateObject(); if(!json)return ESP_ERR_NO_MEM;
+    cJSON_AddBoolToObject(json,"exists",exists);cJSON_AddNumberToObject(json,"upload_seq",seq);
+    return send_json(req,json);
+}
 static esp_err_t upload_handler(httpd_req_t *req) {
     if (!management_request(req)) return wifi_response(req, "403 Forbidden", "{\"error\":\"请从设备显示的地址打开管理页面\"}");
+    portENTER_CRITICAL(&s_lock); ++s_last_upload.seq; s_last_upload.name[0]=0; s_last_upload.total=req->content_len; s_last_upload.result=(file_result_t){0}; portEXIT_CRITICAL(&s_lock);
     char query[512], encoded[361], name[121], path[288], part[296], replace[8];
-    bool font = req->user_ctx != NULL;
-    if (font && !s_font_root[0]) return wifi_response(req, "409 Conflict", "{\"error\":\"字体需要 TF 卡，请挂载后重新进入传书\"}");
+    // 路由载荷区分类别：0 图书、1 字体、2 图片（各自根目录与上限）。/ Route payload picks
+    // the kind: 0 books, 1 fonts, 2 images, each with its own root and limit.
+    const int kind = (int)(intptr_t)req->user_ctx;
+    if (kind == NAME_KIND_FONT && !s_font_root[0]) return wifi_response(req, "409 Conflict", "{\"error\":\"字体需要 TF 卡，请挂载后重新进入传书\"}");
+    if (kind == NAME_KIND_IMAGE && !s_image_root[0]) return wifi_response(req, "409 Conflict", "{\"error\":\"图片需要 TF 卡，请挂载后重新进入传书\"}");
     if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK ||
         httpd_query_key_value(query, "name", encoded, sizeof(encoded)) != ESP_OK ||
-        !(font ? decode_font_name(encoded, name) : decode_name(encoded, name)))
+        !(kind == NAME_KIND_FONT ? decode_font_name(encoded, name) :
+          kind == NAME_KIND_IMAGE ? decode_image_name(encoded, name) : decode_name(encoded, name)))
         return respond_error(req, 400);
-    int resolved = resolve_mutation_path(font ? s_font_root : s_root, name, path, sizeof(path));
-    if (resolved) return respond_error(req, resolved);
+    portENTER_CRITICAL(&s_lock); snprintf(s_last_upload.name,sizeof(s_last_upload.name),"%s",name); portEXIT_CRITICAL(&s_lock);
+    int resolved = resolve_mutation_path(kind == NAME_KIND_FONT ? s_font_root :
+                                         kind == NAME_KIND_IMAGE ? s_image_root : s_root,
+                                         name, path, sizeof(path));
+    if (resolved) { file_result_t failure={.status=resolved,.io={.stage="destination",.error=errno}}; portENTER_CRITICAL(&s_lock);s_last_upload.result=failure;portEXIT_CRITICAL(&s_lock); return upload_error_response(req,failure); }
     snprintf(part, sizeof(part), "%s.part", path);
     bool overwrite = httpd_query_key_value(query, "overwrite", replace, sizeof(replace)) == ESP_OK && !strcmp(replace, "1");
     portENTER_CRITICAL(&s_lock);
@@ -959,15 +1349,21 @@ static esp_err_t upload_handler(httpd_req_t *req) {
     portEXIT_CRITICAL(&s_lock);
     int64_t started = esp_timer_get_time();
     ESP_LOGI("transfer", "receive name=%s bytes=%u", name, (unsigned)req->content_len);
-    file_result_t result = upload_managed(path, part, req->content_len, font ? TRANSFER_FONT_MAX : s_cfg.file_limit,
+    // 图片上限对齐解码端流式能力（20 MiB）；只有图书需要进度失效回调。
+    // The image cap matches the streaming decoder (20 MiB); only books need progress invalidation.
+    size_t limit = kind == NAME_KIND_FONT ? TRANSFER_FONT_MAX
+        : kind == NAME_KIND_IMAGE ? TRANSFER_IMAGE_MAX : s_cfg.file_limit;
+    file_result_t result = upload_managed(path, part, req->content_len, limit,
         s_cfg.free_bytes_cb(s_cfg.free_bytes_ctx), overwrite, s_buffer, 16384, receive_http, req, upload_progress,
-        font ? NULL : s_cfg.file_changed_cb);
+        kind == NAME_KIND_BOOKS ? s_cfg.file_changed_cb : NULL);
+    if (result.status != 200) ESP_LOGW("transfer", "upload result status=%d received=%u total=%u", result.status, (unsigned)s_status.cur_bytes, (unsigned)req->content_len);
     portENTER_CRITICAL(&s_lock);
-    s_upload_active = false;
+    s_upload_active = false; s_last_upload.result=result;
     if (result.changed) { s_status.done_count++; s_status.changed_count++; }
     portEXIT_CRITICAL(&s_lock);
     if (result.changed) ESP_LOGI("transfer", "committed name=%s bytes=%u elapsed_ms=%lld", name,
              (unsigned)req->content_len, (esp_timer_get_time() - started) / 1000);
+    if (result.status != 200 && !result.changed) return upload_error_response(req,result);
     return file_response(req, result, false, path);
 }
 
@@ -988,6 +1384,38 @@ static esp_err_t font_info_handler(httpd_req_t *req) {
     cJSON_AddStringToObject(json, "name", strrchr(path, '/') + 1);
     cJSON_AddNumberToObject(json, "size", (double)st.st_size);
     return send_json(req, json);
+}
+
+// 字体/图片删除：user_ctx 区分类别（1 字体 2 图片），与图书删除同一准入和应答；
+// 无阅读进度可清理，回调传空。/ Font/image deletion: user_ctx picks the kind (1 fonts,
+// 2 images) and shares the book-deletion admission and responses; no reading progress
+// to clean up, so the callback is NULL.
+static esp_err_t kind_delete_handler(httpd_req_t *req) {
+    if (!management_request(req)) return wifi_response(req, "403 Forbidden", "{\"error\":\"请从设备显示的地址打开管理页面\"}");
+    const int kind = (int)(intptr_t)req->user_ctx;
+    if (kind != NAME_KIND_FONT && kind != NAME_KIND_IMAGE) return respond_error(req, 400);
+    if (req->content_len) return respond_error(req, 400);
+    char query[512], encoded[361], name[121], path[288];
+    const char *root = kind == NAME_KIND_FONT ? s_font_root : s_image_root;
+    if (!root[0]) return wifi_response(req, "409 Conflict",
+        kind == NAME_KIND_FONT ? "{\"error\":\"字体需要 TF 卡，请挂载后重新进入传书\"}" :
+                                 "{\"error\":\"图片需要 TF 卡，请挂载后重新进入传书\"}");
+    if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK ||
+        httpd_query_key_value(query, "name", encoded, sizeof(encoded)) != ESP_OK ||
+        !(kind == NAME_KIND_FONT ? decode_font_name(encoded, name) : decode_image_name(encoded, name)))
+        return respond_error(req, 400);
+    int resolved = resolve_mutation_path(root, name, path, sizeof(path));
+    if (resolved) return respond_error(req, resolved);
+    portENTER_CRITICAL(&s_lock);
+    bool accepted = admission_begin(s_stopping || s_sync_active, &s_upload_active);
+    portEXIT_CRITICAL(&s_lock);
+    if (!accepted) return wifi_response(req, "409 Conflict", "{\"error\":\"正在上传或切换网络，请稍后重试\"}");
+    file_result_t result = delete_managed(path, NULL);
+    portENTER_CRITICAL(&s_lock);
+    record_file_change(&s_status.changed_count, result, false);
+    s_upload_active = false;
+    portEXIT_CRITICAL(&s_lock);
+    return file_response(req, result, true, path);
 }
 
 /* ---- 生命周期 / Lifecycle ---- */
@@ -1025,7 +1453,10 @@ void read_pico_transfer_stop(void) {
     if (s_netif) { esp_netif_destroy_default_wifi(s_netif); s_netif = NULL; }
     if (s_loop_owned) {
         stage = "event-delete";
-        err = esp_event_loop_delete_default(); if (err != ESP_OK) goto failed;
+        err = esp_event_loop_delete_default();
+        // 已被删掉的默认循环返回INVALID_STATE：按已释放处理，不能把所有权闩死。
+        // An already-deleted default loop returns INVALID_STATE: treat it as released instead of latching ownership.
+        if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) goto failed;
         s_loop_owned = false;
     }
     free(s_buffer); s_buffer = NULL;
@@ -1044,16 +1475,79 @@ failed:
     wifi_heap_log("stop", stage, err);
 }
 
+// httpd 任务栈高回退：WiFi 抢完内部内存后 12KB 栈可能造不出来；只降到 8KB——
+// 图书删除等 handler 局部缓冲约 2.5KB，再低会有栈溢出风险。
+// / httpd stack fallback: after WiFi claims internal RAM the 12KB stack may not
+// allocate; step down only to 8KB — book-delete handlers hold ~2.5KB of locals,
+// so going lower risks an overflow.
+static esp_err_t start_httpd_with_routes(void) {
+    static const int k_stacks[] = {12288, 8192};
+    for (unsigned i = 0; i < sizeof(k_stacks) / sizeof(k_stacks[0]); ++i) {
+        httpd_config_t http = HTTPD_DEFAULT_CONFIG();
+        http.stack_size = k_stacks[i]; http.max_uri_handlers = 15; http.recv_wait_timeout = 5;
+        http.lru_purge_enable = true;
+        s_http = NULL;
+        esp_err_t err = httpd_start(&s_http, &http);
+        if (err == ESP_OK) {
+            if (i) ESP_LOGW("transfer", "httpd stack fallback to %d bytes", k_stacks[i]);
+            const httpd_uri_t routes[] = {
+                { .uri = "/", .method = HTTP_GET, .handler = index_handler },
+                { .uri = "/info", .method = HTTP_GET, .handler = info_handler },
+                { .uri = "/upload", .method = HTTP_PUT, .handler = upload_handler },
+                { .uri = "/upload-check", .method = HTTP_POST, .handler = upload_check_handler },
+                { .uri = "/fonts", .method = HTTP_PUT, .handler = upload_handler, .user_ctx = (void *)1 },
+                { .uri = "/images", .method = HTTP_PUT, .handler = upload_handler, .user_ctx = (void *)2 },
+                { .uri = "/fonts", .method = HTTP_GET, .handler = font_info_handler },
+                { .uri = "/fonts", .method = HTTP_DELETE, .handler = kind_delete_handler, .user_ctx = (void *)1 },
+                { .uri = "/images", .method = HTTP_DELETE, .handler = kind_delete_handler, .user_ctx = (void *)2 },
+                { .uri = "/books", .method = HTTP_GET, .handler = books_handler },
+                { .uri = "/books", .method = HTTP_DELETE, .handler = books_handler },
+                { .uri = "/books", .method = HTTP_POST, .handler = books_handler },
+                { .uri = "/fs", .method = HTTP_GET, .handler = fs_handler },
+                { .uri = "/wifi", .method = HTTP_POST, .handler = wifi_handler },
+                { .uri = "/wifi", .method = HTTP_DELETE, .handler = wifi_handler },
+            };
+            for (size_t r = 0; r < sizeof(routes)/sizeof(*routes); ++r) {
+                err = httpd_register_uri_handler(s_http, &routes[r]);
+                if (err != ESP_OK) return err;
+            }
+            wifi_heap_log("transfer", "http-start", ESP_OK);
+            return ESP_OK;
+        }
+        wifi_heap_log("transfer", "http-start", err);
+        if (err != ESP_ERR_HTTPD_TASK) return err;
+    }
+    return ESP_ERR_HTTPD_TASK;
+}
+
 esp_err_t read_pico_transfer_start(const read_pico_transfer_cfg_t *cfg) {
     if (!cfg || (cfg->network_only && cfg->mode != READ_PICO_TRANSFER_MODE_STA) ||
         (!cfg->network_only && (!cfg->root_dir || !cfg->free_bytes_cb)) ||
         (cfg->root_dir && strlen(cfg->root_dir) >= sizeof(s_root)) ||
         (cfg->font_dir && (cfg->is_flash || !cfg->font_dir[0] || strlen(cfg->font_dir) >= sizeof(s_font_root))) ||
+        (cfg->image_dir && (cfg->is_flash || !cfg->image_dir[0] || strlen(cfg->image_dir) >= sizeof(s_image_root))) ||
         (cfg->mode != READ_PICO_TRANSFER_MODE_AP && cfg->mode != READ_PICO_TRANSFER_MODE_STA)) return ESP_ERR_INVALID_ARG;
-    if (s_wifi || s_netif || s_http || s_loop_owned) return ESP_ERR_INVALID_STATE;
+    if (s_wifi || s_netif || s_http || s_loop_owned) {
+        read_pico_transfer_status_t busy;
+        read_pico_transfer_get_status(&busy);
+        ESP_LOGW("transfer", "start busy state=%u stopping=%u wifi=%u http=%u netif=%u loop=%u upload=%u",
+                 (unsigned)busy.state, (unsigned)s_stopping, (unsigned)s_wifi, (unsigned)(s_http != NULL),
+                 (unsigned)(s_netif != NULL), (unsigned)s_loop_owned, (unsigned)s_upload_active);
+        // 上次停止失败留下的残留（stopping保持真）先重试一次停止再判定，否则保存新密码后
+        // 永远只显示“已保存，尚未连接”而不发起连接；运行中或上传的会话维持原拒绝语义。
+        // Residue from a previously failed stop (stopping still true) retries stop once before
+        // deciding, otherwise a newly saved password only ever shows saved-but-not-connected without
+        // connecting; running or uploading sessions keep the original rejection.
+        if (s_stopping && !s_upload_active) {
+            read_pico_transfer_stop();
+            if (s_wifi || s_netif || s_http || s_loop_owned) return ESP_ERR_INVALID_STATE;
+        } else return ESP_ERR_INVALID_STATE;
+    }
     s_cfg = *cfg; snprintf(s_root, sizeof(s_root), "%s", cfg->root_dir ? cfg->root_dir : ""); s_cfg.root_dir = s_root;
     snprintf(s_font_root, sizeof(s_font_root), "%s", cfg->font_dir ? cfg->font_dir : "");
     s_cfg.font_dir = s_font_root[0] ? s_font_root : NULL;
+    snprintf(s_image_root, sizeof(s_image_root), "%s", cfg->image_dir ? cfg->image_dir : "");
+    s_cfg.image_dir = s_image_root[0] ? s_image_root : NULL;
     portENTER_CRITICAL(&s_lock);
     memset(&s_status, 0, sizeof(s_status)); s_status.state = READ_PICO_TRANSFER_STARTING;
     s_stopping = s_upload_active = false;
@@ -1079,6 +1573,19 @@ esp_err_t read_pico_transfer_start(const read_pico_transfer_cfg_t *cfg) {
         if ((mkdir(s_font_root, 0755) && errno != EEXIST) || stat(s_font_root, &st) || !S_ISDIR(st.st_mode) ||
             cleanup_interrupted(s_font_root, &removed, &restored)) { err = ESP_FAIL; goto fail; }
     }
+    if (s_image_root[0]) {
+        // 图片目录只影响可选上传：创建或清理失败降级为图片不可用，绝不拖垮整个传书
+        // 会话（此前会以启动失败呈现为“已保存，连接失败”）。
+        // The image directory only gates optional uploads: creation or cleanup failures
+        // degrade to images-disabled and never sink the whole transfer session (they used
+        // to surface as start failure reading "saved, connect failed").
+        if ((mkdir(s_image_root, 0755) && errno != EEXIST) || stat(s_image_root, &st) || !S_ISDIR(st.st_mode) ||
+            cleanup_interrupted(s_image_root, &removed, &restored)) {
+            ESP_LOGW("transfer", "image root unavailable; image upload disabled");
+            s_image_root[0] = 0;
+            s_cfg.image_dir = NULL;
+        }
+    }
     if (removed || restored) ESP_LOGI("transfer", "cleanup removed=%u restored=%u", removed, restored);
     }
     stage = "netif-init";
@@ -1091,10 +1598,18 @@ esp_err_t read_pico_transfer_start(const read_pico_transfer_cfg_t *cfg) {
     stage = "netif-create";
     s_netif = cfg->mode == READ_PICO_TRANSFER_MODE_AP ? esp_netif_create_default_wifi_ap() : esp_netif_create_default_wifi_sta();
     if (!s_netif) { err = ESP_ERR_NO_MEM; goto fail; }
-    wifi_init_config_t init = wifi_init_for_session(cfg->network_only);
+    if (!cfg->network_only) {
+        // httpd 先于 WiFi 拿任务栈：WiFi 缓冲分配后再造 12KB 任务会 ESP_ERR_HTTPD_TASK。
+        // / httpd claims its task stack before WiFi: allocating 12KB after the WiFi
+        // buffers is what surfaced as ESP_ERR_HTTPD_TASK.
+        stage = "http-start";
+        err = start_httpd_with_routes();
+        if (err != ESP_OK) goto fail;
+    }
     stage = "wifi-init";
     wifi_heap_log(cfg->network_only ? "network-only" : "transfer", "wifi-init", ESP_OK);
-    err = esp_wifi_init(&init); if (err != ESP_OK) goto fail;
+    err = wifi_driver_init(cfg->network_only, cfg->network_only ? "network-only" : "transfer");
+    if (err != ESP_OK) goto fail;
     s_wifi = true;
     if (cfg->mode == READ_PICO_TRANSFER_MODE_AP) {
         uint8_t mac[6];
@@ -1135,28 +1650,9 @@ esp_err_t read_pico_transfer_start(const read_pico_transfer_cfg_t *cfg) {
     stage = "wifi-start";
     err = esp_wifi_start(); if (err != ESP_OK) goto fail;
     s_started = true;
-    if (!cfg->network_only) {
-        httpd_config_t http = HTTPD_DEFAULT_CONFIG();
-        http.stack_size = 12288; http.max_uri_handlers = 10; http.recv_wait_timeout = 5;
-        http.lru_purge_enable = true;
-        stage = "http-start";
-        err = httpd_start(&s_http, &http); if (err != ESP_OK) goto fail;
-        const httpd_uri_t routes[] = {
-            { .uri = "/", .method = HTTP_GET, .handler = index_handler },
-            { .uri = "/info", .method = HTTP_GET, .handler = info_handler },
-            { .uri = "/upload", .method = HTTP_PUT, .handler = upload_handler },
-            { .uri = "/fonts", .method = HTTP_PUT, .handler = upload_handler, .user_ctx = (void *)1 },
-            { .uri = "/fonts", .method = HTTP_GET, .handler = font_info_handler },
-            { .uri = "/books", .method = HTTP_GET, .handler = books_handler },
-            { .uri = "/books", .method = HTTP_DELETE, .handler = books_handler },
-            { .uri = "/books", .method = HTTP_POST, .handler = books_handler },
-            { .uri = "/wifi", .method = HTTP_POST, .handler = wifi_handler },
-            { .uri = "/wifi", .method = HTTP_DELETE, .handler = wifi_handler },
-        };
-        stage = "http-routes";
-        for (size_t i = 0; i < sizeof(routes)/sizeof(*routes); ++i) {
-            err = httpd_register_uri_handler(s_http, &routes[i]); if (err != ESP_OK) goto fail;
-    }
+    if (!cfg->network_only && cfg->mode == READ_PICO_TRANSFER_MODE_STA) {
+        stage = "wifi-power-save";
+        err = esp_wifi_set_ps(WIFI_PS_NONE); if (err != ESP_OK) goto fail;
     }
     if (cfg->mode == READ_PICO_TRANSFER_MODE_AP) {
         portENTER_CRITICAL(&s_lock);

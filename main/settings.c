@@ -6,6 +6,10 @@
  *
  * NVS load/store. A failed open keeps the deep-sleep default; the
  * partition is not erased.
+ * 冻结修订：用户批准个人摘录锁屏使用新值5；旧壁纸4仍映射图片0，旧样式与电源默认值保持。
+ * Frozen revision: User-approved personal excerpt locks use new value 5; legacy wallpaper 4 still maps to image 0, preserving existing styles and power defaults.
+ * 摘录确认要求保存失败不得假报启用，样式缓存仅在NVS写入成功后更新。
+ * Excerpt confirmation must not falsely report activation on failure; update the style cache only after NVS succeeds.
  * 冻结：0.5.25夜间实验被用户实测否定，旧bk_ngclean键不再读取或写入，已有夜间、直刷与周期选择保持。
  * Frozen: Device feedback rejects the 0.5.25 night experiment; never read or write the legacy bk_ngclean key, while retaining saved night, direct and interval choices.
  * 冻结：用户要求可真机对照Crossmux Pico刷新策略，独立bk_ngprofile默认当前方案，不自动改旧选择；这不是整套固件移植。
@@ -16,8 +20,10 @@
  * Revision: The user's offline lock clock gains time over hours with legacy +4410ppm; the old key lacks model identity, so remeasure instead of hard-coding an opposite correction.
  * 冻结：0.5.29实机否定黑基准清理和细边，旧bk_ngprofile=2回当前方案，bk_fine不再读写；不擦旧键或已保存的时钟、WiFi、阅读选择。
  * Frozen: Device feedback rejects the 0.5.29 black-baseline cleanup and fine edges; legacy bk_ngprofile=2 falls back to Current and bk_fine stays unread/unwritten, without erasing old keys or saved clock, WiFi and reading choices.
- * 冻结：继续优化采用独立值3清白直绘与bk_edgegray真实灰字缘，默认不改变既有选项；旧失败值2不得复用。
- * Frozen: Continued optimization uses distinct profile 3 for white-clear repaint and bk_edgegray for actual gray edges, without changing existing defaults or reusing failed value 2.
+ * 冻结：速度档继续使用已保存的灰阶/黑白字缘选择，不迁移或覆盖用户偏好。
+ * Frozen: Speed mode preserves the saved gray/binary edge choice without migrating or overriding user preferences.
+ * 摘录时钟按分钟动态浅睡，显式关机仍为快照；每日目标独立保存，失败保留原值。
+ * Excerpt clocks use minute-timed light sleep, explicit power-off retains a snapshot; daily goals persist independently and failures retain the old value.
  */
 
 #include "settings.h"
@@ -27,6 +33,7 @@
 
 #include "os_sync.h"
 #include "os_clock_rate.h"
+#include "book_progress.h"
 
 #ifdef ESP_PLATFORM
 #include "sdkconfig.h"
@@ -45,6 +52,7 @@
 #define NVS_KEY_PICKUP "pickup"
 #define NVS_KEY_BOOK_PX "bk_px"
 #define NVS_KEY_BOOK_SHAKE "bk_shake"
+#define NVS_KEY_BOOK_TURN_ANIM "bk_tanim"
 #define NVS_KEY_TZ "tz_qh"
 #define NVS_KEY_LEAD "bk_lead"
 #define NVS_KEY_MARGIN "bk_marg"
@@ -55,6 +63,9 @@
 #define NVS_KEY_TAP "bk_tap"
 #define NVS_KEY_NIGHT "bk_night"
 #define NVS_KEY_LOCK_STYLE "lk_style"
+#define NVS_KEY_LOCK_IMAGE "lk_img"
+#define NVS_KEY_LOCK_ORIGIN "lk_org"
+#define NVS_KEY_LOCK_READING "lk_rd"
 #define NVS_KEY_LOCK_PIN "lk_pin"
 #define NVS_KEY_LOCK_PIN_WAKE "lk_pinwk"
 #define NVS_KEY_SYNC_URL "sy_url"
@@ -65,10 +76,12 @@
 #define NVS_KEY_F_CLOCK "ft_clock"
 #define NVS_KEY_F_BATT "ft_batt"
 #define NVS_KEY_F_BAR "ft_bar"
+#define NVS_KEY_F_TIME "ft_time"
 #define NVS_KEY_IDLE "idle_min"
 #define NVS_KEY_GC_EVERY "gc_every"
 #define NVS_KEY_BOOK_DIRECT "bk_direct"
 #define NVS_KEY_BOOK_EDGE_GRAY "bk_edgegray"
+#define NVS_KEY_BOOK_NIGHT_PREWIPE "bk_prewipe"
 #define NVS_KEY_BOOK_NIGHT_PROFILE "bk_ngprofile"
 #define NVS_KEY_SLEEP_CLOCK "sl_clk_v1"
 #define FONT_PATH_MAX 160
@@ -80,10 +93,15 @@ static uint8_t s_last_boot;
 static bool s_pickup_wake;
 static uint8_t s_book_px = 48;
 static bool s_book_shake;
+// 翻页动画默认关：错相揭页仅在日间标准文字翻页生效（实验开关）。
+// The turn animation defaults off: the staggered page turn applies to day standard text turns only (experimental switch).
+static bool s_book_turn_anim;
+static bool s_shelf_grid;
 static int8_t s_tz_qh = 32;
 static int32_t s_sleep_clock_ppm;
 static bool s_sleep_clock_valid, s_clock_auto = true;
 static uint8_t s_book_leading;
+static int8_t s_book_stroke;
 static uint8_t s_book_margin;
 static uint8_t s_book_guide;
 static bool s_book_indent = true;
@@ -94,6 +112,7 @@ static uint8_t s_book_tap_layout;
 static uint8_t s_book_tap_zones[9] = {1, 3, 2, 1, 3, 2, 1, 3, 2}; // 默认九宫格：左=上页(1), 中=菜单(3), 右=下页(2)
 static bool s_book_night;
 static uint8_t s_lock_style;
+static char s_lock_image[192];
 static char s_lock_pin[8];
 static bool s_lock_pin_wake = true;
 static char s_sync_url[OS_SYNC_URL_MAX] = "https://sync.koreader.rocks";
@@ -101,12 +120,14 @@ static char s_sync_user[OS_SYNC_USER_MAX];
 static char s_sync_key[33];
 static bool s_sync_auto;
 static uint8_t s_book_align;
-static bool s_footer_clock, s_footer_battery, s_footer_bar = true;
+static bool s_footer_clock, s_footer_battery, s_footer_bar = true, s_footer_time = true;
 static uint8_t s_idle_lock;
 // 与 app_config.h 的原编译期档一致，保持升级无行为变化。/ Matches the old compile-time tier in app_config.h; upgrades keep behavior.
 static uint8_t s_gc_every = 5;
 static bool s_book_direct;
 static bool s_book_edge_gray;
+static unsigned s_daily_goal;
+static bool s_book_night_prewipe;
 static uint8_t s_book_night_profile = BOOK_NIGHT_PROFILE_CURRENT;
 
 typedef struct {
@@ -162,7 +183,8 @@ static bool sleep_clock_record_valid(const sleep_clock_record_t* record) {
 }
 
 static uint8_t valid_book_px(uint8_t px) {
-    return px >= 36 && px <= 72 && (px - 36) % 4 == 0 ? px : 48;
+    return px >= BOOK_PROGRESS_PX_MIN && px <= BOOK_PROGRESS_PX_MAX &&
+        (px - BOOK_PROGRESS_PX_MIN) % 4 == 0 ? px : 48;
 }
 
 // 档位与 app_config.h 原值兼容：0 关，或 3..30 之间的常用档。/ Tiers stay compatible with the old app_config.h value: 0 off, or common steps within 3..30.
@@ -173,7 +195,10 @@ static bool gc_every_valid(uint8_t every) {
 
 void app_settings_init(void) {
     s_book_night_profile = BOOK_NIGHT_PROFILE_CURRENT;
+    s_shelf_grid = false;
+    s_daily_goal = 0;
     s_book_edge_gray = false;
+    s_book_night_prewipe = false;
     s_sleep_clock_ppm = 0;
     s_sleep_clock_valid = false;
     esp_err_t err = nvs_flash_init();
@@ -205,8 +230,14 @@ void app_settings_init(void) {
     uint8_t book_px = 48, book_shake = 0;
     if (nvs_get_u8(h, NVS_KEY_BOOK_PX, &book_px) == ESP_OK) s_book_px = valid_book_px(book_px);
     if (nvs_get_u8(h, NVS_KEY_BOOK_SHAKE, &book_shake) == ESP_OK) s_book_shake = book_shake != 0;
+    uint8_t shelf_grid = 0;
+    s_shelf_grid = nvs_get_u8(h, "bk_grid", &shelf_grid) == ESP_OK && shelf_grid == 1;
+    uint8_t turn_anim = 0;
+    if (nvs_get_u8(h, NVS_KEY_BOOK_TURN_ANIM, &turn_anim) == ESP_OK) s_book_turn_anim = turn_anim != 0;
     int8_t tz = 32;
     if (nvs_get_i8(h, NVS_KEY_TZ, &tz) == ESP_OK && tz >= -47 && tz <= 47) s_tz_qh = tz;
+    uint8_t stroke = 16;
+    s_book_stroke = nvs_get_u8(h, "bk_stroke", &stroke) == ESP_OK && stroke <= 32 ? (int)stroke - 16 : 0;
     uint8_t lead = 0, margin = 0, guide = 0, tap = 1, night = 0, style = 0;
     if (nvs_get_u8(h, NVS_KEY_LEAD, &lead) == ESP_OK && lead <= 30) s_book_leading = lead;
     if (nvs_get_u8(h, NVS_KEY_MARGIN, &margin) == ESP_OK && margin <= 2) s_book_margin = margin;
@@ -223,7 +254,13 @@ void app_settings_init(void) {
         for (int i = 0; i < 9; ++i) s_book_tap_zones[i] = (uint8_t)((packed_zones >> (i * 2)) & 0x03);
     }
     if (nvs_get_u8(h, NVS_KEY_NIGHT, &night) == ESP_OK) s_book_night = night != 0;
-    if (nvs_get_u8(h, NVS_KEY_LOCK_STYLE, &style) == ESP_OK && style <= 3) s_lock_style = style;
+    if (nvs_get_u8(h, NVS_KEY_LOCK_STYLE, &style) == ESP_OK && style <= APP_LOCK_STYLE_QUOTE)
+        s_lock_style = style == 4 ? 0 : style; // 旧壁纸值4并入图片样式0。/ Legacy wallpaper value 4 merges into image style 0.
+    // 壁纸只接受 TF 路径；历史脏数据清空回退默认锁屏。
+    // Wallpapers accept TF paths only; historical junk clears back to the default lock face.
+    size_t image_len = sizeof(s_lock_image);
+    if (nvs_get_str(h, NVS_KEY_LOCK_IMAGE, s_lock_image, &image_len) != ESP_OK ||
+        strncmp(s_lock_image, "/sdcard/", 8)) s_lock_image[0] = 0;
     size_t sync_len = sizeof(s_sync_url);
     if (nvs_get_str(h, NVS_KEY_SYNC_URL, s_sync_url, &sync_len) != ESP_OK) s_sync_url[0] = 0;
     sync_len = sizeof(s_sync_user);
@@ -232,11 +269,12 @@ void app_settings_init(void) {
     if (nvs_get_str(h, NVS_KEY_SYNC_KEY, s_sync_key, &sync_len) != ESP_OK) s_sync_key[0] = 0;
     uint8_t sync_auto = 0;
     if (nvs_get_u8(h, NVS_KEY_SYNC_AUTO, &sync_auto) == ESP_OK) s_sync_auto = sync_auto != 0;
-    uint8_t align = 0, idle = 0, f_clock = 0, f_batt = 0, f_bar = 1;
+    uint8_t align = 0, idle = 0, f_clock = 0, f_batt = 0, f_bar = 1, f_time = 1;
     if (nvs_get_u8(h, NVS_KEY_ALIGN, &align) == ESP_OK && align <= 2) s_book_align = align;
     if (nvs_get_u8(h, NVS_KEY_F_CLOCK, &f_clock) == ESP_OK) s_footer_clock = f_clock != 0;
     if (nvs_get_u8(h, NVS_KEY_F_BATT, &f_batt) == ESP_OK) s_footer_battery = f_batt != 0;
     if (nvs_get_u8(h, NVS_KEY_F_BAR, &f_bar) == ESP_OK) s_footer_bar = f_bar != 0;
+    if (nvs_get_u8(h, NVS_KEY_F_TIME, &f_time) == ESP_OK) s_footer_time = f_time != 0;
     if (nvs_get_u8(h, NVS_KEY_IDLE, &idle) == ESP_OK &&
         (idle == 0 || idle == 5 || idle == 10 || idle == 30)) s_idle_lock = idle;
     uint8_t gc_every = 5;
@@ -244,10 +282,15 @@ void app_settings_init(void) {
     uint8_t direct = 0;
     if (nvs_get_u8(h, NVS_KEY_BOOK_DIRECT, &direct) == ESP_OK) s_book_direct = direct == 1;
     uint8_t edge_gray = 0;
-    if (nvs_get_u8(h, NVS_KEY_BOOK_EDGE_GRAY, &edge_gray) == ESP_OK) s_book_edge_gray = edge_gray == 1;
+    s_book_edge_gray = nvs_get_u8(h, NVS_KEY_BOOK_EDGE_GRAY, &edge_gray) == ESP_OK && edge_gray == 1;
+    uint8_t goal = 0;
+    s_daily_goal = nvs_get_u8(h, "daily_goal", &goal) == ESP_OK && goal <= 72 ? goal * 5u : 0;
+    uint8_t night_prewipe = 0;
+    if (nvs_get_u8(h, NVS_KEY_BOOK_NIGHT_PREWIPE, &night_prewipe) == ESP_OK) s_book_night_prewipe = night_prewipe == 1;
     uint8_t night_profile = BOOK_NIGHT_PROFILE_CURRENT;
     if (nvs_get_u8(h, NVS_KEY_BOOK_NIGHT_PROFILE, &night_profile) == ESP_OK &&
-        (night_profile == BOOK_NIGHT_PROFILE_CURRENT || night_profile == BOOK_NIGHT_PROFILE_WHITE_REPAINT)) s_book_night_profile = night_profile;
+        (night_profile == BOOK_NIGHT_PROFILE_CURRENT || night_profile == BOOK_NIGHT_PROFILE_WHITE_REPAINT))
+        s_book_night_profile = night_profile;
     sleep_clock_record_t clock = {0};
     size_t clock_len = sizeof(clock);
     if (nvs_get_blob(h, NVS_KEY_SLEEP_CLOCK, &clock, &clock_len) == ESP_OK &&
@@ -276,6 +319,15 @@ void app_settings_init(void) {
 
 app_sleep_mode_t app_settings_sleep_mode(void) {
     return s_sleep;
+}
+
+app_sleep_mode_t app_settings_effective_lock_mode(void) {
+    bool dynamic = (s_lock_style >= 1 && s_lock_style <= 3) || s_lock_style == APP_LOCK_STYLE_QUOTE;
+    return s_sleep == APP_SLEEP_DEEP && dynamic ? APP_SLEEP_LIGHT : s_sleep;
+}
+const char* app_settings_lock_wake_hint(void) {
+    return app_settings_effective_lock_mode() == APP_SLEEP_OFF ? "长按电源键开机" :
+           app_settings_effective_lock_mode() == APP_SLEEP_DEEP ? "短按电源键开机" : "短按电源键唤醒";
 }
 
 const char* app_sleep_mode_name(app_sleep_mode_t mode) {
@@ -370,6 +422,24 @@ void app_settings_set_book_shake(bool on) {
     nvs_put_u8(NVS_KEY_BOOK_SHAKE, on ? 1 : 0);
 }
 
+static void nvs_put_u8_checked(const char* key, uint8_t value);
+bool app_settings_shelf_grid(void) { return s_shelf_grid; }
+void app_settings_set_shelf_grid(bool grid) {
+    if (s_shelf_grid == grid) return;
+    s_shelf_grid = grid;
+    nvs_put_u8_checked("bk_grid", grid ? 1 : 0);
+}
+
+bool app_settings_book_turn_anim(void) {
+    return s_book_turn_anim;
+}
+
+void app_settings_set_book_turn_anim(bool on) {
+    if (s_book_turn_anim == on) return;
+    s_book_turn_anim = on;
+    nvs_put_u8(NVS_KEY_BOOK_TURN_ANIM, on ? 1 : 0);
+}
+
 int8_t app_settings_tz_qh(void) {
     return s_tz_qh;
 }
@@ -391,6 +461,20 @@ static void nvs_put_u8_checked(const char* key, uint8_t value) {
     nvs_set_u8(h, key, value);
     nvs_commit(h);
     nvs_close(h);
+}
+
+int app_settings_book_stroke(void) { return s_book_stroke; }
+bool app_settings_set_book_stroke(int steps) {
+    if (steps < -16 || steps > 16) return false;
+    if (s_book_stroke == steps) return true;
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS, NVS_READWRITE, &h) != ESP_OK) return false;
+    esp_err_t err = nvs_set_u8(h, "bk_stroke", (uint8_t)(steps + 16));
+    if (err == ESP_OK) err = nvs_commit(h);
+    nvs_close(h);
+    if (err != ESP_OK) return false;
+    s_book_stroke = (int8_t)steps;
+    return true;
 }
 
 uint8_t app_settings_book_leading(void) { return s_book_leading; }
@@ -454,24 +538,90 @@ void app_settings_set_book_tap(bool on) {
     nvs_put_u8_checked(NVS_KEY_TAP, on ? 1 : 0);
 }
 
-bool app_settings_book_night(void) { return s_book_night; }
-
-void app_settings_set_book_night(bool on) {
-    if (s_book_night == on) return;
-    s_book_night = on;
-    nvs_put_u8_checked(NVS_KEY_NIGHT, on ? 1 : 0);
+bool app_settings_book_night(void) {
+    // 夜间模式暂时下线：多轮实机调残影未果，用户要求撤掉入口；存量值保留但不再生效，恢复时改回读取存储值。
+    // Night mode is temporarily withdrawn after repeated failed ghost tuning on device;
+    // the stored value is retained but inert — restoring means reading it again.
+    (void)s_book_night;
+    return false;
 }
 
 uint8_t app_settings_lock_style(void) { return s_lock_style; }
 
-void app_settings_set_lock_style(uint8_t style) {
-    if (style > 3) return;
-    if (s_lock_style == style) return;
+bool app_settings_set_lock_style(uint8_t style) {
+    if (style > 3 && style != APP_LOCK_STYLE_QUOTE) return false;
+    if (s_lock_style == style) return true;
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS, NVS_READWRITE, &h) != ESP_OK) return false;
+    esp_err_t err = nvs_set_u8(h, NVS_KEY_LOCK_STYLE, style);
+    if (err == ESP_OK) err = nvs_commit(h);
+    nvs_close(h);
+    if (err != ESP_OK) return false;
     s_lock_style = style;
-    nvs_put_u8_checked(NVS_KEY_LOCK_STYLE, style);
+    return true;
+}
+
+const char* app_settings_lock_image(void) { return s_lock_image; }
+
+void app_settings_set_lock_image(const char* path) {
+    char next[sizeof(s_lock_image)] = {0};
+    // 空串清除；非空必须是不超容量的 /sdcard/ 路径，其余一律拒绝不动。
+    // An empty string clears; non-empty values must be in-capacity /sdcard/ paths, anything else is rejected unchanged.
+    if (path && path[0]) {
+        if (strncmp(path, "/sdcard/", 8) || strnlen(path, sizeof(next)) >= sizeof(next)) return;
+        snprintf(next, sizeof(next), "%s", path);
+    }
+    if (!strcmp(s_lock_image, next)) return;
+    strcpy(s_lock_image, next);
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS, NVS_READWRITE, &h) != ESP_OK) return;
+    nvs_set_str(h, NVS_KEY_LOCK_IMAGE, s_lock_image);
+    nvs_commit(h);
+    nvs_close(h);
 }
 
 bool app_settings_lock_pin_wake(void) { return s_lock_pin_wake; }
+
+// 锁屏来源与续读标记都是“断电前写入、下次开机取走即清”的一次性记录，不做运行时缓存。
+// The lock origin and reading marker are one-shot records: written before power cut and
+// consumed-and-cleared at the next boot, so they keep no runtime cache.
+void app_settings_set_lock_origin(uint8_t app) { nvs_put_u8_checked(NVS_KEY_LOCK_ORIGIN, app); }
+
+uint8_t app_settings_take_lock_origin(void) {
+    nvs_handle_t h;
+    uint8_t app = 0;
+    if (nvs_open(NVS_NS, NVS_READONLY, &h) == ESP_OK) {
+        (void)nvs_get_u8(h, NVS_KEY_LOCK_ORIGIN, &app);
+        nvs_close(h);
+    }
+    nvs_handle_t w;
+    if (nvs_open(NVS_NS, NVS_READWRITE, &w) == ESP_OK) {
+        nvs_erase_key(w, NVS_KEY_LOCK_ORIGIN);
+        nvs_commit(w);
+        nvs_close(w);
+    }
+    return app;
+}
+
+void app_settings_set_lock_reading(bool reading) { nvs_put_u8_checked(NVS_KEY_LOCK_READING, reading ? 1 : 0); }
+
+bool app_settings_take_lock_reading(void) {
+    nvs_handle_t h;
+    uint8_t raw = 0;
+    bool reading = false;
+    if (nvs_open(NVS_NS, NVS_READONLY, &h) == ESP_OK) {
+        reading = nvs_get_u8(h, NVS_KEY_LOCK_READING, &raw) == ESP_OK && raw;
+        nvs_close(h);
+    }
+    nvs_handle_t w;
+    if (nvs_open(NVS_NS, NVS_READWRITE, &w) == ESP_OK) {
+        nvs_erase_key(w, NVS_KEY_LOCK_READING);
+        nvs_commit(w);
+        nvs_close(w);
+    }
+    return reading;
+}
+
 
 void app_settings_set_lock_pin_wake(bool on) {
     if (s_lock_pin_wake == on) return;
@@ -549,6 +699,14 @@ void app_settings_set_footer_bar(bool on) {
     nvs_put_u8_checked(NVS_KEY_F_BAR, on ? 1 : 0);
 }
 
+bool app_settings_footer_time(void) { return s_footer_time; }
+
+void app_settings_set_footer_time(bool on) {
+    if (s_footer_time == on) return;
+    s_footer_time = on;
+    nvs_put_u8_checked(NVS_KEY_F_TIME, on ? 1 : 0);
+}
+
 uint8_t app_settings_idle_lock_min(void) { return s_idle_lock; }
 
 void app_settings_set_idle_lock_min(uint8_t minutes) {
@@ -574,9 +732,31 @@ void app_settings_set_book_edge_gray(bool on) {
     nvs_put_u8_checked(NVS_KEY_BOOK_EDGE_GRAY, on);
 }
 
+unsigned app_settings_daily_goal(void) { return s_daily_goal; }
+bool app_settings_set_daily_goal(unsigned minutes) {
+    if (minutes > 360 || minutes % 5) return false;
+    if (minutes == s_daily_goal) return true;
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS, NVS_READWRITE, &h) != ESP_OK) return false;
+    esp_err_t err = nvs_set_u8(h, "daily_goal", (uint8_t)(minutes / 5));
+    if (err == ESP_OK) err = nvs_commit(h);
+    nvs_close(h);
+    if (err != ESP_OK) return false;
+    s_daily_goal = minutes;
+    return true;
+}
+
+bool app_settings_book_night_prewipe(void) { return s_book_night_prewipe; }
+void app_settings_set_book_night_prewipe(bool on) {
+    if (s_book_night_prewipe == on) return;
+    s_book_night_prewipe = on;
+    nvs_put_u8_checked(NVS_KEY_BOOK_NIGHT_PREWIPE, on);
+}
+
 uint8_t app_settings_book_night_profile(void) { return s_book_night_profile; }
 void app_settings_set_book_night_profile(uint8_t profile) {
-    if ((profile != BOOK_NIGHT_PROFILE_CURRENT && profile != BOOK_NIGHT_PROFILE_WHITE_REPAINT) || s_book_night_profile == profile) return;
+    if ((profile != BOOK_NIGHT_PROFILE_CURRENT && profile != BOOK_NIGHT_PROFILE_WHITE_REPAINT) ||
+        s_book_night_profile == profile) return;
     s_book_night_profile = profile;
     nvs_put_u8_checked(NVS_KEY_BOOK_NIGHT_PROFILE, profile);
 }

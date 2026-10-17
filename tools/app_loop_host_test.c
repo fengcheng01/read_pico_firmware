@@ -4,6 +4,7 @@
  */
 #include "app_loop.h"
 #include "app_touch_input.h"
+#include "app_registry.h"
 #include "ui_gesture.h"
 #include "ui_menu.h"
 #include <assert.h>
@@ -25,7 +26,8 @@ static bool home_on_touch, home_on_tick, home_on_key, start_second;
 static int home_enters, home_renders, last_menu_leaf, rendered_leaf;
 static const app_desc_t* menu_background;
 static app_desc_t first, second;
-static bool full_tick, lock_due, font_due;
+static bool full_tick, lock_due, font_due, remote_ready, remote_once;
+static int lock_calls;
 static int64_t time_offset, time_step;
 static int du_areas, gl_areas;
 static bool media_test, sd_font, saved_sd_font;
@@ -62,9 +64,9 @@ enum EpdDrawError update_display_with(EpdiyHighlevelState*h,const void*w,int m) 
 enum EpdDrawError update_display_white(EpdiyHighlevelState*h) {(void)h;return 0;}
 bool display_take_white_exit(void) {return false;}
 void rails_idle_check(int64_t n) {(void)n;}
-bool read_pico_pmu_ready(void) {return lock_due;}
-bool read_pico_pmu_take_key_short(void) {return true;}
-void enter_lock_and_sleep(EpdiyHighlevelState*h,int64_t*t,void*a,void*tp) {(void)h;(void)t;(void)a;(void)tp;lock_due=false;time_offset+=1000000;}
+bool read_pico_pmu_ready(void) {return lock_due || remote_ready;}
+bool read_pico_pmu_take_key_short(void) {return lock_due;}
+void enter_lock_and_sleep(EpdiyHighlevelState*h,int64_t*t,void*a,void*tp,unsigned char origin) {(void)h;(void)t;(void)a;(void)tp;(void)origin;++lock_calls;lock_due=false;time_offset+=1000000;}
 void os_time_rtc_reanchor(void) {}
 const char* app_settings_font_path(void) {return "builtin";}
 uint8_t app_settings_idle_lock_min(void) {return 0;}
@@ -79,6 +81,7 @@ void read_pico_sd_start_probe(void) {probes++;}
 static void lost(app_ctx_t*c) {(void)c;media_lost++;loss_step=step;}
 EpdRect ui_content_refresh_area(void) {return (EpdRect){0,0,684,1000};}
 const app_desc_t* app_home_page(void) {return &first;}
+os_app_id_t app_id_of(const app_desc_t* a) {return a==&second?OS_APP_LIBRARY:OS_APP_HOME;}
 const app_desc_t* app_at(int i) {return i==0?&first:i==1?&second:NULL;}
 int ui_key_hit_test(uint16_t x,uint16_t y) {return y>=1300 && x<480?x/160:-1;}
 bool ui_menu_handle_hit_test(uint16_t x,uint16_t y) {return x>600 && y>1100 && y<1300;}
@@ -111,6 +114,7 @@ static app_redraw_t key(app_ctx_t*c,int k) {keys[k]++;if(home_on_key)c->request_
 static app_redraw_t loading_tick(app_ctx_t*c) { return c->consumed ? APP_REDRAW_NONE : APP_REDRAW_PAGE; }
 static app_redraw_t tick(app_ctx_t*c) {
     ticks++;tick_consumed[step]=c->consumed;
+    if(remote_once){remote_once=false;app_loop_request_lock();}
     if(request_on_tick)c->request_app=&second;
     if(menu_on_tick)c->request_menu=true;
     if(home_on_tick){c->request_return=true;home_on_tick=false;}
@@ -122,7 +126,7 @@ static void reset(void) {
     long_keys=0; input_resets=0; navigation_refreshes=navigation_entries=0;
     home_on_touch=home_on_tick=home_on_key=start_second=false;
     home_enters=home_renders=0;rendered_leaf=-1;last_menu_leaf=-1;menu_background=NULL;
-    full_tick=lock_due=font_due=false;time_offset=0;time_step=10000;du_areas=gl_areas=0;
+    full_tick=lock_due=font_due=remote_ready=remote_once=false;lock_calls=0;time_offset=0;time_step=10000;du_areas=gl_areas=0;
     memset(samples,0,sizeof(samples));memset(keys,0,sizeof(keys));memset(events,0,sizeof(events));memset(tick_consumed,0,sizeof(tick_consumed));
     sample_count=step=ticks=enters=exits=touch_calls=menus=highlights=restores=fulls=mode=0;
     request_on_touch=request_on_tick=menu_on_tick=menu_on_touch=cancel_clobber=false;response=APP_REDRAW_NONE;
@@ -141,6 +145,19 @@ static void home_case(void) {
     first.on_enter=home_enter;first.render=home_render;first.on_tick=NULL;first.on_touch=NULL;
 }
 int main(void) {
+    reset();remote_ready=remote_once=true;
+    for(int i=0;i<5;i++)add(0,0,0,0);
+    run();assert(lock_calls==1 && enters==1 && exits==0);
+    reset();remote_ready=remote_once=request_on_tick=true;
+    for(int i=0;i<5;i++)add(0,0,0,0);
+    run();assert(lock_calls==0 && enters==2);
+    reset();remote_ready=remote_once=menu_on_tick=true;
+    for(int i=0;i<5;i++)add(0,0,0,0);
+    run();assert(lock_calls==0);
+    reset();remote_ready=remote_once=true;first.holds_pmu=true;
+    for(int i=0;i<5;i++)add(0,0,0,0);
+    run();assert(lock_calls==0);
+
     // 正文AREA保留连续输入，PAGE内部视图切换清除旧按钮输入。
     // Body AREA turns retain input; PAGE internal-view transitions drop stale button input.
     reset(); first.on_gesture=gesture; response=APP_REDRAW_AREA;
@@ -319,9 +336,12 @@ int main(void) {
     reset();media_test=sd_font=saved_sd_font=true;mounted_steps[0]=mounted_steps[2]=true;time_step=4000000;first.on_media_lost=lost;
     add(0,0,0,0);add(0,0,0,0);add(0,0,0,0);add(0,0,0,0);run();
     assert(media_lost==2&&builtin_opens==2&&!probes&&font_opens==2);
-    puts("app_loop: 58 scheduler scenarios passed");
+    puts("app_loop: 62 scheduler scenarios passed");
     return 0;
 }
 
 // 媒体丢失时封面任务汇合替身。/ Cover join boundary on media loss.
 void book_cover_join(void) {}
+// 启动保护只关心就绪回执；状态机本体另有覆盖。/ Startup protection needs the ready
+// receipt only; its state machine has its own coverage.
+void pico_boot_ready(void) {}

@@ -1,6 +1,8 @@
 /*
  * SPDX-FileCopyrightText: 2026 mindreset
  * SPDX-License-Identifier: Apache-2.0
+ * 冻结：同步联网前确认蓝牙完整停栈，停止失败直接报告，不启动 WiFi。
+ * Frozen: Confirm full BLE teardown before sync networking; report stop failure without starting WiFi.
  *
  * 中文：同步核心的设备桥。HTTP 走 esp_http_client（https 校验证书，不自跳过），
  * 文档标识为 KOReader 部分 MD5；推/拉作用在“最后一本书”的进度记录上。
@@ -11,11 +13,14 @@
  * 冻结：用户批准非阻塞同步；UI 准备/应用快照，后台不读写NVS；离页取消并收齐；密码仅以 MD5 落盘；
  * 用户反馈后由 UI 按需启动已保存 WiFi，后台等到 STA 可用才请求；独占联网不启动传书 HTTP，结果收齐后释放。
  * 用户要求提高KOReader定位：后台可独立只读解析EPUB真实祖先、文本节点与Unicode偏移；旧段落仍兼容，rp1需文件大小匹配，其余明示百分比近似。
+ * 拉取只应用位置，字号保留本机记录，不恢复远端或全局默认档位。
  * Frozen: User-approved nonblocking sync: UI prepares/applies snapshots, the worker never accesses NVS, and exit cancels/joins; no
  * periodic background polling; UI owns on-demand saved-WiFi sessions, the worker waits for STA and network-only sessions never start upload HTTP; the password persists only as MD5; pulls apply the exact
- * rp1 position only when file sizes match; for user-requested accuracy, the worker independently reads EPUB ancestry, text nodes and Unicode offsets, retaining legacy paragraphs and clearly approximating unsupported positions by percentage.
+ * rp1 position only when file sizes match; for user-requested accuracy, the worker independently reads EPUB ancestry, text nodes and Unicode offsets, retaining legacy paragraphs and clearly approximating unsupported positions by percentage;
+ * pulls apply positions only while font tiers stay local, never restoring remote or global defaults.
  */
 #include "os_sync.h"
+#include "os_page_turner.h"
 #include "os_time.h"
 #include "os_sync_http.h"
 #include "book_progress.h"
@@ -169,6 +174,7 @@ static void release_session(void) {
     s_network_owned = false;
 }
 static bool prepare_network(char* note, size_t cap) {
+    if (!os_page_turner_pause()) { snprintf(note, cap, "请先关闭蓝牙再同步"); return false; }
     if (!read_pico_transfer_claim_sync()) { snprintf(note, cap, "正在上传或删除，请完成后再同步"); return false; }
     s_claimed = true;
     read_pico_transfer_status_t status;
@@ -290,11 +296,10 @@ bool os_sync_job_poll(char* note, size_t cap) {
     bool exact = os_sync_progress_decode(s_position, &size, &chapter, &off, &px) && size == s_size;
     s_remote.file_size = s_size;
     s_remote.approximate = !exact && !s_paragraph;
-    s_remote.px = app_settings_book_px();
-    if (exact) {
-        s_remote.chapter = chapter; s_remote.byte_off = off;
-        s_remote.px = px >= 36 && px <= 72 ? px : 48;
-    }
+    // 字号是本机排版参数，不随进度同步：保留这本书本地记录的档位，rp1 里的远端档位仅作格式兼容。
+    // Font size is local layout and never syncs: keep this book's recorded tier; the rp1 tier stays for format compatibility only.
+    s_remote.px = s_has_local ? s_local.px : app_settings_book_px();
+    if (exact) { s_remote.chapter = chapter; s_remote.byte_off = off; }
     if (s_paragraph) { s_remote.chapter = s_paragraph_chapter; s_remote.byte_off = s_paragraph_byte; }
     s_remote.pct = (uint8_t)(s_percent * 100 + 0.5f);
     if (s_network_owned) { os_time_network(false); read_pico_transfer_stop(); }

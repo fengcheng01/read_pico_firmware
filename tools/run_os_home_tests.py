@@ -19,7 +19,7 @@ with tempfile.TemporaryDirectory(prefix="rp-os.", dir="/tmp") as folder:
     for name, sources in (("home", ["tools/os_home_host_test.c", "main/book/book_home.c", "main/book/book_entry.c"]),
                           ("store", ["tools/book_store_host_test.c"]),
                           ("device", ["tools/os_device_host_test.c", "main/os/os_device_pico.c"]),
-                          ("product", ["tools/ui_product_host_test.c", "main/ui/product/ui_product.c", "main/book/book_entry.c"]),
+                          ("product", ["tools/ui_product_host_test.c", "main/ui/product/ui_product.c", "main/ui/ui_dither.c", "main/book/book_entry.c", "main/os/os_lunar.c"]),
                           ("time", ["tools/os_time_host_test.c", "main/os/os_time.c"]),
                           ("xpointer", ["tools/book_xpointer_host_test.c", "main/book/book_xpointer.c", "main/book/html_text.c"]),
                           ("records", ["tools/book_records_host_test.c", "main/book/book_stats.c", "main/book/book_stats_store.c", "main/book/book_quotes.c"]),
@@ -47,7 +47,8 @@ with tempfile.TemporaryDirectory(prefix="rp-os.", dir="/tmp") as folder:
             target_includes = ["-Itools/usb_disk_stubs", "-Imain/os"]
             target_flags = flags + ["-Wno-unused-function"]
         elif name == "cover_job":
-            target_includes = ["-Itools/os_sync_device_stubs", *includes]
+            target_includes = ["-Itools/cover_job_stubs", "-Itools/os_sync_device_stubs", *includes]
+            sources = [*sources, "main/book/book_cover_auto.c"]
             target_flags = flags + ["-pthread"]
         elif name == "sync_device":
             target_includes = ["-Itools/os_sync_device_stubs", "-Icomponents/read_pico_transfer/include", *includes]

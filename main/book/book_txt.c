@@ -70,25 +70,152 @@ static esp_err_t reset(reader_t *r, book_txt_t *b, uint32_t offset) {
     clearerr(b->file);
     return fseek(b->file, (long)offset, SEEK_SET) ? ESP_FAIL : ESP_OK;
 }
-static bool heading(const char *s) {
-    if (!strncmp(s, "Chapter", 7)) {
-        s += 7; while (*s == ' ' || *s == '\t') ++s;
-        return isdigit((unsigned char)*s) != 0;
-    }
+// “第+数字串+章节卷回集部篇”标记：命中返回 true。/ The 第+number+章节卷回集部篇
+// marker; true on a hit.
+// 数字集含〇亿廿（RickyOS 同款）：老书“第一百〇八章”不再漏检；第、数字与单位间容忍空白。
+// The numeral set gains 〇亿廿 (as in RickyOS) so old books naming “第一百〇八章” index
+// correctly; whitespace is tolerated around the numeral run.
+static bool heading_marker(const char *s) {
     if (strncmp(s, "第", 3)) return false;
-    s += 3; bool number = false;
+    s += 3;
+    while (*s == ' ' || *s == '\t') ++s;
+    bool number = false;
     while (*s) {
         uint32_t cp; size_t n = utf8_one((const unsigned char *)s, strlen(s), &cp);
         char token[5] = {0}; memcpy(token, s, n);
-        if ((cp >= '0' && cp <= '9') || (n == 3 && strstr("零一二三四五六七八九十百千万两", token))) { number = true; s += n; }
-        else return number && n == 3 && strstr("章节卷回集部篇", token);
+        if ((cp >= '0' && cp <= '9') || (n == 3 && strstr("零〇一二三四五六七八九十百千万亿两廿", token))) { number = true; s += n; }
+        else break;
+    }
+    if (!number) return false;
+    while (*s == ' ' || *s == '\t') ++s;
+    if (!*s) return false;
+    uint32_t cp; size_t n = utf8_one((const unsigned char *)s, strlen(s), &cp);
+    char token[5] = {0}; memcpy(token, s, n);
+    return n == 3 && strstr("章节卷回集部篇", token);
+}
+// 部名前缀白名单：ASCII 字母数字/空格/连字符与 CJK 统一表意字，且不超过 24 字节。
+// Part-name whitelist: ASCII alphanumerics, spaces and hyphens plus CJK unified
+// ideographs, within 24 bytes.
+static bool prefix_clean(const char *s, size_t n) {
+    if (n > 24) return false;
+    for (size_t i = 0; i < n;) {
+        unsigned char c = (unsigned char)s[i];
+        if (c < 0x80) {
+            if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == ' ' || c == '-')) return false;
+            ++i; continue;
+        }
+        uint32_t cp; size_t k = utf8_one((const unsigned char *)s + i, n - i, &cp);
+        if (k <= 1 || !((cp >= 0x3400 && cp <= 0x9FFF) || (cp >= 0xF900 && cp <= 0xFAFF))) return false;
+        i += k;
+    }
+    return true;
+}
+// 章节题头行：行首/前导空白后的 Chapter N 与第N章；部名+空白+第N章（如“洪武大帝
+// 第一章 童年”）；17k 等站点导出的“[本章字数：…”标记行。
+// A chapter-heading line: Chapter N or 第N章 at the (whitespace-skipped) line start;
+// a part name plus whitespace plus 第N章 (as in “洪武大帝 第一章 童年”); or the
+// “[本章字数：…” marker lines exported by sites such as 17k.
+// Markdown 代码围栏行（```/~~~ 至少三连，缩进≤3）：切换围栏状态，围栏内不认标题。
+// A Markdown code-fence line (```/~~~ runs of three or more, indent within three):
+// toggles fence state; fenced lines never become chapters.
+static bool md_fence_line(const char *s) {
+    size_t indent = 0;
+    while (indent < 3 && (s[indent] == ' ' || s[indent] == '\t')) ++indent;
+    s += indent;
+    char c = *s;
+    if (c != '`' && c != '~') return false;
+    size_t run = 0;
+    while (s[run] == c) ++run;
+    return run >= 3;
+}
+// Markdown 标题：≤3 空格缩进 + 1..6 个 # + 空白 + 非空标题（RickyOS 同款）。
+// A Markdown heading: up to three spaces of indent, one to six hashes, whitespace,
+// then a nonempty title (as in RickyOS).
+static bool md_heading(const char *s) {
+    size_t indent = 0;
+    while (s[indent] == ' ') ++indent;
+    if (indent > 3) return false;
+    s += indent;
+    size_t hashes = 0;
+    while (s[hashes] == '#') ++hashes;
+    if (!hashes || hashes > 6) return false;
+    s += hashes;
+    if (*s != ' ' && *s != '\t') return false;
+    while (*s == ' ' || *s == '\t') ++s;
+    return *s != 0;
+}
+// ASCII 前缀忽略大小写比较。/ ASCII prefix compare, case-insensitive.
+static bool prefix_ci(const char *s, const char *prefix) {
+    size_t n = strlen(prefix);
+    if (strlen(s) < n) return false;
+    for (size_t i = 0; i < n; ++i)
+        if (tolower((unsigned char)s[i]) != prefix[i]) return false;
+    return true;
+}
+static bool heading(const char *s) {
+    if (strstr(s, "[本章字数")) return true;
+    if (md_heading(s)) return true;
+    for (;;) {
+        if (*s == ' ' || *s == '\t') ++s;
+        else if (!strncmp(s, "\xe3\x80\x80", 3)) s += 3;
+        else break;
+    }
+    // 英文题头：chapter/book/part + 数字或罗马数字（RickyOS 同款）。
+    // English headings: chapter/book/part plus Arabic or Roman numerals (as in RickyOS).
+    static const char* k_english[] = {"chapter", "book", "part"};
+    for (unsigned i = 0; i < sizeof(k_english) / sizeof(k_english[0]); ++i) {
+        size_t n = strlen(k_english[i]);
+        if (prefix_ci(s, k_english[i]) && s[n] == ' ') {
+            const char *p = s + n;
+            while (*p == ' ' || *p == '\t') ++p;
+            size_t digits = 0;
+            while (p[digits] >= '0' && p[digits] <= '9') ++digits;
+            if (!digits)
+                while (p[digits] == 'i' || p[digits] == 'v' || p[digits] == 'x' ||
+                       p[digits] == 'I' || p[digits] == 'V' || p[digits] == 'L' ||
+                       p[digits] == 'l' || p[digits] == 'c' || p[digits] == 'd' ||
+                       p[digits] == 'm' || p[digits] == 'C' || p[digits] == 'D' || p[digits] == 'M') ++digits;
+            if (!digits) break;
+            char next = p[digits];
+            if (!next || next == ' ' || next == '\t' || next == '.' || next == ':' || next == '-') return true;
+            if (!strncmp(p + digits, "\xef\xbc\x9a", 3) || !strncmp(p + digits, "\xe2\x80\x94", 3)) return true;
+            break;
+        }
+    }
+    if (heading_marker(s)) return true;
+    for (const char *at = strstr(s, "第"); at; at = strstr(at + 3, "第")) {
+        const char *before = at;
+        if (at - s >= 3 && !strncmp(at - 3, "\xe3\x80\x80", 3)) before = at - 3;
+        if (before == s) continue;  // 与行首之间无空白分隔。/ No whitespace gap to the line start.
+        if (!(at[-1] == ' ' || at[-1] == '\t' || before != at)) continue;
+        if (prefix_clean(s, before - s) && heading_marker(at)) return true;
     }
     return false;
+}
+// 标题整理：去首尾空白（含全角空格），在制表符或站点标记前截断。
+// Title cleanup: trim outer whitespace (fullwidth included) and cut at a tab or a
+// site marker bracket.
+static void clean_title(const char *line, char *out, size_t cap) {
+    // Markdown 题头的 # 前缀不入标题。/ Drop the hash prefix from Markdown headings.
+    while (*line == '#') ++line;
+    while (*line == ' ' || *line == '\t' || !strncmp(line, "\xe3\x80\x80", 3))
+        line += *line == ' ' || *line == '\t' ? 1 : 3;
+    size_t n = 0;
+    for (const char *p = line; *p && *p != '\t' && *p != '[' && n + 1 < cap; ++p)
+        out[n++] = *p;
+    while (n && (out[n - 1] == ' ' || out[n - 1] == '\t')) --n;
+    while (n >= 3 && !strncmp(out + n - 3, "\xe3\x80\x80", 3)) n -= 3;
+    out[n] = 0;
 }
 static bool add(book_txt_t *b, uint32_t offset, const char *title) {
     if (b->count == BOOK_CHAPTER_MAX) return false;
     book_entry_t *e = &b->entries[b->count++]; e->offset = offset;
-    if (title) memcpy(e->title, title, strlen(title) + 1);
+    if (title) {
+        size_t n = strlen(title);
+        if (n > 40) n = 40;
+        while (n && ((unsigned char)title[n] & 0xc0) == 0x80) --n;  // 不截半个码点。/ Never cut mid-codepoint.
+        memcpy(e->title, title, n); e->title[n] = 0;
+    }
     else snprintf(e->title, sizeof(e->title), "Part %u", (unsigned)b->count);
     return true;
 }
@@ -97,20 +224,34 @@ static esp_err_t index_book(reader_t *r, book_txt_t *b, book_cache_identity_t* i
     book_cache_fingerprint_begin(identity);
     if (b->bom) book_cache_fingerprint_update(identity, "\xef\xbb\xbf", b->bom);
     r->fingerprint = identity;
-    char line[41] = {0}; size_t len = 0; bool overflow = false, too_many = false;
+    // 96 字节检测窗覆盖 17k 导出行的“标题+[本章字数”前段；标题本体仍在 40 字节内截断。
+    // The 96-byte window covers the title-plus-marker prefix of 17k export lines;
+    // stored titles still truncate within 40 bytes.
+    char line[97] = {0}, title[97];
+    size_t len = 0; bool overflow = false, too_many = false, fence = false;
     uint32_t start = b->bom, cp;
     while (next(r, &cp)) {
         if (cp == '\n') {
-            if (!overflow && heading(line) && !add(b, start, line)) too_many = true;
+            if (md_fence_line(line)) fence = !fence;
+            else if (!overflow && !fence && heading(line)) {
+                clean_title(line, title, sizeof(title));
+                if (!add(b, start, title)) too_many = true;
+            }
             start = r->offset; len = 0; line[0] = 0; overflow = false;
         } else if (cp != '\r') {
             char bytes[4]; size_t n = encode(cp, bytes);
-            if (len + n <= 40 && !overflow) { memcpy(line + len, bytes, n); len += n; line[len] = 0; }
-            else overflow = true;
+            if (len + n <= 96 && !overflow) { memcpy(line + len, bytes, n); len += n; line[len] = 0; }
+            else if (!strstr(line, "[本章字数")) overflow = true;
+            // 站点标记行携带很长的元数据尾巴：标记已入窗口后，行尾超长不否决该行。
+            // Site marker lines carry long metadata tails: once the marker is inside
+            // the window, an overlong tail no longer rejects the line.
         }
     }
     if (ferror(b->file)) return ESP_FAIL;
-    if (!overflow && heading(line) && !add(b, start, line)) too_many = true;
+    if (!fence && !overflow && heading(line)) {
+        clean_title(line, title, sizeof(title));
+        if (!add(b, start, title)) too_many = true;
+    }
     bool fallback = b->count < 2 || too_many;
     if (b->count) b->entries[0].offset = 0;
     for (size_t i = 0; i < b->count; ++i) {
@@ -138,7 +279,7 @@ static esp_err_t index_book(reader_t *r, book_txt_t *b, book_cache_identity_t* i
 static uint32_t toc_get32(const uint8_t* p) { return p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24); }
 static void toc_put32(uint8_t* p, uint32_t v) { for (unsigned n = 0; n < 4; ++n) p[n] = v >> (8 * n); }
 static bool toc_load(book_txt_t* b, const char* path, book_cache_identity_t* identity) {
-    identity->variant = 1;
+    identity->variant = 3;
     uint8_t* data = NULL; size_t bytes = 0;
     if (!book_cache_load(path, BOOK_CACHE_TXT_TOC, identity, TOC_HEADER_BYTES + TOC_RECORD_BYTES * BOOK_CHAPTER_MAX,
                          (void**)&data, &bytes)) return false;
@@ -161,7 +302,7 @@ done:
     free(data); return ok;
 }
 static void toc_save(const book_txt_t* b, const char* path, book_cache_identity_t* identity) {
-    identity->variant = 1;
+    identity->variant = 3;
     size_t bytes = TOC_HEADER_BYTES + b->count * TOC_RECORD_BYTES;
     uint8_t* data = heap_caps_calloc(1, bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!data) return;
@@ -192,9 +333,39 @@ esp_err_t book_txt_open(book_txt_t *b, const char *path) {
         size_t n = fread(r->bytes, 1, READ_BLOCK + 3, b->file);
         if (ferror(b->file)) err = ESP_FAIL;
         else if (n >= 3 && !memcmp(r->bytes, "\xef\xbb\xbf", 3)) b->bom = 3;
-        else for (size_t i = 0; i < n && i < READ_BLOCK;) {
-            uint32_t cp; size_t k = utf8_one(r->bytes + i, n - i, &cp);
-            if (k == 1 && r->bytes[i] >= 0x80) { b->gbk = true; break; } i += k;
+        else {
+            // 严格双验证（RickyOS 同款思路）：样本整体合法 UTF-8 则 UTF-8；否则要求
+            // 全部高位字节都能配成合法 GBK 对才判 GBK，单字节损坏不再整本误判。
+            // Strict dual validation (RickyOS's approach): a wholly valid UTF-8 sample
+            // stays UTF-8; otherwise every high byte must pair as legal GBK before the
+            // file is called GBK, so one stray byte no longer flips the whole book.
+            bool utf8_ok = true;
+            for (size_t i = 0; i < n;) {
+                unsigned char c = r->bytes[i];
+                if (c < 0x80) { ++i; continue; }
+                uint32_t cp; size_t k = utf8_one(r->bytes + i, n - i, &cp);
+                if (k > 1) { i += k; continue; }
+                // 序列被样本边缘截断视为未完成，不判无效。/ A sequence cut by the
+                // sample edge counts as incomplete, never invalid.
+                size_t need = c >= 0xc2 && c <= 0xdf ? 2 : c >= 0xe0 && c <= 0xef ? 3 : c >= 0xf0 && c <= 0xf4 ? 4 : 0;
+                if (need && n - i < need) break;
+                utf8_ok = false; break;
+            }
+            if (!utf8_ok) {
+                bool gbk_ok = true;
+                size_t pairs = 0;
+                for (size_t i = 0; i < n;) {
+                    unsigned char c = r->bytes[i];
+                    if (c < 0x80) { ++i; continue; }
+                    if (c >= 0x81 && c <= 0xfe) {
+                        if (i + 1 == n) break;  // 样本截断的半个对 / a pair cut by the sample edge
+                        unsigned char t = r->bytes[i + 1];
+                        if (t >= 0x40 && t <= 0xfe && t != 0x7f) { ++pairs; i += 2; continue; }
+                    }
+                    gbk_ok = false; break;
+                }
+                b->gbk = gbk_ok && pairs > 0;
+            }
         }
     }
     if (!err) err = index_book(r, b, &identity);

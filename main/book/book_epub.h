@@ -40,6 +40,9 @@ uint32_t book_epub_chapter_byte_offset(const book_epub_t *book, size_t index);
 /// 暂停/恢复目录缓存，文件验证失败返回 false。/ Suspend/resume metadata; failed file validation returns false.
 void book_epub_suspend(book_epub_t* book);
 bool book_epub_resume(book_epub_t* book, const char* path);
+/// 首次请求目录时为无目录书补扫正文编号题头，幂等且不覆盖正式标题。/ On the first TOC request,
+/// scan body numbered headings for books without navigation; idempotent and never overriding authored titles.
+void book_epub_prepare_toc(book_epub_t* book);
 /// 用独立只读书源编解码KOReader文本节点与Unicode偏移，兼容旧段落位置，不改变当前阅读单实例。
 /// Encode/decode KOReader text nodes and Unicode offsets through an independent read-only source, accepting legacy paragraph positions without changing the active singleton.
 bool book_epub_sync_encode(const char* path, uint16_t chapter, uint32_t byte, char* out, size_t cap);

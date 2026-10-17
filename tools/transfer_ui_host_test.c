@@ -8,12 +8,17 @@
 #include "transfer_ui_test_env.h"
 #include "../main/apps/app_transfer.c"
 #include <assert.h>
+static bool test_ble_stopped = true;
+bool os_page_turner_pause(void) { return test_ble_stopped; }
 // 产品服务替身仅验证页面生命周期；真实协议和任务另有宿主测试。
 // Product service substitutes verify page lifecycle; separate host tests cover real protocol/tasks.
 static bool test_auto, test_sync_busy, test_sync_pending, test_start_ok=true;
-static int test_sync_starts, test_sync_cancels;
+static int test_sync_starts, test_sync_cancels, test_stay_awake_calls;
 static char test_sync_url[192], test_sync_user[64];
 void book_cover_join(void) {}
+// 保活计数：会话在线/启动/同步时 on_tick 必须报告，停止后必须静默。/ Counting stay-awake:
+// on_tick must report while live, starting or syncing, and stay silent once stopped.
+void app_loop_stay_awake(void) { ++test_stay_awake_calls; }
 const char* app_settings_sync_url(void) { return test_sync_url; }
 const char* app_settings_sync_user(void) { return test_sync_user; }
 const char* app_settings_sync_key(void) { return ""; }
@@ -124,14 +129,16 @@ int main(void) {
     assert(s_network_count == 8 && !s_scan_pending);
     tap(&ctx, ui_row_rect(1, 2, 176, 84));
     assert(test_forget_count == 0);
-    tap(&ctx, ui_row_rect(1, 2, 600, UI_BTN_H));
+    // 遗忘确认走统一底部面板：取消在左键，确认在右键；面板外轻点等同取消。
+    // Forgetting confirms through the shared bottom sheet: Cancel left, Confirm right; a tap outside also cancels.
+    tap(&ctx, network_control_rect(12));
     assert(test_forget_count == 0 && s_saved_configured && !s_forget_confirm);
     tap(&ctx, ui_row_rect(1, 2, 176, 84));
     test_forget_error = ESP_FAIL;
-    tap(&ctx, ui_row_rect(0, 2, 600, UI_BTN_H));
+    tap(&ctx, network_control_rect(11));
     assert(test_forget_count == 1 && s_saved_configured && s_forget_confirm);
     test_forget_error = ESP_OK;
-    tap(&ctx, ui_row_rect(0, 2, 600, UI_BTN_H));
+    tap(&ctx, network_control_rect(11));
     assert(test_forget_count == 2 && !s_saved_configured);
     test_configured = true;
     enter_networks();
@@ -254,5 +261,65 @@ int main(void) {
     int starts=test_sync_starts;
     on_tick(&ctx); on_tick(&ctx);
     assert(test_sync_starts==starts+1 && s_sync_pushed);
+    // 会话在线、启动中、同步中报告保活；停止后恢复常规空闲锁屏。
+    // Live, starting and syncing sessions report stay-awake; the stopped page
+    // falls back to normal idle locking.
+    test_sync_busy=false; s_start_pending=false; s_session_started=true;
+    int awake=test_stay_awake_calls;
+    on_tick(&ctx);
+    assert(test_stay_awake_calls==awake+1);
+    s_session_started=false; s_start_pending=false;
+    on_tick(&ctx);
+    assert(test_stay_awake_calls==awake+1);
+    s_start_pending=true;
+    on_tick(&ctx);
+    assert(test_stay_awake_calls==awake+2);
+    s_start_pending=false; s_session_started=false; test_sync_busy=true;
+    on_tick(&ctx);
+    assert(test_stay_awake_calls==awake+3);
+    test_sync_busy=false;
+    // 锁屏准备必须停掉在线会话（否则浅睡被拒退化成空转），解锁后自动重启。
+    // The lock preparation must stop a live session (light-sleep rejection otherwise
+    // degrades the lock into a busy loop); unlock then restarts it.
+    s_view=TRANSFER_HOME; s_start_pending=false; s_session_started=true;
+    int stops=test_stop_count;
+    assert(transfer_prepare_sleep());
+    assert(test_stop_count==stops+1 && !s_session_started && !s_start_pending && s_restart_after_lock);
+    test_status.state=READ_PICO_TRANSFER_STOPPED;
+    on_tick(&ctx);
+    // 重启意图在同一轮被启动块消费：会话回到在线。
+    // The restart intent is consumed by the start block in the same tick: the session is live again.
+    assert(!s_restart_after_lock && !s_start_pending && s_session_started);
+    // 空闲页（用户已停止）锁屏不得重启会话。/ An idle page (user-stopped) must not restart on lock.
+    stops=test_stop_count;
+    s_start_pending=false; s_session_started=false; s_restart_after_lock=false;
+    assert(transfer_prepare_sleep());
+    assert(test_stop_count==stops && !s_restart_after_lock);
+    // 已有成功文件仍在接收下一份时，去书架不能中断写入；空闲后停服才跳转。
+    // A completed file cannot permit a Library exit during the next upload; stop before navigating once idle.
+    s_view = TRANSFER_HOME; s_status.done_count = 1; s_start_pending = true;
+    test_busy = true; test_shelf_requested = false; ctx.request_app = NULL;
+    int library_exit_stops = test_stop_count;
+    tap(&ctx, control_rect(5));
+    assert(!ctx.request_app && !test_shelf_requested && test_stop_count == library_exit_stops && s_hint[0]);
+    test_busy = false;
+    tap(&ctx, control_rect(5));
+    assert(ctx.request_app == &test_library_app && test_shelf_requested && !s_start_pending && test_stop_count > library_exit_stops);
+    ctx.consumed=false;test_busy=false;
+    test_ble_stopped=false;
+    on_enter(&ctx);on_tick(&ctx);
+    assert(!s_session_started && s_status.last_error==ESP_ERR_INVALID_STATE);
+    s_view=TRANSFER_NETWORKS;s_scan_pending=true;
+    network_ui_tick(&ctx);assert(!s_network_count && strstr(s_network_message,"扫描失败"));
+    test_ble_stopped=true;
+    transfer_on_exit(&ctx);
+    test_font_error=ESP_FAIL;
+    on_enter(&ctx);on_tick(&ctx);
+    assert(!test_font_suspended && !s_session_started && s_status.last_error==ESP_FAIL);
+    transfer_on_exit(&ctx);
+    test_font_error=ESP_OK;
+    on_enter(&ctx);on_tick(&ctx);
+    assert(test_font_suspended && s_session_started);
+    transfer_on_exit(&ctx);
     puts("transfer_ui_host_test: PASS");
 }

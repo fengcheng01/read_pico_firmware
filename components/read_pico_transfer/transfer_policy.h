@@ -132,6 +132,7 @@ static bool parse_credentials(const char *body, size_t length, transfer_credenti
 typedef struct {
     bool online, pending, failed; ///< 在线、待连接与终止状态 / Online, pending and terminal states
     unsigned attempts; ///< 本轮尝试次数 / Attempts in this round
+    unsigned drops; ///< 在线后掉线次数（跨重连保留） / Drops after being online (kept across reconnects)
     int64_t deadline_ms, next_ms; ///< 总截止与下次尝试时刻 / Overall deadline and next attempt time
 } transfer_connection_t;
 
@@ -141,14 +142,17 @@ static void connection_begin(transfer_connection_t *c, int64_t now) {
 
 static void connection_lost(transfer_connection_t *c, int64_t now) {
     if (c->failed) return;
-    if (c->online) connection_begin(c, now);
+    // 掉线重连刷新期限与尝试数，但累计掉线次数：反复连上又掉不再无限重置看门狗。
+    // A drop refreshes the deadline and attempts but accumulates: flapping connect-drop
+    // cycles no longer reset the watchdog forever.
+    if (c->online) { unsigned drops = c->drops; connection_begin(c, now); c->drops = drops + 1; }
     c->online = false; c->pending = true; c->next_ms = now + 1000;
 }
 
 // 0等待、1连接、-1终止本轮。/ 0 waits, 1 connects, -1 terminates this round.
 static int connection_poll(transfer_connection_t *c, int64_t now) {
     if (c->online || c->failed) return 0;
-    if (now >= c->deadline_ms || (c->pending && c->attempts >= 3)) {
+    if (now >= c->deadline_ms || (c->pending && c->attempts >= 3) || c->drops >= 4) {
         c->failed = true; c->pending = false; return -1;
     }
     if (!c->pending || now < c->next_ms) return 0;

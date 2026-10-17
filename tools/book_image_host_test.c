@@ -54,12 +54,43 @@ int main(int argc,char** argv) {
         assert((size_t)w*h==n && !memcmp(pixels,expected,n));
         free(data);free(expected);free(pixels);return 0;
     }
+    if(argc==4 && !strcmp(argv[1],"--expect-file")) {
+        // 文件流式入口对照期望字节。/ The streaming file entry versus expected bytes.
+        size_t n;uint8_t* expected=read_file(argv[3],&n),*pixels=NULL;uint16_t w=0,h=0;
+        assert(book_image_decode_file(argv[2],1000000,&pixels,&w,&h));
+        assert((size_t)w*h==n && !memcmp(pixels,expected,n));
+        free(expected);free(pixels);return 0;
+    }
+    if (argc==3 && !strcmp(argv[1],"--file-consistency")) {
+        // 双路径一致性：文件流式与整读内存必须同判同字节。/ Path parity: the streaming
+        // file entry and the whole-file memory entry must agree on verdict and bytes.
+        size_t len;uint8_t* data=read_file(argv[2],&len);
+        uint8_t* fp=NULL,*mp=NULL;uint16_t fw=0,fh=0,mw=0,mh=0;
+        bool fok=book_image_decode_file(argv[2],1000000,&fp,&fw,&fh);
+        bool mok=book_image_decode(data,len,1000000,&mp,&mw,&mh);
+        assert(fok==mok);
+        if (fok) { assert(fw==mw && fh==mh); assert(!memcmp(fp,mp,(size_t)fw*fh)); }
+        free(fp);free(mp);free(data);return 0;
+    }
+    if (argc==3 && !strcmp(argv[1],"--file-reject")) {
+        // 拒绝路径必须干净：无输出、无尺寸、不崩溃。/ Rejections must come back clean:
+        // no pixels, no dimensions, no crash.
+        uint8_t* pixels=NULL;uint16_t w=0,h=0;
+        assert(!book_image_decode_file(argv[2],1000000,&pixels,&w,&h) && !pixels && !w && !h);
+        return 0;
+    }
     if (argc==3 && !strcmp(argv[1],"--inspect")) {
         size_t len; uint8_t* data=read_file(argv[2],&len), *pixels=NULL; uint16_t w,h;
         bool ok=book_image_decode(data,len,2u*1024u*1024u,&pixels,&w,&h);
         printf("image %s: %s %ux%u\n",argv[2],ok?"decoded":"placeholder",w,h);
         if(ok){char path[1024];snprintf(path,sizeof(path),"%s.pgm",argv[2]);FILE* f=fopen(path,"wb");assert(f);fprintf(f,"P5\n%u %u\n255\n",w,h);fwrite(pixels,1,(size_t)w*h,f);fclose(f);}
         free(data);free(pixels);return 0;
+    }
+    if (argc==3 && !strcmp(argv[1],"--inspect-file")) {
+        uint8_t* pixels=NULL; uint16_t w=0,h=0;
+        bool ok=book_image_decode_file(argv[2],2u*1024u*1024u,&pixels,&w,&h);
+        printf("file image %s: %s %ux%u\n",argv[2],ok?"decoded":"placeholder",w,h);
+        free(pixels);return 0;
     }
     assert(argc==7);
     check_image(argv[1],true);check_image(argv[2],false);

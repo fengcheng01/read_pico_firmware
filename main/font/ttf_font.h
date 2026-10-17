@@ -49,11 +49,15 @@ typedef struct {
 esp_err_t ttf_font_init(void);
 esp_err_t ttf_font_open(const char* path);
 esp_err_t ttf_font_open_builtin(void);
-/// 控制任务独占传字体时切内置并暂停 SD 打开；停服后解除，保留字体设置。/ Switch to built-in and suspend SD opens on the owner task for font transfer; resume after stop without changing settings.
+/// 切换内置成功才暂停SD打开；失败保留原字体并拒绝传输，停服恢复所选字体。/ Suspend SD opens only after a successful built-in switch; failures retain the original font and gate transfer, restoring the saved font after shutdown.
 esp_err_t ttf_font_suspend_sd(bool suspend);
+/// HTTP停服后解除暂停并同步恢复所选字体，失败安全回退。/ After HTTP stops, resume and restore the saved font synchronously with safe failure fallback.
+esp_err_t ttf_font_resume_sd(void);
 bool ttf_font_is_builtin(void);
 bool ttf_font_path_is_builtin(const char* path);
 void ttf_font_unload(void);
+/// 同任务空闲边界回收字形与可选映射，保留可用字库和设置。/ Reclaim glyphs/optional maps at an owner-task idle boundary, retaining the usable source and preferences.
+void ttf_font_reclaim(void);
 int ttf_font_scan(void);
 int ttf_font_count(void);
 const ttf_font_item_t* ttf_font_item(int index);
@@ -64,6 +68,8 @@ bool ttf_font_ready(void);
 /// 原字优先；缺失的 ⋯ 可借同字体 …，与测量、预热和绘制一致，不改输入文本。
 /// Prefer native glyphs; absent ⋯ may borrow the same font's … consistently with metrics, prewarm and drawing, without rewriting input.
 bool ttf_font_supports_text(const char* text, size_t len);
+/// 关键控件绘制前实际准备字形，失败可改画无字库图形。/ Prepare actual glyphs for critical controls so failures can use font-independent graphics.
+bool ttf_font_prepare_text_px(int pixel_height, const char* text);
 int ttf_ascender(int size);
 int ttf_ascender_px(int pixel_height);
 
@@ -85,6 +91,13 @@ void ttf_draw_text_px_bw(
 void ttf_measure_line(int size, const char* text, int* above, int* below);
 void ttf_measure_line_px(int pixel_height, const char* text, int* above, int* below);
 int ttf_text_width_px(int pixel_height, const char* text);
+/// 独立覆盖率微调，每步1/16像素，-16..16；不改原字体字重或字宽，调用方持有绘图锁。
+/// Independent coverage tuning in 1/16-pixel steps, -16..16; preserve font weight/advances; hold the draw lock.
+void ttf_set_stroke(int steps);
+int ttf_get_stroke(void);
+/// 控制曲线展平精度，仅影响新光栅与缓存身份，不改度量。/ Select curve flattening precision, affecting raster/cache identity only, never metrics.
+void ttf_set_precise_curves(bool precise);
+bool ttf_get_precise_curves(void);
 void ttf_set_weight(int wght);
 int ttf_get_weight(void);
 

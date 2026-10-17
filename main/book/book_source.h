@@ -21,6 +21,9 @@ esp_err_t book_open(const char *path);
 void book_close(void);
 /// 返回章节数。/ Return the chapter count.
 size_t book_chapter_count(void);
+/// 进入目录视图前请求：无目录 EPUB 补扫正文编号题头，幂等，TXT 无操作。/ Request before the
+/// TOC view: scan body numbered headings for navigation-less EPUBs; idempotent, no-op for TXT.
+void book_prepare_toc(void);
 /// 复制 UTF-8 标题，空间不足返回错误。/ Copy a UTF-8 title, failing if capacity is insufficient.
 esp_err_t book_chapter_title(size_t i, char *buf, size_t cap);
 /// 加载 NUL 结尾的 PSRAM UTF-8；调用方 free。/ Load NUL-terminated PSRAM UTF-8; caller frees it.

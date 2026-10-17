@@ -60,6 +60,22 @@ with tempfile.TemporaryDirectory(prefix="pico-night-white-") as directory:
         "esp_err.h": "#pragma once\ntypedef int esp_err_t;\n",
         "esp_log.h": "#pragma once\n#define ESP_LOGI(tag, ...) ((void)(tag))\n#define ESP_LOGW(tag, ...) ((void)(tag))\n",
         "esp_timer.h": "#pragma once\n#include <stdint.h>\nstatic inline int64_t esp_timer_get_time(void) { return 0; }\n",
+        # 错相揭页仅链接用；本测试不触发翻页动画。/ Staggered-turn link shim only; this test never triggers the animation.
+        "e0470_page_turn.h": '''#pragma once
+#include "epdiy.h"
+typedef enum { E0470_TURN_LTR = 0, E0470_TURN_RTL = 1, E0470_TURN_TTB = 2, E0470_TURN_BTT = 3 } e0470_turn_dir_t;
+#define E0470_TURN_DEFAULT_TICK_US 12000
+#define E0470_TURN_FAST_TICK_US 14000
+static inline void e0470_page_turn_set_tick_us(int us) { (void)us; }
+static inline int e0470_page_turn_tick_us(void) { return E0470_TURN_FAST_TICK_US; }
+static inline void e0470_page_turn_release(void) {}
+static inline enum EpdDrawError e0470_page_turn_with_waveform_compact(
+    EpdiyHighlevelState* hl, EpdRect area, e0470_turn_dir_t dir,
+    const EpdWaveform* waveform, unsigned bands) {
+    (void)hl; (void)area; (void)dir; (void)waveform; (void)bands;
+    return EPD_DRAW_NO_PHASES_AVAILABLE;
+}
+''',
         "xtensa/core-macros.h": "#pragma once\n",
         "sdkconfig.h": "#pragma once\n#define CONFIG_IDF_TARGET_ESP32S3 1\n#define CONFIG_SPIRAM 1\n",
         "esp_heap_caps.h": """#pragma once
@@ -71,6 +87,10 @@ static inline void* heap_caps_aligned_alloc(size_t align, size_t size, int caps)
     (void)caps; void* p = NULL; return posix_memalign(&p, align, size) ? NULL : p;
 }
 static inline void heap_caps_free(void* p) { free(p); }
+static inline void* heap_caps_malloc(size_t size, int caps) {
+    (void)caps; static unsigned char slot[4096];
+    return size > sizeof(slot) ? NULL : slot;
+}
 """,
     }
     for name in ("read_pico_board.h", "read_pico_epd_timing.h"):

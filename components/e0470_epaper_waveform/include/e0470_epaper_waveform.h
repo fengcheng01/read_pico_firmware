@@ -72,21 +72,48 @@ extern const EpdWaveform E0470_NAVIGATION_ENTRY_WAVEFORM;
 #define E0470_DIRECT_FRAMES (E0470_FULL_DU_FRAMES + 1)
 extern const EpdWaveform E0470_DIRECT_WAVEFORM;
 
-/// 可选灰边直刷：0/15目标复制完整厂家DU20，中间目标复制完整8灰GL30，末尾一相中性；所有对角线保持。
-/// Optional gray-edge direct: 0/15 targets copy complete vendor DU20, intermediate targets copy complete 8-gray GL30, followed by one neutral phase; every diagonal holds.
+/// 可选灰边直刷：0/15目标复制完整厂家DU20，中间目标按跟手DU公式单调同向逼近（无过冲无回修），末尾一相中性；所有对角线保持。
+/// Optional gray-edge direct: 0/15 targets copy complete vendor DU20, while intermediate targets approach monotonically with the
+/// follow-DU dose formula (no overshoot or trim), followed by one neutral phase; every diagonal holds.
 /// 真实目标可保留0/4/10/15等灰码；必须配真实旧灰及EE选择性整页API，不得先二值化再提交灰参考。
 /// Actual targets may retain gray codes such as 0/4/10/15; use truthful old grays and the selective EE page API, without thresholding targets before committing gray references.
-/// 最多31相，慢于原DU21；变化灰边有厂家反向动作，局部闪动及光学改善需要实机验证。
-/// Up to 31 phases, slower than original DU21; changed gray edges retain vendor reverse drive, so local flashing and optical improvement require device validation.
-#define E0470_GRAY_DIRECT_FRAMES (E0470_GRAY8_GL16_FRAMES + 1)
+/// 灰边单向直驱（21相与黑白直刷同速）：厂家DU自身的中灰源行就是剂量标定——降到灰g需
+/// count(0,15)−count(0,g) 个黑脉冲、升到灰g需 count(15,g) 个白脉冲，灰→灰取两端差值；
+/// 所有灰行从相0同起点单调逼近，无过冲无回拉，消除同步过冲的整页闪动；端点仍逐字复制厂家DU。
+/// One-way gray fringes (21 phases, as fast as binary direct): the vendor DU's own mid-gray source
+/// rows are the dose calibration — descending to gray g takes count(0,15)−count(0,g) black pulses and
+/// climbing to g takes count(15,g) white pulses, with gray-to-gray using the marginal difference;
+/// every gray row starts at phase 0 and approaches monotonically without overshoot or pull-back,
+/// removing the page-wide synchronized overshoot flash; endpoints still copy vendor DU verbatim.
+#define E0470_GRAY_DIRECT_FRAMES (E0470_FULL_DU_FRAMES + 1)
 extern const EpdWaveform E0470_GRAY_DIRECT_WAVEFORM;
+
+/// 厂家DU满幅迁移的动作脉冲数（相0-17）。/ Vendor DU action pulses for a full-travel transition (phases 0-17).
+#define E0470_DU_TRAVEL_PULSES 18
+
+/// 夜间白预驱（可选实验，默认关）：15→0升级为厂家0→0对角线等剂量W18先白后黑；保持黑经EE码走14→14行加W2+B18微洗。
+/// Night white pre-drive (optional experiment, off by default): 15→0 upgrades to the vendor 0→0 diagonal dose (W18 then B18);
+/// held black travels the EE code into the 14→14 row with a W2+B18 mini-wash.
+/// 选择性编码把一切未变像素发为EE，渲染器按码字节查LUT即14→14行；早期写在0→0行的微洗从未被驱动。
+/// The selective encoder emits EE for every unchanged pixel and the renderer indexes the LUT by that byte, i.e. the 14→14 row;
+/// the early wash written on 0→0 was never driven.
+/// 主机须同时传保持掩码：目标非纯黑的未变像素发FF走15→15保持行，正文与灰缘不参与黑底洗。
+/// The host must also pass a hold mask: unchanged non-pure-black targets go FF into the 15→15 hold row, keeping text and gray fringes out of the black wash.
+/// GL路径逐相拷贝厂家GL48对角线（W18相10-27、B18相28-45原位），微洗W2相26-27；直刷族W18前导加完整B18动作，微洗对齐黑窗。
+/// The GL path copies the vendor GL48 diagonal phase by phase (W18 at 10-27, B18 in place at 28-45) with the W2 wash at 26-27;
+/// the direct family uses a W18 lead plus complete B18 actions with the wash aligned to the black window.
+#define E0470_PREWIPE_DIRECT_LEAD E0470_DU_TRAVEL_PULSES
+#define E0470_DIRECT_PREWIPE_FRAMES (2 * E0470_PREWIPE_DIRECT_LEAD + 1)
+#define E0470_GRAY_DIRECT_PREWIPE_FRAMES E0470_DIRECT_PREWIPE_FRAMES
+extern const EpdWaveform E0470_NIGHT_PREWIPE_GL_WAVEFORM;
+extern const EpdWaveform E0470_DIRECT_PREWIPE_WAVEFORM;
+extern const EpdWaveform E0470_GRAY_DIRECT_PREWIPE_WAVEFORM;
 
 /// 最近墨迹动作掩码专用：FF擦白三相，其他码保持，再三相中性。/ Recent-ink action masks only: FF erases for three phases, others hold, then three neutral phases.
 #define E0470_WHITE_CLEANUP_FRAMES 6
 extern const EpdWaveform E0470_WHITE_CLEANUP_WAVEFORM;
 
-/// 本地默认灰阶相数，保留厂家完整动作。
-/// Local default gray phase counts retain complete vendor actions.
+/// 本地默认灰阶相数；仅描述装配，不改本地默认刷新。/ Local default gray phase counts; descriptive only, without changing local default updates.
 #define E0470_GC16_FRAMES E0470_FULL_GC16_FRAMES
 #define E0470_GL16_FRAMES (E0470_FULL_GL16_FRAMES + 1)
 
@@ -104,6 +131,10 @@ extern const EpdWaveform E0470_WAVEFORM;
 #define E0470_FOLLOW_FRAMES 8
 extern const EpdWaveform E0470_FOLLOW_WAVEFORM;
 
+/// 单相载波：配合 epdiy 的逐行/逐列相位覆盖（错相揭页）使用；自身全保持，不单独驱动。
+/// / One-phase carrier for epdiy's per-line/column phase overrides (staggered page turn); holds everywhere and never drives alone.
+extern const EpdWaveform E0470_APPLY_WAVEFORM;
+
 /// 按上面的公式生成 frames 帧的跟随表写进 dst（容量 frames×16×4 字节）。
 /// / Build a follow table of `frames` into dst (frames×16×4 bytes).
 void e0470_follow_lut_build(int frames, uint8_t (*dst)[16][4]);
@@ -116,8 +147,8 @@ const EpdWaveformPhases* e0470_waveform_phases(const EpdWaveform* waveform, int 
 /// / 2-bit action for (from→to) at `phase`: 0 hold, 1 darken, 2 erase.
 int e0470_phase_action(const EpdWaveformPhases* phases, int phase, int to, int from);
 
-/// 生成本地运行时表，必须在第一次刷新之前调用一次。
-/// Build local runtime tables before the first refresh.
+/// 生成本地运行时表及隔离Crossmux对照表，必须在第一次刷新之前调用一次。
+/// Build local runtime tables and the isolated Crossmux reference before the first refresh.
 void e0470_waveform_init(void);
 
 #ifdef __cplusplus

@@ -37,7 +37,8 @@ bool ui_gesture_feed(ui_gesture_t *g, const app_ctx_t *ctx, ui_gesture_event_t *
     if (!g->active) {
         if (!ctx->pressed || ctx->released || !touch->touched) return false;
         *g = (ui_gesture_t){ .active = true, .x0 = touch->x, .y0 = touch->y,
-            .x = touch->x, .y = touch->y, .t0_ms = ctx->now_ms, .last_ms = ctx->now_ms };
+            .x = touch->x, .y = touch->y, .drag_x = touch->x, .drag_y = touch->y,
+            .t0_ms = ctx->now_ms, .last_ms = ctx->now_ms };
         // 按下立即派发，底栏无需等待下一次采样或松手；第二帧仍稳定轻点锚点。
         // Dispatch press immediately so tabs need no second sample or release; stabilize the tap anchor next sample.
         return emit(g, UI_GESTURE_PRESS, ctx->now_ms, out);
@@ -47,6 +48,7 @@ bool ui_gesture_feed(ui_gesture_t *g, const app_ctx_t *ctx, ui_gesture_event_t *
     if (!g->press_sent && touch->touched && !ctx->released) {
         g->press_sent = true;
         g->x0 = touch->x; g->y0 = touch->y;
+        g->drag_x = g->x0; g->drag_y = g->y0;
         g->moved = false;
         return false;
     }
@@ -68,6 +70,13 @@ bool ui_gesture_feed(ui_gesture_t *g, const app_ctx_t *ctx, ui_gesture_event_t *
     if (!g->moved && !g->long_fired && ctx->now_ms - g->t0_ms >= UI_LONG_PRESS_MS) {
         g->long_fired = true;
         return emit(g, UI_GESTURE_LONG_PRESS, ctx->now_ms, out);
+    }
+    // DRAG 只在坐标变化时发出：中途跟手通知，不参与松手终态分类。
+    // DRAG emits only on coordinate change: a mid-sequence tracking notice that
+    // never takes part in the release classification.
+    if (g->moved && !g->long_fired && (g->x != g->drag_x || g->y != g->drag_y)) {
+        g->drag_x = g->x; g->drag_y = g->y;
+        return emit(g, UI_GESTURE_DRAG, ctx->now_ms, out);
     }
     return false;
 }

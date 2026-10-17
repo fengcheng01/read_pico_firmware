@@ -24,3 +24,17 @@ bool ui_draw_packed_full_image(uint8_t* framebuffer, const uint8_t* packed, size
     heap_caps_free(image);
     return decoded;
 }
+
+void ui_draw_boot_splash(uint8_t* framebuffer, const uint8_t* image, const char* version, bool settled) {
+    if (!framebuffer) return;
+    ui_draw_full_image(framebuffer, image);
+    if (!settled) {
+        size_t bytes = (size_t)epd_width() * epd_height() / 2;
+        for (size_t i = 0; i < bytes; ++i) {
+            unsigned low = framebuffer[i] & 15, high = framebuffer[i] >> 4;
+            framebuffer[i] = (15 - (15 - low) / 3) | ((15 - (15 - high) / 3) << 4);
+        }
+    }
+    ui_text(framebuffer, UI_LOCK_WIDTH / 2, 190, 64, "PageRest", EPD_DRAW_ALIGN_CENTER, false);
+    ui_text(framebuffer, UI_LOCK_WIDTH / 2, 1100, 28, version, EPD_DRAW_ALIGN_CENTER, false);
+}

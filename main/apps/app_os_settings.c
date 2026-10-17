@@ -1,18 +1,22 @@
 /*
  * SPDX-FileCopyrightText: 2026 mindreset
- * SPDX-License-Identifier: Apache-2.0
+ * 冻结修订：新增蓝牙翻页器独立入口，七行紧凑卡片保持版本行与底栏可见。
+ * Frozen revision: Add a dedicated Bluetooth page-turner entry; seven compact cards keep the version and footer visible.
  * 中文：产品设置根页，将现有功能分组，诊断不进入日常导航。
  * English: Group existing features under Settings, separating diagnostics from everyday navigation.
  * 冻结：不写电源或 VCOM；设置项委托已有页面，render 只绘图。
  * Frozen: No power or VCOM writes; delegate settings to existing pages; render only paints.
  * 冻结：用户拒绝Tab黑闪；根页保留厂家GL16迁移，布局入口补偿一次白底，不强制GC16进页。
  * Frozen: User rejects flashing Tabs; roots retain vendor GL16 migrations with one white entry compensation and no forced GC16 entries.
+ * 冻结：用户命名 PageRest，当前仅在设置版本行显示；设备名仍独立保留。
+ * Frozen: The user names the firmware PageRest; show it only beside the Settings version for now, retaining separate device identity.
  */
 #include "app.h"
 #include "app_registry.h"
 #include "os_device.h"
 #include "ui_product.h"
 #include "ui_gesture.h"
+#include "ui_press.h"
 #include <stdio.h>
 
 #include "firmware_version.h"
@@ -23,9 +27,14 @@ static const struct { const char* title; const char* detail; os_app_id_t id; } i
     {"时间与时区", "自动校时 · 15 分钟步进时区", OS_APP_TIME},
     {"睡眠与锁屏", "睡眠模式 · 拿起唤醒", OS_APP_SLEEP},
     {"存储与设备", "TF 卡与内置书库容量", OS_APP_STORAGE},
+    {"蓝牙翻页器", "搜索连接 · 按键测试与学习", OS_APP_BLUETOOTH},
     {"进阶与诊断", "硬件自检 · 刷新 · 触摸与传感器", OS_APP_TOOLS},
 };
-static EpdRect row_rect(int i) { return (EpdRect){UI_MARGIN, 206 + i * 140, ui_content_width(), 128}; }
+static EpdRect row_rect(int i) { return (EpdRect){UI_MARGIN, 194 + i * 122, ui_content_width(), 114}; }
+static bool row_disabled(int i) {
+    return items[i].id == OS_APP_TRANSFER && os_device()->transfer != OS_CAP_PRESENT;
+}
+static ui_press_t s_press;
 static void render(app_ctx_t* ctx, uint8_t* fb) {
     (void)ctx;
     ui_clear_page(fb);
@@ -33,38 +42,56 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
     for (unsigned i = 0; i < sizeof(items) / sizeof(items[0]); ++i) {
         EpdRect r = row_rect(i);
         EpdRect card = {r.x, r.y, r.width, r.height - 14};
-        ui_draw_round_rect(fb, card, UI_CHIP_RADIUS, UI_GRAY_BLACK);
+        // 无传书能力的行走浅边禁用态；按下态先铺灰底再画正常内容。
+        // Rows without transfer capability use the light disabled border; the press bed precedes normal content.
+        if (ui_press_active(&s_press) && s_press.id == (int)i) ui_draw_pressed_round_rect(fb, card, UI_CHIP_RADIUS);
+        ui_draw_round_rect(fb, card, UI_CHIP_RADIUS, row_disabled(i) ? UI_GRAY_LIGHT : UI_GRAY_BLACK);
         ui_text(fb, card.x + 20, card.y + 16, 38, items[i].title, EPD_DRAW_ALIGN_LEFT, false);
-        bool disabled = items[i].id == OS_APP_TRANSFER && os_device()->transfer != OS_CAP_PRESENT;
-        ui_text(fb, card.x + 20, card.y + 68, 24, disabled ? "此设备暂不支持连接与传书" : items[i].detail, EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, card.x + 20, card.y + 64, 24, row_disabled(i) ? "此设备暂不支持连接与传书" : items[i].detail, EPD_DRAW_ALIGN_LEFT, false);
         ui_text_vc(fb, card.x + card.width - 24, card.y + card.height / 2, 38, "›", EPD_DRAW_ALIGN_RIGHT, false);
     }
-    // 版本行：产品版本 + 编译日期，方便检查固件。/ Version line for firmware checks.
+    // 固件名与镜像版本同一行，机型名仍由页眉负责。/ Firmware name and image version share a row; the header keeps device identity.
     char version[96];
-    snprintf(version, sizeof(version), "固件 %s", firmware_version());
-    ui_text(fb, UI_MARGIN, 1056, 22, version, EPD_DRAW_ALIGN_LEFT, false);
+    snprintf(version, sizeof(version), "%s · %s", firmware_name(), firmware_version());
+    ui_product_title(fb, (EpdRect){UI_MARGIN, 1052, ui_content_width(), 38}, version, 26, 1);
     ui_product_root_bar(fb, OS_APP_SETTINGS);
 }
 static int hit(uint16_t x, uint16_t y) {
-    for (unsigned i = 0; i < sizeof(items) / sizeof(items[0]); ++i) if (ui_rect_hit(row_rect(i), x, y)) return (int)i;
+    for (unsigned i = 0; i < sizeof(items) / sizeof(items[0]); ++i)
+        if (!row_disabled(i) && ui_rect_hit(row_rect(i), x, y)) return (int)i;
     return -1;
 }
 static app_redraw_t gesture(app_ctx_t* ctx, const ui_gesture_event_t* ev) {
     if (ui_product_root_press(ctx, ev)) return APP_REDRAW_NONE;
-    if (ev->type != UI_GESTURE_TAP) return APP_REDRAW_NONE;
+    EpdRect rect = {0};
+    int row = hit(ev->x0, ev->y0);
+    if (row >= 0) rect = row_rect(row);
+    if (ev->type == UI_GESTURE_PRESS)
+        return row >= 0 ? ui_press_begin(ctx, &s_press, row, rect, render) : APP_REDRAW_NONE;
+    if (ev->type != UI_GESTURE_TAP) return ui_press_restore(ctx, &s_press, render);
     os_app_id_t id = ui_product_root_hit(ev->x0, ev->y0);
     if (id != OS_APP_NONE && id != OS_APP_SETTINGS && id == ui_product_root_hit(ev->x, ev->y)) {
+        ui_press_forget(&s_press);
         ui_product_navigate(ctx, id);
         return APP_REDRAW_NONE;
     }
-    int i = hit(ev->x0, ev->y0);
-    if (i >= 0 && i == hit(ev->x, ev->y)) {
-        if (items[i].id == OS_APP_TRANSFER && os_device()->transfer != OS_CAP_PRESENT) return APP_REDRAW_NONE;
-        ctx->request_app = app_by_id(items[i].id);
+    int held = s_press.id;
+    EpdRect held_rect = s_press.rect;
+    ui_press_forget(&s_press);
+    if (row >= 0 && row == hit(ev->x, ev->y)) {
+        ctx->request_app = app_by_id(items[row].id);
+        return APP_REDRAW_NONE;
     }
+    if (held >= 0 && !ctx->request_app && !ctx->request_menu && !ctx->request_return)
+        return ui_press_rewind(ctx, &s_press, held_rect, render);
+    return APP_REDRAW_NONE;
+}
+static void on_enter(app_ctx_t* ctx) { (void)ctx; ui_press_reset(&s_press); }
+static app_redraw_t on_tick(app_ctx_t* ctx) {
+    ui_press_settle(ctx, &s_press, ctx->now_ms);
     return APP_REDRAW_NONE;
 }
 const app_desc_t app_os_settings = {
     .title = "设置", .detail = "阅读 · 连接 · 存储 · 诊断", .enter_full = false, .clean_page = true,
-    .render = render, .on_gesture = gesture,
+    .render = render, .on_gesture = gesture, .on_tick = on_tick, .on_enter = on_enter,
 };

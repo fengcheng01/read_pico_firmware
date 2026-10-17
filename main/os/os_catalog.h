@@ -21,4 +21,6 @@ typedef enum {
     OS_APP_TIME = 11, ///< 时间与时区 / Time and timezone
     OS_APP_READING = 12, ///< 阅读设置 / Reading settings
     OS_APP_PIN = 13, ///< 锁屏密码 / Lock PIN
+    OS_APP_IMAGES = 14, ///< 锁屏图片 / Lock images
+    OS_APP_BLUETOOTH = 15, ///< 蓝牙翻页器 / Bluetooth page-turner
 } os_app_id_t;

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 mindreset
 # SPDX-License-Identifier: Apache-2.0
-# 编译真实灰边装配及厂家源的逐相回归，并固定两份不可修改源的指纹。
-# Compile actual gray-edge assembly and per-phase vendor-source regression, fixing fingerprints of both immutable sources.
+# 编译真实灰边装配及厂家源的逐相回归，并固定不可修改DU源的指纹。
+# Compile actual gray-edge assembly and per-phase vendor-source regression, fixing the immutable DU source fingerprint.
 # 冻结：不联网、不读取Git历史或忽略目录，不把数字LUT一致性当作光学验收。
 # Frozen: No network, Git-history or ignored-directory inputs; digital LUT equality is not optical acceptance.
 
@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / "build/book-tests/gray-direct-waveform"
 SOURCE_HASHES = {
     "du.h": "8bd94b91e05dc5219d978c1358ae83b9bdcd00991eab91869bdb291c78bff38d",
+    "gl16.h": "98ff6c06d99f13ae4daf69096852814ae5a846b64605b54eb27fb56b0166279d",
     "gray8_gl16.h": "bf4ffbac31b95af6855bd51bccc38f88cce3470f3b39fd6a71ed1a6b1fe21569",
 }
 
@@ -40,7 +41,7 @@ def main():
     ]
     subprocess.run(command, check=True)
     subprocess.run([str(binary)], check=True)
-    print("Immutable DU20/8-gray GL30 source headers and production assembly under ASAN/UBSAN PASS (device optical validation pending)")
+    print("Immutable DU20 source headers and production assembly under ASAN/UBSAN PASS (device optical validation pending)")
 
 
 if __name__ == "__main__":

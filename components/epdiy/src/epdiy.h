@@ -535,6 +535,16 @@ enum EpdDrawError epd_draw_base(
 /// 把波形第 `frame` 相展开成 1ppB / S3 VE 用的 1K 表（256 × uint32）。
 void epd_build_1ppB_lut_1k(uint8_t* lut, const EpdWaveformPhases* phases, int frame);
 
+/// 逐行相位覆盖：整场共用一份差分，行 l 用 `line_phase[l]` 指到的相（-1 保持零压）。仅下一次 draw 生效。
+/// Per-line phase override: one shared difference, line l runs `line_phase[l]` (-1 holds at zero voltage). Next draw only.
+void epd_set_line_phase_luts(const uint8_t* const* phase_luts, const int8_t* line_phase);
+/// 逐列带相位覆盖：带内用 `phase`，x0/x1 须 16 像素对齐。仅下一次 draw 生效。
+/// Per-column-band phase override: bands run `phase`; x0/x1 must be 16-pixel aligned. Next draw only.
+void epd_set_col_phase_luts(const uint8_t* const* phase_luts, const int* x0, const int* x1,
+                            const int8_t* phase, int nbands);
+/// 清空未消费的相位覆盖；任何异常退出路径都必须调用。/ Drop unconsumed overrides; every abnormal exit path must call this.
+void epd_clear_phase_luts(void);
+
 /**
  * 差分刷新（`MODE_PACKING_1PPB_DIFFERENCE`）时跳过前导的「全屏保持」相位。
  *

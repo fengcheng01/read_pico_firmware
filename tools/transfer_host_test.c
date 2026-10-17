@@ -76,6 +76,11 @@ static void test_font_uploads(void) {
     assert(!decode_font_name("font.otf", name) && !decode_font_name("font.ttc", name));
     assert(!decode_font_name("..%2Ffont.ttf", name) && !decode_font_name("%2Ffont.ttf", name));
     assert(!decode_font_name("bad%00.ttf", name));
+    // 图片名同样按类别限扩展名。/ Image names restrict extensions by kind the same way.
+    assert(decode_image_name("photo%20wall.jpg", name) && !strcmp(name, "photo wall.jpg"));
+    assert(decode_image_name("pic.JPEG", name) && decode_image_name("dot.PNG", name));
+    assert(!decode_image_name("photo.gif", name) && !decode_image_name("book.epub", name));
+    assert(!decode_image_name("..%2Fx.jpg", name));
     assert(temporary_basename("Font.TTF.part", ".part", name));
     assert(temporary_basename("Font.TTF.rename-backup", ".rename-backup", name));
 

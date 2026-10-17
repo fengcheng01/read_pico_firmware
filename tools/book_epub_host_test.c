@@ -14,6 +14,7 @@
 void book_heap_reset(void);
 void book_heap_report(void);
 #endif
+extern int book_epub_cache_hits;  // 解析结构缓存命中计数 / structure-cache hit counter
 int main(int argc, char **argv) {
     assert(argc > 1);
     bool inspect = !strcmp(argv[1], "--inspect");
@@ -45,7 +46,10 @@ int main(int argc, char **argv) {
                 assert(!strcmp(title, expected));
             }
             else if (strstr(argv[a], "good_defaults") || large || many) assert(!strncmp(title, "第 ", strlen("第 ")));
-            else if (!inspect) assert(strncmp(title, "第 ", strlen("第 ")));
+            // 无目录正文夹具在补目扫描前保持回退编号；扫描效果由 book_source 侧断言。
+            // The navigation-less body fixture keeps fallback numbering until the TOC
+            // scan runs; the scan itself is asserted by the book_source side.
+            else if (!inspect && !strstr(argv[a], "_body")) assert(strncmp(title, "第 ", strlen("第 ")));
             if (strstr(argv[a], "good_paths") && i < 2) assert(!strcmp(title, i ? "Child Two" : "Parent & One"));
             if (strstr(argv[a], "good_navfallback")) assert(!strncmp(title, "NAV ", 4));
             uint32_t offset = book_epub_chapter_byte_offset(book, i);
@@ -78,6 +82,52 @@ int main(int argc, char **argv) {
         }
         assert(book_epub_total_bytes(book) > previous);
         assert(readable);
+        if (!inspect) {
+            // 解析结构缓存：重开必命中（超限压力书允许跳过），章节数/总字节一致；
+            // 常规规模双书并持逐章比对偏移与标题，万章书先关再开以免双份解析堆超限。
+            // Structure cache: reopening must hit (oversized stress books may skip)
+            // with matching counts and totals; regular sizes hold both books and
+            // compare offsets and titles per chapter, while ten-thousand-chapter
+            // fixtures close before reopening so double parse heaps stay bounded.
+            bool held = count <= 4096;
+            int hits = book_epub_cache_hits;
+            if (!held) { book_epub_close(book); book = NULL; }
+            book_epub_t *again = NULL;
+            assert(book_epub_open(argv[a], &again) == ESP_OK && again);
+            assert(book_epub_cache_hits == hits + (count <= 20000 ? 1 : 0));
+            assert(book_epub_chapter_count(again) == count);
+            if (held) {
+                assert(book_epub_total_bytes(again) == book_epub_total_bytes(book));
+                for (size_t i = 0; i < count; ++i) {
+                    char t1[160], t2[160];
+                    assert(book_epub_chapter_title(book, i, t1, sizeof(t1)) == ESP_OK);
+                    assert(book_epub_chapter_title(again, i, t2, sizeof(t2)) == ESP_OK);
+                    assert(!strcmp(t1, t2));
+                    assert(book_epub_chapter_byte_offset(again, i) == book_epub_chapter_byte_offset(book, i));
+                }
+                book_epub_close(again);
+            } else {
+                book = again;  // 接力持有，后续流程（补目）继续有实例 / relay the instance
+            }
+            // 无目录正文夹具：补目回写后重开仍命中且标题保留。
+            // The navigation-less body fixture: after the TOC rewrite a further
+            // open still hits and keeps the titles.
+            if (strstr(argv[a], "_body")) {
+                book_epub_prepare_toc(book);
+                hits = book_epub_cache_hits;
+                book_epub_t *third = NULL;
+                assert(book_epub_open(argv[a], &third) == ESP_OK && third);
+                assert(book_epub_cache_hits == hits + 1);
+                assert(book_epub_chapter_count(third) == count);
+                for (size_t i = 0; i < count; ++i) {
+                    char t1[160], t3[160];
+                    assert(book_epub_chapter_title(book, i, t1, sizeof(t1)) == ESP_OK);
+                    assert(book_epub_chapter_title(third, i, t3, sizeof(t3)) == ESP_OK);
+                    assert(!strcmp(t1, t3));
+                }
+                book_epub_close(third);
+            }
+        }
         book_epub_close(book); printf("epub fixture passed: %s (%zu chapters, %zu with text)\n", argv[a], count, readable);
         if (image_refs) printf("image placeholders=%zu, repeated=%zu, title images=%zu, automatic decodes=0\n", image_refs, repeated_images, title_images);
 #ifdef BOOK_HEAP_TRACK

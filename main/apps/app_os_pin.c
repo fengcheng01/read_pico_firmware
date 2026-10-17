@@ -21,6 +21,7 @@
 #include "ui_gesture.h"
 #include "ui_menu.h"
 #include "ui_product.h"
+#include "ui_sheet.h"
 #include <string.h>
 
 typedef enum {
@@ -35,6 +36,8 @@ static char s_input[8];
 static char s_draft[8];
 static unsigned s_count;
 static char s_message[64];
+// 清除密码的确认面板。/ Confirm sheet for clearing the PIN.
+static bool s_confirm_clear;
 // 按下目标：-1 无、0..11 键位、100+ 选项行、200 返回。抬起命中同一目标才生效。
 // Press target: -1 none, 0..11 keypad keys, 100+ choice rows, 200 back. Only a
 // release over the same target commits — the same rule as the challenge loop.
@@ -83,6 +86,7 @@ static void reset_stage(void) {
     s_message[0] = 0;
     s_press_target = -1;
     s_quick = 0;
+    s_confirm_clear = false;
 }
 
 static void on_enter(app_ctx_t* ctx) { (void)ctx; reset_stage(); }
@@ -107,10 +111,15 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
         if (s_message[0]) ui_text(fb, UI_MARGIN, 900, 28, s_message, EPD_DRAW_ALIGN_LEFT, false);
         ui_product_title(fb, (EpdRect){UI_MARGIN, 936, ui_content_width(), 64},
                          "仅开机时，浅睡唤醒不再输入密码；开机仍需验证。", 26, 2);
+        if (s_confirm_clear)
+            ui_draw_confirm_sheet(fb, "清除锁屏密码？", "清除后开机与解锁都不再需要密码。",
+                                  "确认清除", s_press_target == 111 ? 1 : s_press_target == 110 ? 0 : -1);
     } else {
         ui_product_lock_keypad_body(fb, s_message, s_count);
     }
     ui_draw_button(fb, ui_product_back_rect(), "返回", false);
+    // 与其他页面一致的把手逃生口。/ The same handle escape hatch as every other page.
+    ui_draw_menu_handle(fb, false);
 }
 
 static void back_to_sleep(app_ctx_t* ctx) {
@@ -123,14 +132,22 @@ static void choice_action(app_ctx_t* ctx, int i) {
         s_count = 0;
         s_message[0] = 0;
     } else if (i == 1) {
-        if (app_settings_set_lock_pin("")) {
-            back_to_sleep(ctx);
-            return;
-        }
-        snprintf(s_message, sizeof(s_message), "清除失败，请重试");
+        // 清除密码先经统一确认面板，不再一点即生效。
+        // Clearing the PIN goes through the shared confirm sheet instead of firing on one tap.
+        s_confirm_clear = true;
     } else {
         app_settings_set_lock_pin_wake(!app_settings_lock_pin_wake());
     }
+}
+
+// 确认面板上的实际清除。/ The actual clear behind the confirm sheet.
+static void clear_pin_confirmed(app_ctx_t* ctx) {
+    s_confirm_clear = false;
+    if (app_settings_set_lock_pin("")) {
+        back_to_sleep(ctx);
+        return;
+    }
+    snprintf(s_message, sizeof(s_message), "清除失败，请重试");
 }
 
 // 一位输入完成后的阶段推进；返回 true 表示已切换页面。
@@ -168,7 +185,30 @@ static bool digit_done(app_ctx_t* ctx) {
     return false;
 }
 
-// 抬起命中同一目标才生效；与挑战循环一致。/ Only a release over the same target counts; matching the challenge loop.
+// 按下即铺灰底；滑离恢复，抬起命中同一目标才生效（与锁屏键盘同规则）。
+// Press paints the bed at once; sliding off restores and only a release over the same target commits (matching the lock keypad).
+static int sheet_target(int hit) {
+    if (hit == 0 || hit == UI_SHEET_HIT_OUTSIDE) return 110;
+    if (hit == 1) return 111;
+    return -1;
+}
+static void paint_sheet_button(app_ctx_t* ctx, int target, bool pressed) {
+    EpdRect button = ui_sheet_confirm_button(target == 111);
+    ui_clear_rect_fast(ctx->fb, button);
+    if (pressed) {
+        ui_draw_pressed_round_rect(ctx->fb, button, UI_BTN_RADIUS);
+        ui_text_vc(ctx->fb, button.x + button.width / 2, button.y + button.height / 2,
+                   UI_PX_BTN, target == 111 ? "确认清除" : "取消", EPD_DRAW_ALIGN_CENTER, false);
+    } else if (target == 111) {
+        ui_fill_round_rect(ctx->fb, button, UI_BTN_RADIUS, UI_GRAY_BLACK);
+        ui_text_vc(ctx->fb, button.x + button.width / 2, button.y + button.height / 2,
+                   UI_PX_BTN, "确认清除", EPD_DRAW_ALIGN_CENTER, true);
+    } else {
+        ui_draw_round_rect(ctx->fb, button, UI_BTN_RADIUS, UI_GRAY_BLACK);
+        ui_text_vc(ctx->fb, button.x + button.width / 2, button.y + button.height / 2,
+                   UI_PX_BTN, "取消", EPD_DRAW_ALIGN_CENTER, false);
+    }
+}
 static app_redraw_t on_touch(app_ctx_t* ctx, const cst836u_touch_t* touch) {
     if (!touch || !touch->touched) return APP_REDRAW_NONE;
     EpdRect rect = {0};
@@ -176,6 +216,9 @@ static app_redraw_t on_touch(app_ctx_t* ctx, const cst836u_touch_t* touch) {
     if (ui_rect_hit(ui_product_back_rect(), touch->x, touch->y)) {
         target = 200;
         rect = ui_product_back_rect();
+    } else if (s_stage == PIN_CHOICE && s_confirm_clear) {
+        target = sheet_target(ui_confirm_sheet_hit(touch->x, touch->y));
+        if (target >= 0) rect = ui_sheet_confirm_button(target == 111);
     } else if (s_stage == PIN_CHOICE) {
         for (int i = 0; i < 3; ++i)
             if (ui_rect_hit(choice_target_rect(100 + i), touch->x, touch->y)) {
@@ -192,6 +235,14 @@ static app_redraw_t on_touch(app_ctx_t* ctx, const cst836u_touch_t* touch) {
     }
     if (target < 0) return APP_REDRAW_NONE;
     // 按下立即高亮，不整页重绘。/ Highlight on press; no full-page repaint.
+    if (target >= 110) {
+        paint_sheet_button(ctx, target, true);
+        guard_draw_result(ctx->hl, update_display_area_with(
+            ctx->hl, &E0470_FOLLOW_WAVEFORM, MODE_DU, rect));
+        ++s_quick;
+        s_press_target = target;
+        return APP_REDRAW_NONE;
+    }
     if (target < 100) ui_product_lock_key(ctx->fb, target, true);
     else {
         ui_clear_rect_fast(ctx->fb, rect);
@@ -216,6 +267,7 @@ static app_redraw_t on_touch(app_ctx_t* ctx, const cst836u_touch_t* touch) {
 
 static int target_hit(int target, uint16_t x, uint16_t y) {
     if (target == 200) return ui_rect_hit(ui_product_back_rect(), x, y);
+    if (target >= 110) return sheet_target(ui_confirm_sheet_hit(x, y)) == target;
     if (target >= 100) return target < 103 && ui_rect_hit(choice_target_rect(target), x, y);
     return ui_product_lock_keypad_hit(x, y) == target;
 }
@@ -230,7 +282,12 @@ static app_redraw_t on_tick(app_ctx_t* ctx) {
         if (!target_hit(s_press_target, x, y)) {
             int held = s_press_target;
             s_press_target = -1;
-            if (held < 100) {
+            if (held >= 110) {
+                paint_sheet_button(ctx, held, false);
+                guard_draw_result(ctx->hl, update_display_area_with(
+                    ctx->hl, &E0470_FOLLOW_WAVEFORM, MODE_DU, ui_sheet_confirm_button(held == 111)));
+                ++s_quick;
+            } else if (held < 100) {
                 ui_product_lock_key(ctx->fb, held, false);
                 guard_draw_result(ctx->hl, update_display_area_with(
                     ctx->hl, &E0470_FOLLOW_WAVEFORM, MODE_DU, ui_product_lock_key_rect(held)));
@@ -255,6 +312,14 @@ static app_redraw_t on_tick(app_ctx_t* ctx) {
     if (target == 200) {
         back_to_sleep(ctx);
         return APP_REDRAW_NONE;
+    }
+    if (target == 110) {
+        s_confirm_clear = false;
+        return APP_REDRAW_PAGE;
+    }
+    if (target == 111) {
+        clear_pin_confirmed(ctx);
+        return ctx->request_app ? APP_REDRAW_NONE : APP_REDRAW_PAGE;
     }
     if (target >= 100) {
         choice_action(ctx, target - 100);

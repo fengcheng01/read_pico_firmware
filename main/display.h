@@ -14,6 +14,7 @@
 #include "epd_highlevel.h"
 #include "epdiy.h"
 #include "read_pico_epd_timing.h"
+#include "display_reader_modes.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -51,6 +52,11 @@ enum EpdDrawError update_display_from_white_with(
 /// 下一次导航整页用厂家GC16清理一次，夜间先物理清白；成功消费，失败保留，不用于按钮或普通翻页。
 /// Arm one vendor GC16 cleaning at the next whole-page navigation, physically clearing first for night; consume on success, retain on failure, never arm for controls or ordinary turns.
 void display_request_navigation_settle(void);
+
+/// 日间实际翻页统一出口；按用户周期一次GC16清理，成功才累计，控件不得调用。
+/// Day body-turn entry with one GC16 at the user interval; count success only, never call for controls.
+enum EpdDrawError update_display_reader_turn(EpdiyHighlevelState* hl, display_reader_mode_t mode,
+                                            EpdRect area, bool forward);
 /// 把前缓冲铺白再 GC16 全刷，物理屏回到白底。
 /// Paint the front buffer white and GC16 the panel back to white.
 enum EpdDrawError update_display_white(EpdiyHighlevelState* hl);
@@ -64,24 +70,37 @@ enum EpdDrawError update_display_with(
 /// 标准正文：日间厂家GL16不计周期；夜间保持，与直刷共计成功翻页，按gc_every清理（0关）。
 /// Standard body: vendor GL16 by day without counting; night holds and shares successful-turn gc_every cleaning with direct (0 disables).
 enum EpdDrawError update_display_text_turn(EpdiyHighlevelState* hl, bool white_on_black);
+/// 错相揭页动画（实验）：整页一次差分、16条带一拍一带，每像素完整 GL16 相位；仅日间标准正文调用，
+/// 未知基准、入口补偿或扫描失败内部回退 update_display_text_turn；成功翻页计入 gc_every 周期。
+/// Staggered page-turn animation (experimental): one whole-page difference, 16 bands one per tick, full GL16
+/// phases per pixel; day standard bodies only. Unknown baselines, entry compensation or scan failures fall back
+/// to update_display_text_turn internally; successful turns count toward the gc_every cycle.
+enum EpdDrawError update_display_page_turn(EpdiyHighlevelState* hl, EpdRect area, bool forward);
 /// 厂家黑白DU直刷，实际二值目标和真实旧灰参考；日间不计周期，夜间与标准共计成功翻页。
 /// Vendor black/white DU with actual binary targets and real prior grays; day never counts, night shares successful turns with standard.
 enum EpdDrawError update_display_text_direct(EpdiyHighlevelState* hl, bool white_on_black);
-/// 灰缘直刷保留目标灰码，端点使用厂家DU、灰边使用厂家灰阶迁移；日间不计周期，夜间按原正文周期清理。
-/// Gray-edge direct retains target gray codes with vendor DU endpoints and vendor gray transitions; day skips counting and night keeps existing body cleanup intervals.
+/// 保留21相灰缘与真实目标灰码；不加补刷，产品正文周期由reader出口统一计数。
+/// Retain21-phase gray edges and actual target codes without extra scans; the reader wrapper owns product turn intervals.
 enum EpdDrawError update_display_text_gray_direct(EpdiyHighlevelState* hl, bool white_on_black);
+/// 夜间正文出口共用的动作语义；名称沿自已移除的Crossmux对照。/ Shared action semantics for night body exits; the name predates the removed Crossmux comparison.
 typedef enum {
-    DISPLAY_CROSSMUX_TURN, ///< 夜间正文翻页，计入保存周期 / Night body turn counted toward the saved interval
-    DISPLAY_CROSSMUX_ENTRY, ///< 反色或布局入口，单次GL并重置周期 / Inversion or layout entry with one GL and a reset interval
-    DISPLAY_CROSSMUX_CLEAN, ///< 手动单次GC，不先物理清白 / Manual single GC without a preliminary physical clear
-    DISPLAY_CROSSMUX_REDRAW, ///< 同布局重绘，不计翻页 / Same-layout redraw excluded from turn counting
-} display_crossmux_action_t;
+    DISPLAY_NIGHT_TURN, ///< 夜间正文翻页，计入保存周期 / Night body turn counted toward the saved interval
+    DISPLAY_NIGHT_ENTRY, ///< 反色或布局入口，单次GL并重置周期 / Inversion or layout entry with one GL and a reset interval
+    DISPLAY_NIGHT_CLEAN, ///< 手动单次GC，不先物理清白 / Manual single GC without a preliminary physical clear
+    DISPLAY_NIGHT_REDRAW, ///< 同布局重绘，不计翻页 / Same-layout redraw excluded from turn counting
+} display_night_action_t;
+
 /// 可选夜间白重画：入口、手动或到期保留三轮物理清白，再从真实白参考单次厂家GL灰阶或DU二值写回；普通翻页保持原迁移。
 /// Optional night white repaint: entry, manual or due cleaning retains three physical-white-clear rounds, then one vendor GL gray or DU binary repaint from actual white; ordinary turns retain existing transitions.
 /// 灰缘仅在直刷启用时保灰；失败后的未知参考仍用原完整GC恢复，成功清理才重置计数。
 /// Gray edges retain grays only with direct enabled; unknown references after failures keep original full-GC recovery, and only successful cleaning resets counters.
+/// 夜间白预驱开关开时，上述三档普通夜间翻页换预驱表（15→0厂家对角线剂量先白后黑；EE保持码走14→14行W2微洗，
+/// 非纯黑未变像素经保持掩码走15→15保持行不受洗）；日间与清理路径不变。
+/// With the night white pre-drive switch on, those three ordinary night profiles swap to pre-drive tables (15→0 at the vendor
+/// diagonal dose, white then black; the EE hold code enters the 14→14 row's W2 wash, while unchanged non-pure-black pixels
+/// route through the hold mask into the 15→15 hold row and out of the wash); day and cleaning paths stay unchanged.
 enum EpdDrawError update_display_night_white_repaint(
-    EpdiyHighlevelState* hl, display_crossmux_action_t action, bool direct, bool gray_direct
+    EpdiyHighlevelState* hl, display_night_action_t action, bool direct, bool gray_direct
 );
 
 /// 灰阶图还在屏上时置位：菜单盖上来或离页先刷白，避免从中间灰差分。

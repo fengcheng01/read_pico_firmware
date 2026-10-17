@@ -9,9 +9,11 @@
  * Frozen: User-requested long-run drift repair uses saved WiFi for at most 30 seconds, retries failures after an hour and disconnects on unlock.
  * 修订：静态浅睡锁屏也按维护期限唤醒，保持原画面；失败原因由时间页读取缓存。
  * Revision: Static light-sleep faces wake at maintenance deadlines without repainting; the time page reads cached failure reasons.
+ * 冻结修订：网络分配前确认蓝牙已释放。/ Frozen revision: Confirm BLE release before network allocation.
  */
 #include "os_time.h"
 #include "settings.h"
+#include "os_page_turner.h"
 #include "read_pico_transfer.h"
 
 static bool s_active, s_claimed;
@@ -40,9 +42,17 @@ bool os_time_lock_sync_tick(int64_t now_ms) {
     if (!s_active) {
         if (now_ms < s_retry_ms || !os_time_maintenance_due(now_ms)) return false;
         s_retry_ms = now_ms + 3600000;
+        if (!os_page_turner_pause()) { os_time_report_lock_sync(OS_TIME_LOCK_SYNC_BUSY); return false; }
         char ssid[33]; bool configured = false;
         read_pico_transfer_status_t status;
         read_pico_transfer_get_status(&status);
+        if (status.state == READ_PICO_TRANSFER_ERROR) {
+            // 停止失败留下的残留先重试一次停止：夜间每小时维护足以自愈，不让BUSY永久占住。
+            // Retry the stop once for residue from a failed teardown: the hourly night
+            // maintenance then self-heals instead of reporting BUSY forever.
+            read_pico_transfer_stop();
+            read_pico_transfer_get_status(&status);
+        }
         if (status.state != READ_PICO_TRANSFER_STOPPED) {
             os_time_report_lock_sync(OS_TIME_LOCK_SYNC_BUSY); return false;
         }

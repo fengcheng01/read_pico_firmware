@@ -46,6 +46,15 @@ bool book_image_decode(const uint8_t* data, size_t size, size_t budget,
     *width = *height = 4; *out = malloc(16); assert(*out);
     memcpy(*out, data, 16); return true;
 }
+
+// 封面缩放宿主替身：管线测试不校验像素质量。/ Host stand-in: the pipeline test
+// does not verify pixel quality.
+void book_image_resample(const uint8_t* src, unsigned stride, unsigned sw, unsigned sh,
+                         uint8_t* dst, unsigned dw, unsigned dh) {
+    for (unsigned y = 0; y < dh; ++y)
+        for (unsigned x = 0; x < dw; ++x)
+            dst[(size_t)y * dw + x] = src[(size_t)(y * sh / dh) * stride + x * sw / dw];
+}
 static void write_file(const char* path, const void* data, size_t size) {
     FILE* file = fopen(path, "wb"); assert(file);
     assert(fwrite(data, 1, size, file) == size); assert(fclose(file) == 0);

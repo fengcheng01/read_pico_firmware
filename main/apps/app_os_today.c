@@ -12,6 +12,10 @@
  * 冻结：不伪造时间、任务或阅读数字；真实反映打卡天数与分钟；render 只绘图。
  * Frozen: Never invent time, tasks or reading numbers; reflect real streak and
  * minutes from actual storage; render only paints.
+ * 第三批修订：图表标明真实日期和分钟，未校时或加载不冒充零；最近阅读不冒充今日足迹，不设虚构阅读目标。
+ * Batch-three revision: Charts label real dates/minutes, invalid time/loading never masquerade as zero; recent reading is not a dated footprint and no goal is invented.
+ * 用户修订：月历说明不响应开书；提供可取消、保存失败保原值的每日目标，不改历史阅读记录。
+ * User revision: Calendar notes never open books; offer cancellable daily goals with failure-safe saves, retaining historical reading records.
  * 冻结：用户拒绝Tab黑闪；根页保留厂家GL16迁移，布局入口补偿一次白底，不强制GC16进页。
  * Frozen: User rejects flashing Tabs; roots retain vendor GL16 migrations with one white entry compensation and no forced GC16 entries.
  */
@@ -26,6 +30,8 @@
 #include "os_time.h"
 #include "ui_gesture.h"
 #include "ui_product.h"
+#include "ui_press.h"
+#include "settings.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -39,17 +45,64 @@ static journal_tab_t s_active_tab = JOURNAL_TAB_TODAY;
 static bool s_started, s_loading;
 static unsigned s_revision;
 static int64_t s_probe_ms;
-static int s_drawn_minute = -1;
+// 已上屏的日期键：只在跨日（统计与月历真正变化）时重绘，分钟跳变不再整页闪。
+// / The drawn date key: repaint only when the day flips (when stats and the calendar truly change); minute flips no longer flash the page.
+static uint32_t s_drawn_day;
+static ui_press_t s_press;
+static bool pressed_id(int id) { return ui_press_active(&s_press) && s_press.id == id; }
 static book_quote_t s_quotes[BOOK_QUOTES_MAX];
 static size_t s_quote_count;
 static unsigned s_quote_page, s_quote_revision;
 static const char* s_quote_error;
+static bool s_goal_open, s_goal_error;
+static unsigned s_goal_candidate;
+static const unsigned s_goal_presets[] = {0, 15, 30, 45, 60, 90};
+static EpdRect goal_entry_rect(void) { return (EpdRect){UI_MARGIN, 1018, ui_content_width(), 64}; }
+static EpdRect goal_control_rect(int id) {
+    if (id >= 100 && id < 106) return ui_grid_rect((id - 100) % 3, 3, (id - 100) / 3, 550, 64);
+    if (id == 106 || id == 107) return (EpdRect){id == 106 ? UI_MARGIN + 16 : ui_content_right() - 140, 730, 124, 70};
+    return ui_row_rect(id - 108, 2, 910, 72);
+}
+static void draw_goal(uint8_t* fb) {
+    EpdRect panel = {UI_MARGIN - 12, 314, ui_content_width() + 24, 692};
+    ui_fill_round_rect(fb, panel, UI_BTN_RADIUS, UI_GRAY_WHITE);
+    ui_draw_round_rect(fb, panel, UI_BTN_RADIUS, UI_GRAY_BLACK);
+    ui_text(fb, UI_MARGIN + 16, 340, 36, "每日阅读目标", EPD_DRAW_ALIGN_LEFT, false);
+    char value[40];
+    if (s_goal_candidate) snprintf(value, sizeof(value), "%u 分钟", s_goal_candidate);
+    else snprintf(value, sizeof(value), "未设置");
+    ui_text_vc(fb, UI_LOCK_WIDTH / 2, 460, 60, value, EPD_DRAW_ALIGN_CENTER, false);
+    for (int i = 0; i < 6; ++i) {
+        char label[24];
+        if (s_goal_presets[i]) snprintf(label, sizeof(label), "%u 分钟", s_goal_presets[i]);
+        else snprintf(label, sizeof(label), "不设置");
+        ui_draw_button(fb, goal_control_rect(100 + i), label, s_goal_candidate == s_goal_presets[i]);
+    }
+    ui_draw_button(fb, goal_control_rect(106), "−", false);
+    ui_draw_button(fb, goal_control_rect(107), "+", false);
+    ui_text_vc(fb, UI_LOCK_WIDTH / 2, 765, 24, "每次 5 分钟", EPD_DRAW_ALIGN_CENTER, false);
+    ui_product_title(fb, (EpdRect){UI_MARGIN + 16, 824, ui_content_width() - 32, 70},
+        s_goal_error ? "保存失败，原目标未改变。请重试。" : "目标用于今日完成情况；月历仍记录有阅读的日期。", 24, 2);
+    ui_draw_button(fb, goal_control_rect(108), "取消", false);
+    ui_draw_button(fb, goal_control_rect(109), "保存目标", true);
+}
 static void quotes_reload(void) {
     s_quote_count = book_quotes_list(s_quotes, BOOK_QUOTES_MAX);
     s_quote_revision = book_quotes_revision();
     if (s_quote_page * 3 >= s_quote_count) s_quote_page = 0;
 }
 static EpdRect quote_nav(int i) { return (EpdRect){UI_MARGIN + i * 430, 834, 174, 66}; }
+// 底部动作按钮与三个子页共用几何。/ The bottom action button is shared by all three tabs.
+static EpdRect action_rect(void) { return (EpdRect){UI_MARGIN, 920, ui_content_width(), 84}; }
+// 仅最近阅读卡开书；月历说明是纯信息。/ Only the recent-reading card opens a book; calendar notes are informational.
+static EpdRect footprint_rect(void) { return (EpdRect){UI_MARGIN, 722, ui_content_width(), 160}; }
+// 子标签条三等分。/ The subnav strip split in three.
+static EpdRect tab_rect(int t) {
+    int width = ui_content_width();
+    int tab_w = width / 3;
+    int tw = (t == 2) ? (width - 2 * tab_w) : tab_w;
+    return (EpdRect){UI_MARGIN + t * tab_w, 294, tw, 46};
+}
 
 
 static void format_minutes(unsigned long minutes, char* out, size_t cap) {
@@ -69,10 +122,13 @@ static unsigned compute_streak(uint32_t today) {
 }
 
 static void on_enter(app_ctx_t* ctx) {
+    s_goal_open = s_goal_error = false;
     quotes_reload(); s_quote_error = NULL;
     s_started = book_home_cached();
     s_loading = !s_started;
-    s_drawn_minute = -1;
+    uint32_t day = 0;
+    s_drawn_day = os_time_date_key(&day) ? day : 0;
+    ui_press_reset(&s_press);
     s_revision = book_store_revision();
     s_probe_ms = ctx->now_ms;
     if (s_loading && !book_home_snapshot()->complete) os_storage_probe();
@@ -129,25 +185,24 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
     ui_draw_round_rect(fb, stamp, 6, UI_GRAY_BLACK);
     ui_text_vc(fb, stamp.x + stamp.width / 2, stamp.y + 18, 18, "READING STREAK", EPD_DRAW_ALIGN_CENTER, false);
     char streak_val[24];
-    snprintf(streak_val, sizeof(streak_val), "%u DAYS", streak);
+    if (date_valid) snprintf(streak_val, sizeof(streak_val), "%u DAYS", streak);
+    else snprintf(streak_val, sizeof(streak_val), "— DAYS");
     ui_text_vc(fb, stamp.x + stamp.width / 2, stamp.y + 44, 26, streak_val, EPD_DRAW_ALIGN_CENTER, false);
 
-    // 2. 子标签切换条 (3 Subnav Tabs: 今日手记 / 打卡月历 / 金句便签)
+    // 2. 子标签切换条 (3 Subnav Tabs: 今日概览 / 打卡月历 / 金句便签)
     EpdRect subnav = {UI_MARGIN, 294, ui_content_width(), 46};
     ui_draw_round_rect(fb, subnav, 6, UI_GRAY_BLACK);
-    int tab_w = subnav.width / 3;
-    static const char* tab_names[] = {"今日手记", "打卡月历", "金句便签"};
+    static const char* tab_names[] = {"今日概览", "打卡月历", "金句便签"};
     for (int t = 0; t < 3; ++t) {
-        int tx = subnav.x + t * tab_w;
-        int tw = (t == 2) ? (subnav.width - 2 * tab_w) : tab_w;
-        EpdRect tr = {tx, subnav.y, tw, subnav.height};
+        EpdRect tr = tab_rect(t);
+        if (pressed_id(t)) ui_draw_pressed_round_rect(fb, tr, 6);
         if (s_active_tab == (journal_tab_t)t) {
             ui_fill_round_rect(fb, tr, 6, UI_GRAY_BLACK);
-            ui_text_vc(fb, tx + tw / 2, tr.y + tr.height / 2, 30, tab_names[t], EPD_DRAW_ALIGN_CENTER, true);
+            ui_text_vc(fb, tr.x + tr.width / 2, tr.y + tr.height / 2, 30, tab_names[t], EPD_DRAW_ALIGN_CENTER, true);
         } else {
-            ui_text_vc(fb, tx + tw / 2, tr.y + tr.height / 2, 30, tab_names[t], EPD_DRAW_ALIGN_CENTER, false);
+            ui_text_vc(fb, tr.x + tr.width / 2, tr.y + tr.height / 2, 30, tab_names[t], EPD_DRAW_ALIGN_CENTER, false);
         }
-        if (t > 0) epd_fill_rect((EpdRect){tx, subnav.y, 1, subnav.height}, UI_GRAY_BLACK, fb);
+        if (t > 0) epd_fill_rect((EpdRect){tr.x, subnav.y, 1, subnav.height}, UI_GRAY_BLACK, fb);
     }
 
     // 3. 子页面内容展示 (Sub-view Content)
@@ -167,7 +222,8 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
         ui_draw_round_rect(fb, c2, UI_CHIP_RADIUS, UI_GRAY_BLACK);
         ui_draw_round_rect(fb, c3, UI_CHIP_RADIUS, UI_GRAY_BLACK);
 
-        char val0[48] = "0 分钟", val1[48] = "0 分钟";
+        char val0[48] = "未校时", val1[48] = "未校时";
+        if (s_loading && date_valid) { strcpy(val0, "加载中…"); strcpy(val1, "加载中…"); }
         uint16_t today_m = 0;
         if (!s_loading && date_valid) {
             today_m = book_stats_minutes(today_key);
@@ -175,62 +231,60 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
             format_minutes((unsigned long)book_stats_total_minutes(os_time_date_shift(today_key, -6), today_key), val1, sizeof(val1));
         }
 
-        ui_text(fb, c0.x + 12, c0.y + 8, 24, "今日阅读 (目标 60m)", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, c0.x + 12, c0.y + 8, 24, "今日阅读", EPD_DRAW_ALIGN_LEFT, false);
         ui_product_title(fb, (EpdRect){c0.x + 12, c0.y + 36, c0.width - 24, 42}, val0, 34, 1);
 
         ui_text(fb, c1.x + 12, c1.y + 8, 24, "近 7 天累计阅读", EPD_DRAW_ALIGN_LEFT, false);
         ui_product_title(fb, (EpdRect){c1.x + 12, c1.y + 36, c1.width - 24, 42}, val1, 34, 1);
 
-        char val2[32];
-        snprintf(val2, sizeof(val2), "%lu 本", (unsigned long)data->book_count);
-        ui_text(fb, c2.x + 12, c2.y + 8, 24, "在本书架", EPD_DRAW_ALIGN_LEFT, false);
-        ui_product_title(fb, (EpdRect){c2.x + 12, c2.y + 36, c2.width - 24, 42}, val2, 34, 1);
-
-        char val3[32] = "未开始";
-        if (data->current.path[0] && data->current.has_progress) {
-            snprintf(val3, sizeof(val3), "%u%%", data->current.percent);
+        char val2[32] = "未校时";
+        if (s_loading && date_valid) snprintf(val2, sizeof(val2), "加载中…");
+        else if (date_valid) {
+            unsigned active_days = 0;
+            for (int d = 0; d < BOOK_STATS_KEEP_DAYS; ++d)
+                if (book_stats_minutes(os_time_date_shift(today_key, -d))) ++active_days;
+            snprintf(val2, sizeof(val2), "%u 天", active_days);
         }
-        ui_text(fb, c3.x + 12, c3.y + 8, 24, "当前进度", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, c2.x + 12, c2.y + 8, 24, "近 30 天有阅读记录", EPD_DRAW_ALIGN_LEFT, false);
+        ui_product_title(fb, (EpdRect){c2.x + 12, c2.y + 36, c2.width - 24, 42}, val2, 34, 1);
+        char val3[32]; snprintf(val3, sizeof(val3), "%u 条", (unsigned)s_quote_count);
+        ui_text(fb, c3.x + 12, c3.y + 8, 24, "已保存摘录", EPD_DRAW_ALIGN_LEFT, false);
         ui_product_title(fb, (EpdRect){c3.x + 12, c3.y + 36, c3.width - 24, 42}, val3, 34, 1);
 
-        // 7 日极简走势直方图 (7-Day Trend Chart)
+        // 七日柱状图以本窗口最大分钟数缩放，每柱标出实际分钟与日期。
+        // Scale seven-day bars to the window maximum, labeling each actual minute count and date.
         ui_hairline(fb, 516, UI_MARGIN, ui_content_width(), UI_GRAY_LIGHT);
-        ui_text(fb, UI_MARGIN, 524, 28, "近 7 天阅读时长走势", EPD_DRAW_ALIGN_LEFT, false);
-
-        int chart_y_base = 636;
-        int chart_max_h = 68;
-        int col_w = 40;
-        int col_gap = (ui_content_width() - 7 * col_w) / 6;
-        static const char* day_names[] = {"日", "一", "二", "三", "四", "五", "六"};
-
-        for (int i = 0; i < 7; ++i) {
-            int x = UI_MARGIN + i * (col_w + col_gap);
-            uint32_t d = date_valid ? os_time_date_shift(today_key, i - 6) : 0;
-            uint16_t m = date_valid ? book_stats_minutes(d) : 0;
-            int bar_h = m > 0 ? (int)(m * chart_max_h / 60) : 0;
-            if (bar_h > chart_max_h) bar_h = chart_max_h;
-            if (m > 0 && bar_h < 4) bar_h = 4;
-
-            if (bar_h > 0) {
-                EpdRect bar_rect = {x, chart_y_base - bar_h, col_w, bar_h};
-                if (i == 6) {
-                    epd_fill_rect(bar_rect, UI_GRAY_BLACK, fb);
-                } else {
-                    epd_fill_rect(bar_rect, UI_GRAY_LIGHT, fb);
-                    epd_draw_rect(bar_rect, UI_GRAY_BLACK, fb);
-                }
+        ui_text(fb, UI_MARGIN, 524, 26, "近 7 天阅读 · 分钟", EPD_DRAW_ALIGN_LEFT, false);
+        if (date_valid && !s_loading) {
+            uint16_t minutes[7]; unsigned maximum = 0;
+            for (int i = 0; i < 7; ++i) {
+                minutes[i] = book_stats_minutes(os_time_date_shift(today_key, i - 6));
+                if (minutes[i] > maximum) maximum = minutes[i];
             }
-            int wday = date_valid ? (int)((os_time_info()->weekday + 70 - (6 - i)) % 7) : (i % 7);
-            ui_text_vc(fb, x + col_w / 2, chart_y_base + 20, 26, (i == 6) ? "今" : day_names[wday],
-                       EPD_DRAW_ALIGN_CENTER, false);
-        }
-        ui_hairline(fb, chart_y_base + 2, UI_MARGIN, ui_content_width(), UI_GRAY_BLACK);
+            char scale[40]; snprintf(scale, sizeof(scale), "最高 %u 分", maximum);
+            ui_text(fb, ui_content_right(), 528, 20, scale, EPD_DRAW_ALIGN_RIGHT, false);
+            int step = ui_content_width() / 7, base = 640;
+            for (int i = 0; i < 7; ++i) {
+                int x = UI_MARGIN + i * step + (step - 36) / 2;
+                int height = maximum ? (int)((unsigned)minutes[i] * 52 / maximum) : 0;
+                if (minutes[i] && height < 3) height = 3;
+                if (height) epd_fill_rect((EpdRect){x, base - height, 36, height}, i == 6 ? UI_GRAY_BLACK : UI_GRAY_LIGHT, fb);
+                char value[12]; snprintf(value, sizeof(value), "%u", minutes[i]);
+                ui_text(fb, x + 18, base - height - 26, 20, value, EPD_DRAW_ALIGN_CENTER, false);
+                uint32_t date = os_time_date_shift(today_key, i - 6);
+                char day[24]; snprintf(day, sizeof(day), "%u/%u%s", (unsigned)(date / 100 % 100), (unsigned)(date % 100), i == 6 ? "今" : "");
+                ui_text(fb, x + 18, 650, 20, day, EPD_DRAW_ALIGN_CENTER, false);
+            }
+            ui_hairline(fb, base + 2, UI_MARGIN, ui_content_width(), UI_GRAY_BLACK);
+        } else ui_product_title(fb, (EpdRect){UI_MARGIN, 580, ui_content_width(), 80},
+                    date_valid ? "统计加载中…" : "时间未校时，暂不归日统计", 28, 2);
 
-        // 今日阅读足迹卡片 (Reading Footprint Card: covers 320, 760)
+        // 最近书目沿用持久阅读顺序，不推断今日阅读书目。/ Recent books follow persisted order without inferring today's titles.
         ui_hairline(fb, 680, UI_MARGIN, ui_content_width(), UI_GRAY_LIGHT);
-        ui_text(fb, UI_MARGIN, 688, 28, "今日阅读足迹", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, UI_MARGIN, 688, 28, "最近阅读 · 点击继续", EPD_DRAW_ALIGN_LEFT, false);
 
-        EpdRect session_card = {UI_MARGIN, 722, ui_content_width(), 160};
+        EpdRect session_card = footprint_rect();
+        if (pressed_id(4)) ui_draw_pressed_round_rect(fb, session_card, UI_CHIP_RADIUS);
         ui_draw_round_rect(fb, session_card, UI_CHIP_RADIUS, UI_GRAY_BLACK);
 
         if (!s_loading && data->current.path[0]) {
@@ -257,15 +311,21 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
         }
 
         // 底部动作按钮 (Action Button)
-        EpdRect btn_rect = {UI_MARGIN, 920, ui_content_width(), 84};
-        ui_draw_button(fb, btn_rect, !s_loading && data->current.path[0] ? "继续阅读" : "打开书架", true);
+        if (pressed_id(3)) ui_draw_pressed_round_rect(fb, action_rect(), UI_BTN_RADIUS);
+        ui_draw_button(fb, action_rect(), !s_loading && data->current.path[0] ? "继续阅读" : "打开书架", true);
     } else if (s_active_tab == JOURNAL_TAB_MONTH) {
         // [子模块 B: 打卡月历]
         EpdRect month_card = {UI_MARGIN, 352, ui_content_width(), 550};
         ui_draw_round_rect(fb, month_card, UI_CHIP_RADIUS, UI_GRAY_BLACK);
 
-        uint16_t yr = date_valid ? info->year : 2026;
-        uint8_t mo = date_valid ? info->month : 10;
+        if (!date_valid) {
+            ui_text(fb, UI_MARGIN + 24, 396, 36, "时间未校时", EPD_DRAW_ALIGN_LEFT, false);
+            ui_product_title(fb, (EpdRect){UI_MARGIN + 24, 468, ui_content_width() - 48, 160},
+                             "连接已有 WiFi 完成校时后，再查看真实日期与阅读月历。", 30, 3);
+            ui_product_title(fb, (EpdRect){UI_MARGIN, 932, ui_content_width(), 64}, "当前不显示日期和打卡记录", 26, 1);
+        } else {
+        uint16_t yr = info->year;
+        uint8_t mo = info->month;
         uint8_t today_d = date_valid ? info->day : 0;
 
         static const uint8_t k_days_in_month[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
@@ -328,37 +388,58 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
             }
         }
 
-        EpdRect note_card = {UI_MARGIN, 920, ui_content_width(), 84};
-        ui_draw_round_rect(fb, note_card, UI_CHIP_RADIUS, UI_GRAY_BLACK);
-        ui_product_title(fb, (EpdRect){note_card.x + 16, note_card.y + 10, note_card.width - 32, 32}, "实心黑块为有阅读记录的达标日（实心盖印）", 24, 1);
+        // 说明只绘图，不响应点击或按下态。/ The legend paints only, without taps or a press bed.
+        ui_draw_round_rect(fb, action_rect(), UI_CHIP_RADIUS, UI_GRAY_BLACK);
+        ui_product_title(fb, (EpdRect){action_rect().x + 16, action_rect().y + 10, action_rect().width - 32, 32}, "实心：有阅读分钟的日期；外框：今天", 24, 1);
         char streak_note[128];
-        snprintf(streak_note, sizeof(streak_note), "当前已达成连续阅读 %u 天 · 保持每日阅读习惯", streak);
-        ui_product_title(fb, (EpdRect){note_card.x + 16, note_card.y + 46, note_card.width - 32, 32}, streak_note, 24, 1);
+        unsigned goal = app_settings_daily_goal();
+        if (goal) snprintf(streak_note, sizeof(streak_note), "连续有阅读记录 %u 天 · 目标 %u 分钟", streak, goal);
+        else snprintf(streak_note, sizeof(streak_note), "连续有阅读记录 %u 天 · 目标未设置", streak);
+        ui_product_title(fb, (EpdRect){action_rect().x + 16, action_rect().y + 46, action_rect().width - 32, 32}, streak_note, 24, 1);
+        }
     } else if (s_active_tab == JOURNAL_TAB_QUOTES) {
         for (unsigned row=0;row<3;++row) {
             size_t index=s_quote_page*3+row; if(index>=s_quote_count)break;
             const book_quote_t* q=&s_quotes[index];
             EpdRect qr={UI_MARGIN,352+(int)row*154,ui_content_width(),138};
+            if(pressed_id(10 + (int)row)) ui_draw_pressed_round_rect(fb, qr, UI_CHIP_RADIUS);
             ui_draw_round_rect(fb,qr,UI_CHIP_RADIUS,UI_GRAY_BLACK);
             epd_fill_rect((EpdRect){qr.x,qr.y+4,6,qr.height-8},UI_GRAY_BLACK,fb);
             ui_product_title(fb,(EpdRect){qr.x+20,qr.y+14,qr.width-40,80},q->text,32,2);
             const char* name=strrchr(q->path,'/');name=name?name+1:q->path;
-            char source[320];snprintf(source,sizeof(source),"《%s》· 第 %u 节 · %u%%",name,(unsigned)q->chapter+1,q->pct);
+            // 有章节名快照显示章节，旧记录回退“第 N 节”。/ Prefer the saved chapter title; legacy records fall back to the ordinal.
+            char source[320];
+            if(q->chapter_title[0]) snprintf(source,sizeof(source),"《%s》· %s · %u%%",name,q->chapter_title,q->pct);
+            else snprintf(source,sizeof(source),"《%s》· 第 %u 节 · %u%%",name,(unsigned)q->chapter+1,q->pct);
             ui_product_title(fb,(EpdRect){qr.x+20,qr.y+102,qr.width-40,32},source,24,1);
         }
         if(!s_quote_count) ui_product_title(fb,(EpdRect){UI_MARGIN,370,ui_content_width(),130},
             "还没有摘录。阅读时长按想保存的句子，再点击「保存摘录」。",30,3);
-        if(s_quote_page)ui_draw_button(fb,quote_nav(0),"上一页",false);
-        if((s_quote_page+1)*3<s_quote_count)ui_draw_button(fb,quote_nav(1),"下一页",false);
+        // 说明放在卡片列表与翻页行之间的空带：共用按钮(920)与每日目标行(1018)不再与文字重叠。
+        // The note sits in the band between the card list and the nav row, clear of the shared button (920) and the goal row (1018).
+        ui_product_title(fb,(EpdRect){UI_MARGIN,804,ui_content_width(),30},
+            s_quote_error?s_quote_error:"金句保存原文与位置；书签继续在阅读目录中管理。",24,1);
+        if(s_quote_page){ if(pressed_id(6)) ui_draw_pressed_round_rect(fb, quote_nav(0), UI_BTN_RADIUS); ui_draw_button(fb,quote_nav(0),"上一页",false); }
+        if((s_quote_page+1)*3<s_quote_count){ if(pressed_id(7)) ui_draw_pressed_round_rect(fb, quote_nav(1), UI_BTN_RADIUS); ui_draw_button(fb,quote_nav(1),"下一页",false); }
         ui_product_title(fb,(EpdRect){UI_MARGIN+190,850,224,36},"点击摘录回到原文",24,1);
-        ui_product_title(fb,(EpdRect){UI_MARGIN,1014,ui_content_width(),68},
-            s_quote_error?s_quote_error:"金句保存原文与位置；书签继续在阅读目录中管理。",24,2);
 
-        EpdRect btn_rect = {UI_MARGIN, 920, ui_content_width(), 84};
-        ui_draw_button(fb, btn_rect, !s_loading && data->current.path[0] ? "打开正在读书籍" : "打开书架", true);
+        if (pressed_id(3)) ui_draw_pressed_round_rect(fb, action_rect(), UI_BTN_RADIUS);
+        ui_draw_button(fb, action_rect(), !s_loading && data->current.path[0] ? "打开正在读书籍" : "打开书架", true);
     }
 
+    EpdRect goal_row = goal_entry_rect();
+    if (pressed_id(8)) ui_draw_pressed_round_rect(fb, goal_row, UI_BTN_RADIUS);
+    ui_draw_round_rect(fb, goal_row, UI_BTN_RADIUS, UI_GRAY_BLACK);
+    char goal_note[128]; unsigned goal = app_settings_daily_goal();
+    if (!goal) snprintf(goal_note, sizeof(goal_note), "每日目标：未设置 · 点击设置 ›");
+    else if (!date_valid || s_loading) snprintf(goal_note, sizeof(goal_note), "每日目标 %u 分钟 · %s ›", goal, date_valid ? "加载中" : "未校时");
+    else {
+        unsigned actual = book_stats_minutes(today_key);
+        snprintf(goal_note, sizeof(goal_note), "每日目标 %u 分钟 · 今日 %u/%u%s ›", goal, actual, goal, actual >= goal ? " 已达标" : "");
+    }
+    ui_product_title(fb, (EpdRect){goal_row.x + 16, goal_row.y + 14, goal_row.width - 32, 40}, goal_note, 26, 1);
     ui_product_root_bar(fb, OS_APP_TODAY);
+    if (s_goal_open) draw_goal(fb);
 }
 
 static app_redraw_t navigate(app_ctx_t* ctx, os_app_id_t id, const char* path) {
@@ -371,73 +452,99 @@ static app_redraw_t navigate(app_ctx_t* ctx, os_app_id_t id, const char* path) {
     return APP_REDRAW_NONE;
 }
 
-static app_redraw_t gesture(app_ctx_t* ctx, const ui_gesture_event_t* ev) {
-    if (ui_product_root_press(ctx, ev)) return APP_REDRAW_NONE;
-    if (ev->type != UI_GESTURE_TAP) return APP_REDRAW_NONE;
-    os_app_id_t id = ui_product_root_hit(ev->x0, ev->y0);
-    if (id != OS_APP_NONE && id != OS_APP_TODAY && id == ui_product_root_hit(ev->x, ev->y)) {
-        return navigate(ctx, id, NULL);
-    }
-
-    // 子标签栏点击 (Subnav Tab Switcher: y = 290..348)
-    if (ev->y0 >= 290 && ev->y0 <= 348 && ev->y >= 290 && ev->y <= 348) {
-        int tab_w = ui_content_width() / 3;
-        int t = (ev->x0 - UI_MARGIN) / tab_w;
-        if (t < 0) t = 0;
-        if (t > 2) t = 2;
-        if (s_active_tab != (journal_tab_t)t) {
-            s_active_tab = (journal_tab_t)t;
-            return APP_REDRAW_PAGE;
+// 仅命中实际动作；月历说明不借用开书触区。/ Hit actual actions only; calendar notes never borrow book-opening targets.
+static int control_at(uint16_t x, uint16_t y, EpdRect* rect) {
+    if (s_goal_open) {
+        for (int i = 100; i < 110; ++i) if (ui_rect_hit(goal_control_rect(i), x, y)) {
+            if (rect) *rect = goal_control_rect(i);
+            return i;
         }
-        return APP_REDRAW_NONE;
+        return -1;
     }
+    if (ui_rect_hit(goal_entry_rect(), x, y)) { if (rect) *rect = goal_entry_rect(); return 8; }
+    for (int t = 0; t < 3; ++t)
+        if (ui_rect_hit(tab_rect(t), x, y)) { if (rect) *rect = tab_rect(t); return t; }
+    if (s_active_tab == JOURNAL_TAB_TODAY) {
+        if (ui_rect_hit(footprint_rect(), x, y)) { if (rect) *rect = footprint_rect(); return 4; }
+        if (ui_rect_hit(action_rect(), x, y)) { if (rect) *rect = action_rect(); return 3; }
+    } else if (s_active_tab == JOURNAL_TAB_QUOTES) {
+        for (unsigned row = 0; row < 3 && s_quote_page * 3 + row < s_quote_count; ++row) {
+            EpdRect r = {UI_MARGIN, 352 + (int)row * 154, ui_content_width(), 138};
+            if (ui_rect_hit(r, x, y)) { if (rect) *rect = r; return 10 + (int)row; }
+        }
+        if (s_quote_page && ui_rect_hit(quote_nav(0), x, y)) { if (rect) *rect = quote_nav(0); return 6; }
+        if ((s_quote_page + 1) * 3 < s_quote_count && ui_rect_hit(quote_nav(1), x, y)) {
+            if (rect) *rect = quote_nav(1);
+            return 7;
+        }
+        if (ui_rect_hit(action_rect(), x, y)) { if (rect) *rect = action_rect(); return 3; }
+    }
+    return -1;
+}
 
-    if (s_loading) return APP_REDRAW_NONE;
+static app_redraw_t gesture(app_ctx_t* ctx, const ui_gesture_event_t* ev) {
+    if (!s_goal_open && ui_product_root_press(ctx, ev)) return APP_REDRAW_NONE;
+    EpdRect rect = {0};
+    int id = control_at(ev->x0, ev->y0, &rect);
+    if (ev->type == UI_GESTURE_PRESS)
+        return id >= 0 ? ui_press_begin(ctx, &s_press, id, rect, render) : APP_REDRAW_NONE;
+    if (ev->type != UI_GESTURE_TAP) return ui_press_restore(ctx, &s_press, render);
+    int held = s_press.id;
+    EpdRect held_rect = s_press.rect;
+    ui_press_forget(&s_press);
+    app_redraw_t result = APP_REDRAW_NONE;
+    os_app_id_t root = ui_product_root_hit(ev->x0, ev->y0);
+    if (!s_goal_open && root != OS_APP_NONE && root != OS_APP_TODAY && root == ui_product_root_hit(ev->x, ev->y))
+        return navigate(ctx, root, NULL);
     const book_home_snapshot_t* data = book_home_snapshot();
 
-    if (s_active_tab == JOURNAL_TAB_TODAY) {
-        // 底部动作按钮
-        if (ui_rect_hit((EpdRect){UI_MARGIN, 920, ui_content_width(), 84}, ev->x0, ev->y0) &&
-            ui_rect_hit((EpdRect){UI_MARGIN, 920, ui_content_width(), 84}, ev->x, ev->y)) {
-            return navigate(ctx, OS_APP_LIBRARY, data->current.path[0] ? data->current.path : NULL);
-        }
-        // 今日阅读足迹卡片命中 (覆盖 verify.py 测试坐标 320, 760)
-        if (ui_rect_hit((EpdRect){UI_MARGIN, 722, ui_content_width(), 160}, ev->x0, ev->y0) &&
-            ui_rect_hit((EpdRect){UI_MARGIN, 722, ui_content_width(), 160}, ev->x, ev->y) &&
-            data->current.path[0]) {
-            return navigate(ctx, OS_APP_LIBRARY, data->current.path);
-        }
-    } else if (s_active_tab == JOURNAL_TAB_MONTH) {
-        // 月历页点击底部动作区或卡片打开正在读书籍
-        if (ev->y0 >= 920 && ev->y <= 1004) {
-            return navigate(ctx, OS_APP_LIBRARY, data->current.path[0] ? data->current.path : NULL);
-        }
-    } else if (s_active_tab == JOURNAL_TAB_QUOTES) {
-        for(unsigned row=0;row<3;++row){
-            size_t index=s_quote_page*3+row;if(index>=s_quote_count)break;
-            EpdRect r={UI_MARGIN,352+(int)row*154,ui_content_width(),138};
-            if(ui_rect_hit(r,ev->x0,ev->y0)&&ui_rect_hit(r,ev->x,ev->y)){
-                const book_quote_t* q=&s_quotes[index];
-                if(!book_entry_request_position(q->path,q->chapter,q->byte_off)) {
-                    s_quote_error="原文来源不可用，请检查图书和 TF 卡";return APP_REDRAW_PAGE;
-                }
-                ctx->request_app=app_by_id(OS_APP_LIBRARY);return APP_REDRAW_NONE;
+    if (id >= 0 && id == control_at(ev->x, ev->y, NULL)) {
+        if (id >= 100) {
+            s_goal_error = false;
+            if (id < 106) s_goal_candidate = s_goal_presets[id - 100];
+            else if (id == 106 && s_goal_candidate >= 5) s_goal_candidate -= 5;
+            else if (id == 107 && s_goal_candidate < 360) s_goal_candidate += 5;
+            else if (id == 108) s_goal_open = false;
+            else if (id == 109) {
+                if (app_settings_set_daily_goal(s_goal_candidate)) s_goal_open = false;
+                else s_goal_error = true;
+            }
+            result = APP_REDRAW_PAGE;
+        } else if (id == 8) {
+            s_goal_candidate = app_settings_daily_goal(); s_goal_open = true; s_goal_error = false;
+            result = APP_REDRAW_PAGE;
+        } else if (id < 3) {
+            if (s_active_tab != (journal_tab_t)id) {
+                s_active_tab = (journal_tab_t)id;
+                result = APP_REDRAW_PAGE;
+            }
+        } else if (!s_loading) {
+            if (id == 3) {
+                result = navigate(ctx, OS_APP_LIBRARY, data->current.path[0] ? data->current.path : NULL);
+            } else if (id == 4 && data->current.path[0]) {
+                result = navigate(ctx, OS_APP_LIBRARY, data->current.path);
+            } else if (id >= 10) {
+                const book_quote_t* q = &s_quotes[s_quote_page * 3 + (id - 10)];
+                if (!book_entry_request_position(q->path, q->chapter, q->byte_off)) {
+                    s_quote_error = "原文来源不可用，请检查图书和 TF 卡";
+                    result = APP_REDRAW_PAGE;
+                } else ctx->request_app = app_by_id(OS_APP_LIBRARY);
+            } else if (id == 6 && s_quote_page) {
+                --s_quote_page;
+                result = APP_REDRAW_PAGE;
+            } else if (id == 7 && (s_quote_page + 1) * 3 < s_quote_count) {
+                ++s_quote_page;
+                result = APP_REDRAW_PAGE;
             }
         }
-        for(int i=0;i<2;++i)if(ui_rect_hit(quote_nav(i),ev->x0,ev->y0)&&ui_rect_hit(quote_nav(i),ev->x,ev->y)){
-            if(i==0&&s_quote_page)--s_quote_page;
-            if(i==1&&(s_quote_page+1)*3<s_quote_count)++s_quote_page;
-            return APP_REDRAW_PAGE;
-        }
-        if (ui_rect_hit((EpdRect){UI_MARGIN, 920, ui_content_width(), 84}, ev->x0, ev->y0)) {
-            return navigate(ctx, OS_APP_LIBRARY, data->current.path[0] ? data->current.path : NULL);
-        }
     }
-
-    return APP_REDRAW_NONE;
+    if (result == APP_REDRAW_NONE && held >= 0 && !ctx->request_app && !ctx->request_menu && !ctx->request_return)
+        return ui_press_rewind(ctx, &s_press, held_rect, render);
+    return result;
 }
 
 static app_redraw_t on_tick(app_ctx_t* ctx) {
+    ui_press_settle(ctx, &s_press, ctx->now_ms);
     if (ctx->consumed) return APP_REDRAW_NONE;
     if (s_quote_revision != book_quotes_revision()) { quotes_reload(); return APP_REDRAW_PAGE; }
     if (s_revision != book_store_revision() || (!s_loading && !book_home_cached())) {
@@ -455,11 +562,10 @@ static app_redraw_t on_tick(app_ctx_t* ctx) {
         s_loading = false;
         return APP_REDRAW_PAGE;
     }
-    const os_time_info_t* info = os_time_info();
-    if (info->state == OS_TIME_VALID && info->minute != s_drawn_minute) {
-        s_drawn_minute = info->minute;
-        return APP_REDRAW_PAGE;
-    }
+    os_time_poll(ctx->now_ms);
+    uint32_t day = 0;
+    (void)os_time_date_key(&day);
+    if (day != s_drawn_day) { s_drawn_day = day; return APP_REDRAW_PAGE; }
     return APP_REDRAW_NONE;
 }
 

@@ -7,6 +7,9 @@ set -euo pipefail
 bash tools/run_book_host_tests.sh
 python3 tools/test_book_images.py
 python3 tools/test_font_metrics.py
+python3 tools/font_transfer_host_test.py
+python3 tools/font_glyph_memory_host_test.py
+python3 tools/font_resume_host_test.py
 python3 tools/book_ui_host_test.py
 python3 tools/test_search.py
 flags=(-std=gnu11 -Wall -Wextra -Werror -g -fsanitize=address,undefined)

@@ -16,7 +16,8 @@ def production_function(name):
     end = source.index('\n}', match.end()) + 2
     return source[match.start():end]
 production = '\n'.join(production_function(name) for name in ('finish_reader_frame', 'reader_direct_enabled', 'reader_gray_direct_enabled', 'reader_white_repaint_enabled', 'present'))
-harness = r'''
+reader_mode = (ROOT / 'main/display_reader_modes.h').read_text().replace('#pragma once', '')
+harness = reader_mode + r'''
 #include <assert.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -35,7 +36,8 @@ typedef struct { int x,y,width,height; } EpdRect;
 typedef struct { int* hl; uint8_t* fb; } app_ctx_t;
 typedef struct { bool image; } blk_t;
 static book_view_t s_view,s_presented_view;
-static bool s_presented_valid,s_presented_reading_overlay,s_text_turn,s_image_open,s_toolbar,s_clear_confirm,direct;
+static bool s_presented_valid,s_presented_reading_overlay,s_text_turn,s_image_open,s_toolbar,s_clear_confirm,direct,anim_enabled,s_full_settle;
+static int s_turn_dir;
 static bool s_quote_selecting,s_ended;
 static bool s_reader_target_night,s_reader_target_binary;
 static bool s_search_dirty,s_search_fast;
@@ -49,9 +51,8 @@ static int64_t s_du_ms;
 static void* s_prep_done;
 static char s_footer_status[8];
 typedef int EpdWaveform;
-typedef enum {DISPLAY_CROSSMUX_TURN,DISPLAY_CROSSMUX_ENTRY,DISPLAY_CROSSMUX_CLEAN,DISPLAY_CROSSMUX_REDRAW} display_crossmux_action_t;
+typedef enum {DISPLAY_NIGHT_TURN,DISPLAY_NIGHT_ENTRY,DISPLAY_NIGHT_CLEAN,DISPLAY_NIGHT_REDRAW} display_night_action_t;
 #define BOOK_NIGHT_PROFILE_CURRENT 0
-#define BOOK_NIGHT_PROFILE_CROSSMUX 1
 #define BOOK_NIGHT_PROFILE_WHITE_REPAINT 3
 static bool gray_edges;
 static unsigned gray_calls,white_calls,white_actions[4];
@@ -79,13 +80,20 @@ static void display_prepare_direct_frame(uint8_t* fb,int width,int height,bool n
 }
 static bool kick_prep(void) {return prepare;}
 static void xSemaphoreTake(void* s,int wait) { (void)s;(void)wait;joins++; }
+static void prep_end(bool started) {if(started) xSemaphoreTake(s_prep_done, portMAX_DELAY);}
 static void footer_status(char* s,size_t cap) {(void)s;(void)cap;}
+// 断电续读标记替身：不触 NVS，按测试需要读端恒为关。/ Power-cut reading-marker
+// stand-in: no NVS; the read side always reports off unless a test arms it.
+static bool test_lock_reading_armed;
+__attribute__((unused)) static void app_settings_set_lock_reading(bool on){(void)on;}
+__attribute__((unused)) static bool app_settings_take_lock_reading(void){bool r=test_lock_reading_armed;test_lock_reading_armed=false;return r;}
 static bool app_settings_book_direct(void) {return direct;}
 static bool app_settings_book_edge_gray(void) {return gray_edges;}
 static bool app_settings_book_night(void) {return night_setting;}
 static uint8_t app_settings_book_night_profile(void) {return night_profile;}
 static enum EpdDrawError result(void) {last_draw_serial=++serial;return fail?EPD_DRAW_FAILURE:EPD_DRAW_SUCCESS;}
-static enum EpdDrawError update_display_night_white_repaint(int* h,display_crossmux_action_t action,bool bw,bool gray) {
+static enum EpdDrawError update_display_text_gray_direct(int* h,bool night) {(void)h;assert(gray_edges&&direct);last_direct_night=night;gray_calls++;return result();}
+static enum EpdDrawError update_display_night_white_repaint(int* h,display_night_action_t action,bool bw,bool gray) {
  (void)h;assert(s_view==READING&&s_text&&night_setting&&night_profile==3);
  assert(!s_image_open&&!s_toolbar&&!s_clear_confirm&&!s_quote_selecting&&!s_ended);
  for(size_t i=0;i<s_block_count;++i)assert(!s_blocks[i].image);
@@ -94,8 +102,12 @@ static enum EpdDrawError update_display_night_white_repaint(int* h,display_cross
 static enum EpdDrawError update_display_full(int* h) {(void)h;fulls++;return result();}
 static enum EpdDrawError update_display_clean(int* h) {(void)h;fulls++;return result();}
 static enum EpdDrawError update_display_text_turn(int* h,bool night) {(void)h;last_standard_night=night;turns++;return result();}
+// 揭页动画出口替身：真实 display.c 的错相路径不进本回归，统计后按原出口计数。
+// Page-turn animation shim: the real staggered path stays out of this regression; count it like the standard exit.
+static unsigned anim_turns;static bool anim_last_forward;
+static enum EpdDrawError update_display_page_turn(int* h,EpdRect area,bool forward) {(void)h;(void)area;anim_last_forward=forward;anim_turns++;return result();}
+static bool app_settings_book_turn_anim(void){return anim_enabled;}
 static enum EpdDrawError update_display_text_direct(int* h,bool night) {(void)h;last_direct_night=night;directs++;return result();}
-static enum EpdDrawError update_display_text_gray_direct(int* h,bool night) {(void)h;(void)night;gray_calls++;return result();}
 static enum EpdDrawError update_display_with(int* h,const int* w,int mode) {
  (void)h;assert((w==&E0470_NAVIGATION_WAVEFORM||w==&E0470_TEXTTURN_NIGHT_WAVEFORM)&&mode==MODE_GL16);
  last_page_night=w==&E0470_TEXTTURN_NIGHT_WAVEFORM;navs++;return result();
@@ -104,6 +116,15 @@ static enum EpdDrawError update_display_mode(int* h,int mode) {(void)h;(void)mod
 static enum EpdDrawError update_display_area_with(int* h,const int* w,int mode,EpdRect r) {(void)h;(void)r;assert(w==(s_view==SEARCH&&s_search_fast?&E0470_DIRECT_WAVEFORM:s_view==READING&&s_text?(s_reader_target_night?&E0470_TEXTTURN_NIGHT_WAVEFORM:&E0470_TEXTTURN_WAVEFORM):&E0470_WAVEFORM)&&mode==MODE_GL16);areas++;return result();}
 static EpdRect ui_rect_union(EpdRect a,EpdRect b) {(void)b;return a;}
 static void guard_draw_result(int* h,enum EpdDrawError err) {(void)h;(void)err;}
+
+static enum EpdDrawError update_display_reader_turn(void* h,display_reader_mode_t mode,EpdRect area,bool forward) {
+ switch(mode) {
+ case DISPLAY_READER_STANDARD:return update_display_text_turn(h,false);
+ case DISPLAY_READER_BINARY:return update_display_text_direct(h,false);
+ case DISPLAY_READER_GRAY:return update_display_text_gray_direct(h,false);
+ default:return update_display_page_turn(h,area,forward);
+ }
+}
 ''' + production + r'''
 int main(void) {
  uint8_t frame[16*8/2]={0};app_ctx_t ctx={.fb=frame};s_view=SHELF;
@@ -115,6 +136,13 @@ int main(void) {
  for(int i=0;i<12;i++){s_text_turn=true;present(&ctx,APP_REDRAW_AREA);}
  assert(turns==12&&fulls==0&&!s_text_turn&&entries==1);
  direct=true;s_text_turn=true;present(&ctx,APP_REDRAW_AREA);assert(directs==1&&fulls==0);
+ direct=false;
+ // 揭页动画只接管日间标准翻页；方向跟随最近翻页。/ The animation takes day standard turns only; direction follows the latest turn.
+ s_turn_dir=1;anim_enabled=true;s_text_turn=true;present(&ctx,APP_REDRAW_AREA);
+ assert(anim_turns==1&&anim_last_forward&&turns==12&&directs==1);
+ s_turn_dir=-1;s_text_turn=true;present(&ctx,APP_REDRAW_AREA);assert(anim_turns==2&&!anim_last_forward&&turns==12);
+ direct=true;s_text_turn=true;present(&ctx,APP_REDRAW_AREA);assert(directs==2&&anim_turns==2);
+ direct=false;anim_enabled=false;
  present(&ctx,APP_REDRAW_PAGE);assert(navs==3);
  s_view=LAYOUT;present(&ctx,APP_REDRAW_PAGE);assert(navs==4);
  s_view=READING;fail=true;s_text_turn=true;present(&ctx,APP_REDRAW_AREA);
@@ -233,6 +261,34 @@ int main(void) {
  assert(s_search_dirty&&s_search_edit_ms==11000);
  fail=false;processing_us=14000000;present(&ctx,APP_REDRAW_AREA);
  assert(!s_search_dirty&&!s_search_fast&&s_search_edit_ms==14000);
+ // 已移除的Crossmux存值1按当前方案路由：标准/直刷原路径，不再有对照出口。
+ // The removed Crossmux stored value 1 routes like Current: standard/direct paths, without a comparison exit.
+ night_profile=1;night_setting=true;
+ s_view=READING;s_text="body";s_blocks=NULL;s_block_count=0;
+ s_search_dirty=s_search_fast=false;s_presented_valid=true;s_presented_view=SHELF;
+ for(int effect=0;effect<2;++effect) {
+   direct=effect;s_presented_view=SHELF;
+   unsigned before_nav=navs,before_full=fulls,before_turn=turns,before_direct=directs,before_gray=gray_calls;
+   s_reader_target_night=true;present(&ctx,APP_REDRAW_PAGE);assert(navs==before_nav+1);
+   s_text_turn=true;present(&ctx,APP_REDRAW_AREA);
+   assert(effect?(directs==before_direct+1):(turns==before_turn+1));
+   assert(gray_calls==before_gray&&fulls==before_full);
+ }
+ // 独立局推不计翻页；插图章节、日间和非正文页保持已有路径。
+ // Independent areas skip body counting; image chapters, day and non-body views retain existing paths.
+ unsigned before_areas2=areas,before_turns=turns;present(&ctx,APP_REDRAW_AREA);assert(areas==before_areas2+1&&turns==before_turns);
+ blk_t image_blocks[2]={{0},{.image=true}};s_blocks=image_blocks;s_block_count=2;
+ direct=false;s_presented_view=SHELF;present(&ctx,APP_REDRAW_PAGE);
+ s_text_turn=true;present(&ctx,APP_REDRAW_AREA);present(&ctx,APP_REDRAW_FULL);
+ assert(!s_reader_target_binary);
+ s_blocks=NULL;s_block_count=0;night_setting=false;s_presented_view=SHELF;
+ present(&ctx,APP_REDRAW_PAGE);s_text_turn=true;present(&ctx,APP_REDRAW_AREA);
+ assert(!s_reader_target_night);
+ night_setting=true;s_view=LAYOUT;present(&ctx,APP_REDRAW_PAGE);
+ s_view=READING;night_profile=BOOK_NIGHT_PROFILE_CURRENT;
+ present(&ctx,APP_REDRAW_PAGE);s_text_turn=true;present(&ctx,APP_REDRAW_AREA);
+ // 实际灰字缘不二值化，Crossmux仍固定黑白；新清白对照覆盖四动作且控件不计。
+ // Actual gray edges bypass binarization, Crossmux remains binary, and white-clear repaint covers four actions outside controls.
  s_view=READING;s_blocks=NULL;s_block_count=0;s_text="body";s_presented_reading_overlay=false;
  for(int night=0;night<2;++night)for(int effect=0;effect<2;++effect){
    night_setting=night;direct=effect;gray_edges=true;night_profile=0;s_presented_view=SHELF;
@@ -256,8 +312,9 @@ int main(void) {
    fail=false;present(&ctx,APP_REDRAW_PAGE);assert(!s_presented_reading_overlay&&white_calls==before+6);
  }
  for(unsigned i=0;i<4;++i)assert(white_actions[i]>=4);
- puts("reader present: real gray target, white clear four actions, overlay failure retries/control exclusions PASS");
+ puts("reader present: real gray target, removed Crossmux value 1 falling back to standard/direct, white clear four actions, overlay failure retries/control exclusions PASS");
  puts("reader present: view/overlay-entry requests and failed retry, manual cleanup, preparation join, day/night binary direct frames before entry/redraw/turn, grayscale image fallback and ordinary-turn preservation PASS");
+ puts("reader present: night ENTRY/TURN/CLEAN/REDRAW routing for white-repaint text, both page effects, binary frames, overlay retry, control/image/day exclusions and profile switching PASS");
 }
 '''
 with tempfile.TemporaryDirectory(prefix='pico-reader-present-', dir='/tmp') as folder:

@@ -1,8 +1,8 @@
 # e0470_epaper_waveform
 
-**E0470A01** 4.7 寸单色墨水屏（684 × 1216，40 pin）的 epdiy 波形表。
+**E0470A01** 4.7 寸单色墨水屏（684 × 1216，40 pin）的 epdiy 波形表，以及供诊断和可选Crossmux夜间对照使用的裁剪器。
 
-epdiy waveform tables for the **E0470A01** 4.7" monochrome e-paper panel (684 × 1216, 40-pin).
+epdiy waveform tables for the **E0470A01** 4.7" monochrome e-paper panel (684 × 1216, 40-pin), plus a trimmer for diagnostics and the optional Crossmux night comparison.
 
 组件名 / Registry name: `mindreset/e0470_epaper_waveform`
 
@@ -69,10 +69,19 @@ Device feedback confirmed regression from 0.5.19's estimated monotonic gray, uni
 
 `E0470_NAVIGATION_ENTRY_WAVEFORM`, `E0470_WHITE_CLEANUP_WAVEFORM` and history helpers remain diagnostic references outside product updates, with no product history/selector allocations. Diagnostic entry differs from NAV only in actual 15→15's phase-45 white action; the other 255 transitions match and phases 46–48 stay neutral. Non-NULL selectors require an experimental waveform supporting FF erasure. Night selective body and direct FF/EE both hold, while day and navigation EE represent actual 14→14 settling.
 
-## 已撤回的Crossmux对照 / Withdrawn Crossmux comparison
+## Crossmux对照 / Crossmux comparison
 
-裁剪器已移除，依赖它的实验波形、入口和测试同步撤回，避免悬空引用导致干净构建失败。保留原有厂家灰阶、黑白直刷、灰边和清白重画方案；旧Crossmux设置值回退当前方案。
-The trimmer is removed along with dependent experimental tables, entry points and tests, avoiding dangling dependencies in clean builds. Retain vendor grayscale, binary direct, gray-edge and white-repaint profiles; legacy Crossmux settings fall back to the current profile.
+0.5.27的独立 `E0470_CROSSMUX_WAVEFORM` 复现[freeink-sdk 96de1be默认装配](https://github.com/0x1abin/freeink-sdk/blob/96de1be6ce08eb732909e6e8149af8f892b9a2c5/libs/display/EpdiyLcd/src/e0470/e0470_epaper_waveform.c)，不是SDK的TextTurn表：阈值DU20直接取本地同字节厂家源表；GC/GL原48相按11/5/0/3右对齐裁剪为36/37相，GL第33相保留SDK的15→15白动作。不修改任何 `waveforms/*.h` 或本地原16个模式的相位数据，不增加任意推动剂量。两份48相容量的GC/GL缓存另占6144字节，DU复用阈值表；原裁剪器另有17408字节静态工作区供两次初始化调用复用。
+The isolated 0.5.27 `E0470_CROSSMUX_WAVEFORM` reproduces the pinned SDK default assembly above, rather than its TextTurn table. Threshold DU20 uses byte-identical local vendor data. Original GC/GL48 are right-aligned and trimmed with 11/5/0/3 to 36/37 phases, preserving the SDK's GL phase-33 15→15 white action. No vendor header or phase data in the sixteen original modes changes, and no arbitrary drive dose is added. Two 48-phase-capacity GC/GL buffers add 6144 bytes; DU reuses the threshold table; the existing trimmer has an additional 17408-byte static workspace reused by both initialization calls.
+
+独立编译固定SDK后，本地新表全部5952有效字节逐字节一致。离线 `python3 tools/crossmux_waveform_host_test.py` 检查完整表SHA256：DU `55832d3d441faf15a4974aeec9d4f8b6f2f2a4faae5717484fa71a583d18be41`、GC `ffe0635907fa75844a2f3f174565b0d056d01ce2840f7ae753be9c65a64fb05c`、GL `05c5240425700e2e63973a7940162ca09a14044d08cee1423c4702039cae4e89`，并核对原模式指纹、厂家头文件及重复初始化稳定性；不依赖下载或本机诊断缓存。
+Independently compiling the pinned SDK established byte equality for all 5952 active bytes. The offline test checks the complete DU/GC/GL SHA256 fingerprints above, original-mode fingerprints, vendor headers and stable repeated initialization, without downloads or local diagnostic caches.
+
+选择Crossmux夜间方案后，纯文字正文固定黑白DU20，即使全局翻页效果选择标准；已知真实参考入口GL37、周期/手动单次全屏GC36，不先物理清白，也不呈现新内容后追加擦写。入口包括本地从设置/已呈现覆盖层返回的适配；周期只计成功正文翻页。参考未知仍本地物理清白后完整GC48恢复。日间、图片和覆盖层/局推走原路径；完整事件、计数与测试方法见[阅读契约](../../docs/READING_HOME.md#crossmux-pico夜间对照--crossmux-pico-night-comparison)。
+Selecting Crossmux fixes night-text body targets to binary DU20, even with Standard selected globally. Known actual references use GL37 at entry and one full-screen GC36 for interval/manual cleaning, with no preliminary white clear or post-content erasure. Entry includes local settings/displayed-overlay returns and only successful body turns count. Unknown references retain local physical-clear/full-GC48 recovery. Day, images, overlays and local updates retain their paths; the reading contract defines events, counts and testing.
+
+这是波形/刷新策略对照：本地保留12MHz/127行预填、板级上下电与MODE/XOE，SDK为18MHz/32行；目标FULL帧周期相同不代表CKV或实际更新延时完全相同。本地25°C与SDK默认20°C都使用0–50°C表。裁剪减少擦除余量，SDK没有提供本板连续夜间无残影验收；一次GC仍可亮暗闪动，不能以字节一致或相数较少承诺清净、白度或速度。
+This compares waveform/refresh policy: local 12MHz/127-line prefill and power/MODE/XOE control remain, versus SDK 18MHz/32 lines. Equal target FULL periods do not establish equal CKV or actual update latency. Local 25°C and SDK default 20°C use the same 0–50°C table. Trimming reduces erase margin and the SDK provides no continuous ghost-free night acceptance for this board. One GC can still flash light/dark; byte equality or fewer phases does not establish cleanliness, whiteness or speed.
 
 ## 验证 / Verification
 
@@ -86,6 +95,16 @@ The trimmer is removed along with dependent experimental tables, entry points an
 `python3 tools/book_guide_host_test.py`以真实布局和字体轮廓核对纯文字辅助线网格，检查任意前后页组合的旧线×新字形零交叉；开启/关闭按文本锚点重新分页，实虚线切换仅重绘。完整几何契约见[阅读主页文档](../../docs/READING_HOME.md)。测试不模拟墨水粒子、光学灰度、闪烁或残影累积。应在同板清理一次后比较两模式连续20–30页及Tab往返的静止旧字、旧线和白底。
 
 `python3 tools/book_guide_host_test.py` checks the text-only guide grid with production layout and font outlines, ensuring zero intersections between old rules and new glyph ink for arbitrary page pairs. Guide on/off repaginates at the text anchor; solid/dashed switching only redraws. The [reader document](../../docs/READING_HOME.md) defines the full geometry contract. Tests do not model ink particles, optical gray, flicker or accumulated ghosts. On the same board, clean once before comparing settled old glyphs/rules and backgrounds after 20–30 turns in both modes and Tab round trips.
+
+## 裁剪器 / Trimmer
+
+`e0470_waveform_trim()` 在不改变灰阶梯子的前提下缩短完整的 GC16 / GL16 表。完整表中每对 (from, to) 的序列共用同一个骨架：保持补齐、往反向轨道擦除、在目标轨道饱和、灰阶尾、结尾保持。灰阶档位全部位于尾段；裁剪器保留尾段不动，只裁擦除上限和饱和开头，再把所有序列右对齐。代价是擦除余量变小，旧内容的残影会先出现，因此参数需要在真机上对着残影调整。
+
+`e0470_waveform_trim()` shortens a full GC16 / GL16 table without changing its gray ladder. Every (from, to) sequence in the full table shares one skeleton: hold pad, erase toward the opposite rail, saturate on the target rail, gray tail, trailing hold. The gray levels live in the tail; the trimmer keeps the tail intact, cuts the erase maximum and the saturation head, then right-aligns every sequence. The cost is less erase margin, so ghosting from old content appears first. Parameters should be tuned on hardware against that ghosting.
+
+历史诊断及可选Crossmux对照裁剪参数（当前方案不使用）：`erase_max = 11`，`sat_cut = 5`，`white_sat_cut = 0`，`hold = 3`。
+
+Historical diagnostic and optional Crossmux comparison trim (outside the current profile): `erase_max = 11`, `sat_cut = 5`, `white_sat_cut = 0`, `hold = 3`.
 
 ## 辅助函数 / Helpers
 
@@ -115,5 +134,5 @@ Apache-2.0，见 [LICENSE](LICENSE)。波形表随本板附带，按现状提供
 
 Apache-2.0, see [LICENSE](LICENSE). The waveform tables ship with the board and are provided as-is.
 
-0.5.25的定向补黑及后置局部擦写实验因真机无效并增加旧字闪动，已于0.5.26删除；原厂家灰阶及DU表保持。当前没有由本仓真机验证的无闪夜间清净波形，当前方案手动与周期清理仍使用完整物理清白后GC16；旧Crossmux对照已撤回。
-The ineffective 0.5.25 targeted black boost and post-DU local-cleaning experiments, which added old-glyph flashes on hardware, are removed in 0.5.26. Original vendor gray and DU tables remain. This tree has no device-validated ghost-clean night waveform without flashing; current-profile manual and interval cleaning retain complete physical white clearing followed by GC16; the legacy Crossmux comparison is withdrawn.
+0.5.25的定向补黑及后置局部擦写实验因真机无效并增加旧字闪动，已于0.5.26删除；原厂家灰阶及DU表保持。当前没有由本仓真机验证的无闪夜间清净波形，当前方案手动与周期清理仍使用完整物理清白后GC16；可选Crossmux对照见上节。
+The ineffective 0.5.25 targeted black boost and post-DU local-cleaning experiments, which added old-glyph flashes on hardware, are removed in 0.5.26. Original vendor gray and DU tables remain. This tree has no device-validated ghost-clean night waveform without flashing; current-profile manual and interval cleaning retain complete physical white clearing followed by GC16; the optional Crossmux comparison is described above.

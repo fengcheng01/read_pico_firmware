@@ -1,0 +1,1706 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>小纸 Pico 固件原创 UI/UE 进阶体系 · 拒绝照搬，立足纸墨本体创新</title>
+  <style>
+    :root {
+      /* 墨水屏 16 级灰阶标准映射 (E-ink 16 Gray Levels: 0x0 ~ 0xF) */
+      --ink-0: #050505;  /* 纯黑 / 最深黑 */
+      --ink-1: #1a1a1a;
+      --ink-2: #2d2d2d;
+      --ink-3: #404040;
+      --ink-4: #525252;
+      --ink-5: #666666;
+      --ink-6: #7a7a7a;
+      --ink-7: #8e8e8e;  /* 中灰 */
+      --ink-8: #a1a1a1;
+      --ink-9: #b4b4b4;
+      --ink-a: #c7c7c7;
+      --ink-b: #dadada;
+      --ink-c: #e7e7e7;
+      --ink-d: #eeeeee;
+      --ink-e: #f5f5f5;
+      --ink-f: #ffffff;  /* 纸白 */
+
+      /* 纸质与手帐质感 */
+      --paper-bg: #faf9f5;
+      --paper-card: #f2efe9;
+      --paper-line: #dcd8cf;
+      --paper-border: #181818;
+      --seal-red: #8f2d2d; /* 篆刻朱砂印墨 */
+
+      --bezel-bg: #1c1d22;
+      --bezel-edge: #2c2e35;
+      --accent: #0f172a;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    body {
+      background: #eaedf2;
+      color: #1e293b;
+      font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Serif SC", serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 24px 16px 72px;
+    }
+
+    .main-wrap {
+      width: 100%;
+      max-width: 1360px;
+      display: flex;
+      flex-direction: column;
+      gap: 28px;
+    }
+
+    /* 顶部标头 */
+    .hero-header {
+      background: #ffffff;
+      border-radius: 18px;
+      padding: 26px 36px;
+      border: 1px solid #e2e8f0;
+      box-shadow: 0 4px 24px rgba(0, 0, 0, 0.05);
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 18px;
+    }
+
+    .hero-title-group h1 {
+      font-size: 24px;
+      font-weight: 800;
+      color: #0f172a;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      letter-spacing: -0.5px;
+    }
+
+    .hero-title-group p {
+      font-size: 14px;
+      color: #64748b;
+      margin-top: 6px;
+      line-height: 1.6;
+    }
+
+    .meta-badges {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .meta-badge {
+      font-size: 12px;
+      font-weight: 600;
+      padding: 4px 12px;
+      border-radius: 999px;
+      background: #f1f5f9;
+      color: #475569;
+      border: 1px solid #cbd5e1;
+    }
+
+    .meta-badge.highlight {
+      background: #0f172a;
+      color: #ffffff;
+      border-color: #0f172a;
+    }
+
+    /* 左右分栏工作区 */
+    .workspace-layout {
+      display: grid;
+      grid-template-columns: 460px 1fr;
+      gap: 36px;
+      align-items: start;
+    }
+
+    @media (max-width: 1080px) {
+      .workspace-layout {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* =================== 左侧：真机模拟器 =================== */
+    .device-column {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+      position: sticky;
+      top: 24px;
+    }
+
+    .scene-selector-bar {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      background: #ffffff;
+      padding: 4px;
+      border-radius: 14px;
+      border: 1px solid #cbd5e1;
+      gap: 4px;
+      width: 100%;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+    }
+
+    .scene-btn {
+      background: transparent;
+      border: none;
+      padding: 8px 4px;
+      font-size: 12px;
+      font-weight: 700;
+      color: #64748b;
+      border-radius: 10px;
+      cursor: pointer;
+      text-align: center;
+      transition: all 0.15s ease;
+      line-height: 1.25;
+    }
+
+    .scene-btn:hover {
+      color: #0f172a;
+      background: #f8fafc;
+    }
+
+    .scene-btn.active {
+      background: #0f172a;
+      color: #ffffff;
+    }
+
+    /* 硬件仿真机身 */
+    .hardware-chassis {
+      position: relative;
+      background: linear-gradient(150deg, #24262b 0%, #131417 100%);
+      border-radius: 38px;
+      padding: 42px 22px 28px;
+      box-shadow: 0 28px 64px -12px rgba(0, 0, 0, 0.45), 0 0 0 1px #3a3d46;
+      width: 442px;
+      transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+
+    .hardware-chassis.flipped {
+      transform: rotate(180deg);
+    }
+
+    .hw-power-button {
+      position: absolute;
+      top: -5px;
+      right: 50px;
+      width: 44px;
+      height: 5px;
+      background: #4a4d57;
+      border-radius: 3px 3px 0 0;
+      cursor: pointer;
+    }
+
+    .hw-brand-strip {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0 8px 12px;
+    }
+
+    .hw-brand-text {
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 2px;
+      color: #737885;
+      text-transform: uppercase;
+    }
+
+    .hw-status-led {
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: #38bdf8;
+      box-shadow: 0 0 6px #38bdf8;
+    }
+
+    /* 4.7 寸墨水屏 (684 x 1216 等比物理缩放仿真) */
+    .eink-screen-viewport {
+      width: 398px;
+      height: 708px;
+      background: var(--paper-bg);
+      border-radius: 3px;
+      position: relative;
+      overflow: hidden;
+      box-shadow: inset 0 0 0 1.5px rgba(0, 0, 0, 0.3), inset 0 3px 8px rgba(0,0,0,0.06);
+      display: flex;
+      flex-direction: column;
+      user-select: none;
+    }
+
+    /* 物理三按键与按键反馈容器 */
+    .hw-key-ribbon-bar {
+      margin-top: 16px;
+      display: flex;
+      justify-content: center;
+      gap: 36px;
+    }
+
+    .hw-tactile-key {
+      width: 56px;
+      height: 12px;
+      background: #282a32;
+      border-radius: 6px;
+      border: 1px solid #3c3f4a;
+      box-shadow: inset 0 1px 2px rgba(255,255,255,0.08), 0 2px 5px rgba(0,0,0,0.4);
+      cursor: pointer;
+    }
+
+    .hw-tactile-key:active {
+      transform: translateY(1px);
+      background: #18191d;
+    }
+
+    /* =================== 墨水屏通用顶栏与底栏 =================== */
+    .screen-header {
+      height: 32px;
+      padding: 0 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--ink-2);
+      border-bottom: 1px solid var(--paper-line);
+      background: var(--paper-bg);
+    }
+
+    .screen-container {
+      flex: 1;
+      overflow-y: auto;
+      position: relative;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .screen-container::-webkit-scrollbar {
+      display: none;
+    }
+
+    /* 创新 5：物理三键灵动气泡标尺 (Tri-Key Dynamic Ribbon) */
+    .trikey-floating-ribbon {
+      height: 52px;
+      background: var(--paper-bg);
+      border-top: 2px solid var(--ink-0);
+      display: flex;
+      justify-content: space-around;
+      align-items: center;
+      padding: 0 10px;
+      position: relative;
+    }
+
+    .trikey-ribbon-cell {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 2px;
+      padding: 4px 12px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--ink-3);
+      cursor: pointer;
+      transition: all 0.12s;
+    }
+
+    .trikey-ribbon-cell.pressed {
+      background: var(--ink-0);
+      color: var(--ink-f);
+    }
+
+    .trikey-tag {
+      font-size: 9px;
+      padding: 1px 4px;
+      border: 1px solid currentColor;
+      border-radius: 3px;
+      line-height: 1;
+      margin-bottom: 1px;
+    }
+
+    /* =================== 原创场景 1：浮生诗笺与书卷切片待机 =================== */
+    .scene-view-standby {
+      height: 100%;
+      background: var(--paper-bg);
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 24px 22px;
+      position: relative;
+    }
+
+    .standby-toggle-chip {
+      position: absolute;
+      top: 12px;
+      right: 14px;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border: 1.5px solid var(--ink-0);
+      border-radius: 20px;
+      background: var(--paper-card);
+      cursor: pointer;
+      z-index: 10;
+    }
+
+    /* 浮生诗笺模式 (Vertical Poetic Excerpt Slip) */
+    .poetic-slip-layout {
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+
+    .slip-lunar-date {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      border-bottom: 1.5px solid var(--ink-0);
+      padding-bottom: 8px;
+    }
+
+    .slip-lunar-date h3 {
+      font-size: 18px;
+      font-weight: 800;
+      letter-spacing: 1px;
+    }
+
+    .slip-lunar-date span {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--ink-5);
+    }
+
+    .slip-body-verse {
+      display: flex;
+      flex-direction: row-reverse;
+      justify-content: center;
+      gap: 20px;
+      padding: 30px 10px;
+      font-family: "Noto Serif SC", "Songti SC", serif;
+      writing-mode: vertical-rl;
+      text-orientation: upright;
+      letter-spacing: 4px;
+      flex: 1;
+    }
+
+    .verse-line {
+      font-size: 20px;
+      line-height: 1.6;
+      color: var(--ink-0);
+      font-weight: 600;
+    }
+
+    .verse-meta {
+      font-size: 13px;
+      color: var(--ink-5);
+      letter-spacing: 2px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .slip-seal-stamp {
+      width: 28px;
+      height: 28px;
+      border: 2px solid var(--ink-0);
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      font-weight: 900;
+      writing-mode: horizontal-tb;
+      letter-spacing: 0;
+      background: var(--paper-card);
+    }
+
+    .slip-footer-clock {
+      border-top: 1.5px solid var(--ink-0);
+      padding-top: 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+    }
+
+    .slip-time-number {
+      font-size: 42px;
+      font-weight: 900;
+      line-height: 1;
+      letter-spacing: -1px;
+    }
+
+    .slip-streak-tag {
+      font-size: 12px;
+      font-weight: 700;
+      border: 1px solid var(--ink-0);
+      padding: 4px 10px;
+      border-radius: 6px;
+      background: var(--paper-card);
+    }
+
+    /* 书卷切片模式 (Shelf Cross-Section Spine View) */
+    .spine-slice-layout {
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      display: none;
+    }
+
+    .shelf-spines-rack {
+      display: flex;
+      gap: 12px;
+      height: 400px;
+      align-items: flex-end;
+      padding: 20px 10px;
+      border-bottom: 4px solid var(--ink-0);
+      margin: auto 0;
+    }
+
+    .spine-book-item {
+      flex: 1;
+      border: 2px solid var(--ink-0);
+      border-radius: 4px 4px 0 0;
+      background: var(--paper-card);
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 4px;
+      writing-mode: vertical-rl;
+      text-orientation: upright;
+      letter-spacing: 2px;
+      position: relative;
+    }
+
+    .spine-title {
+      font-size: 14px;
+      font-weight: 700;
+      max-height: 220px;
+      overflow: hidden;
+    }
+
+    .spine-progress-groove {
+      position: absolute;
+      left: 0; right: 0; bottom: 0;
+      background: var(--ink-0);
+      writing-mode: horizontal-tb;
+    }
+
+    /* =================== 原创场景 2：正文边注与拾光印章 =================== */
+    .scene-view-marginalia {
+      height: 100%;
+      background: #fdfdfc;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      position: relative;
+    }
+
+    .reader-pure-text {
+      padding: 32px 26px 12px;
+      font-size: 17.5px;
+      line-height: 1.85;
+      color: var(--ink-1);
+      font-family: "Noto Serif SC", serif;
+      position: relative;
+    }
+
+    .reader-pure-text p {
+      margin-bottom: 14px;
+      text-indent: 2em;
+    }
+
+    .highlighted-quote-phrase {
+      background: var(--ink-c);
+      border-bottom: 2px solid var(--ink-0);
+      padding: 2px 2px;
+      position: relative;
+      cursor: pointer;
+    }
+
+    /* 拾光印章悬浮气泡 */
+    .stamp-action-bubble {
+      position: absolute;
+      top: 130px;
+      left: 36px;
+      background: var(--paper-bg);
+      border: 2px solid var(--ink-0);
+      border-radius: 10px;
+      padding: 8px 14px;
+      box-shadow: 3px 5px 0 var(--ink-0);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      z-index: 20;
+    }
+
+    .stamp-btn-red {
+      font-size: 13px;
+      font-weight: 800;
+      color: var(--ink-0);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+    }
+
+    /* 右侧折角便签条 (Margin Pull-out Tag) */
+    .margin-pull-tag {
+      position: absolute;
+      right: 0;
+      top: 180px;
+      background: var(--ink-0);
+      color: var(--ink-f);
+      padding: 10px 4px;
+      font-size: 11px;
+      font-weight: 700;
+      border-radius: 6px 0 0 6px;
+      writing-mode: vertical-rl;
+      cursor: pointer;
+    }
+
+    /* 侧滑手帐浮签卡片 (Marginalia Drawer) */
+    .marginalia-sliding-drawer {
+      position: absolute;
+      bottom: 0; left: 0; right: 0;
+      background: var(--paper-bg);
+      border-top: 2.5px solid var(--ink-0);
+      padding: 16px 20px 20px;
+      box-shadow: 0 -10px 25px rgba(0,0,0,0.12);
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .drawer-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 14px;
+      font-weight: 800;
+      border-bottom: 1px solid var(--paper-line);
+      padding-bottom: 6px;
+    }
+
+    .drawer-excerpt-box {
+      background: var(--paper-card);
+      border-left: 3px solid var(--ink-0);
+      padding: 8px 12px;
+      font-size: 13px;
+      line-height: 1.5;
+      font-style: italic;
+    }
+
+    .drawer-actions-row {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+    }
+
+    .drawer-btn {
+      font-size: 12px;
+      font-weight: 700;
+      padding: 6px 12px;
+      border: 1.5px solid var(--ink-0);
+      border-radius: 6px;
+      background: var(--paper-bg);
+      cursor: pointer;
+    }
+
+    .drawer-btn.solid {
+      background: var(--ink-0);
+      color: var(--ink-f);
+    }
+
+    /* =================== 原创场景 3：实体书侧切厚度规与错相揭页 =================== */
+    .scene-view-edge {
+      height: 100%;
+      background: #fdfdfc;
+      display: flex;
+      position: relative;
+    }
+
+    .reader-edge-content {
+      flex: 1;
+      padding: 30px 22px 14px 26px;
+      font-size: 17px;
+      line-height: 1.85;
+      font-family: "Noto Serif SC", serif;
+    }
+
+    /* 独创：右侧极细实体书切边厚度标尺 (Edge Thickness Gauge) */
+    .book-edge-thickness-ruler {
+      width: 14px;
+      background: var(--paper-card);
+      border-left: 1.5px solid var(--ink-0);
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      position: relative;
+    }
+
+    .edge-stripe-pattern {
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: repeating-linear-gradient(
+        to bottom,
+        transparent 0px,
+        transparent 3px,
+        rgba(0,0,0,0.08) 3px,
+        rgba(0,0,0,0.08) 5px
+      );
+    }
+
+    .edge-current-bookmark {
+      position: absolute;
+      right: 0;
+      width: 100%;
+      height: 28px;
+      background: var(--ink-0);
+      border-radius: 3px 0 0 3px;
+      top: 42%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--ink-f);
+      font-size: 8px;
+      font-weight: 800;
+    }
+
+    /* 错相揭页条带模拟层 (Staggered Page Turn Bands) */
+    .staggered-bands-overlay {
+      position: absolute;
+      top: 0; left: 0; right: 14px; bottom: 0;
+      pointer-events: none;
+      display: flex;
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+
+    .staggered-bands-overlay.active {
+      opacity: 1;
+      animation: banded-fade 0.4s steps(4) forwards;
+    }
+
+    @keyframes banded-fade {
+      0% { opacity: 0; }
+      50% { opacity: 0.35; background: repeating-linear-gradient(90deg, #000 0px, #000 24px, transparent 24px, transparent 48px); }
+      100% { opacity: 0; }
+    }
+
+    /* =================== 原创场景 4：墨香折页速控卡与书香状态仪 =================== */
+    .scene-view-origami {
+      height: 100%;
+      background: var(--paper-bg);
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .origami-sheet-card {
+      background: var(--paper-card);
+      border: 2px solid var(--ink-0);
+      border-radius: 12px;
+      padding: 14px;
+      position: relative;
+      box-shadow: 3px 4px 0 var(--ink-0);
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .origami-corner-crease {
+      position: absolute;
+      top: 0; right: 0;
+      width: 0; height: 0;
+      border-style: solid;
+      border-width: 0 24px 24px 0;
+      border-color: transparent var(--paper-bg) transparent transparent;
+      box-shadow: -1px 1px 2px rgba(0,0,0,0.15);
+    }
+
+    .origami-header-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      border-bottom: 1.5px solid var(--ink-0);
+      padding-bottom: 6px;
+    }
+
+    .origami-header-row h2 {
+      font-size: 18px;
+      font-weight: 800;
+    }
+
+    /* 书香状态仪 (Bookish Diagnostics) */
+    .bookish-diagnostics-box {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .diag-tile {
+      background: var(--paper-bg);
+      border: 1.5px solid var(--ink-0);
+      border-radius: 8px;
+      padding: 8px 10px;
+    }
+
+    .diag-label {
+      font-size: 11px;
+      color: var(--ink-5);
+      font-weight: 700;
+    }
+
+    .diag-value {
+      font-size: 15px;
+      font-weight: 800;
+      margin-top: 2px;
+      color: var(--ink-0);
+    }
+
+    .diag-sub {
+      font-size: 10px;
+      color: var(--ink-6);
+      margin-top: 1px;
+    }
+
+    /* 墨晕增益滑条 (Ink Density Slider) */
+    .density-slider-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      background: var(--paper-bg);
+      border: 1.5px solid var(--ink-0);
+      border-radius: 8px;
+      padding: 10px;
+    }
+
+    .density-title-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .density-slider-rail {
+      height: 12px;
+      background: var(--paper-line);
+      border: 1px solid var(--ink-0);
+      border-radius: 6px;
+      position: relative;
+      cursor: pointer;
+    }
+
+    .density-slider-thumb {
+      width: 22px;
+      height: 22px;
+      background: var(--ink-0);
+      border-radius: 50%;
+      position: absolute;
+      top: -6px;
+      left: 65%;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+    }
+
+    /* =================== 原创场景 5：重力双持与自适应镜像 =================== */
+    .scene-view-gyro {
+      height: 100%;
+      background: var(--paper-bg);
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 18px 20px;
+    }
+
+    .gyro-banner {
+      background: var(--paper-card);
+      border: 1.5px solid var(--ink-0);
+      border-radius: 10px;
+      padding: 12px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .gyro-banner h3 {
+      font-size: 15px;
+      font-weight: 800;
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .gyro-banner p {
+      font-size: 12px;
+      color: var(--ink-5);
+      line-height: 1.4;
+    }
+
+    .gyro-visual-diagram {
+      margin: auto 0;
+      border: 2px dashed var(--ink-0);
+      border-radius: 12px;
+      padding: 24px 16px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 14px;
+      background: var(--paper-bg);
+    }
+
+    .gyro-hand-icon {
+      width: 48px;
+      height: 48px;
+      border: 2px solid var(--ink-0);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 22px;
+    }
+
+    .gyro-status-label {
+      font-size: 14px;
+      font-weight: 800;
+    }
+
+    .gyro-btn-rotate-test {
+      font-size: 12px;
+      font-weight: 700;
+      padding: 6px 14px;
+      border: 1.5px solid var(--ink-0);
+      border-radius: 20px;
+      background: var(--paper-card);
+      cursor: pointer;
+    }
+
+    /* =================== 原创场景 6：笔阵非对称字形拓印 =================== */
+    .scene-view-bizhen {
+      height: 100%;
+      background: var(--paper-bg);
+      padding: 18px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .bizhen-comparison-box {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .bizhen-glyph-card {
+      background: var(--paper-card);
+      border: 2px solid var(--ink-0);
+      border-radius: 10px;
+      padding: 12px;
+      display: flex;
+      gap: 14px;
+      align-items: center;
+    }
+
+    .glyph-large-preview {
+      width: 72px;
+      height: 72px;
+      background: var(--paper-bg);
+      border: 1.5px solid var(--ink-0);
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 46px;
+      font-family: "Noto Serif SC", serif;
+      flex-shrink: 0;
+    }
+
+    /* 普通加粗：全向膨胀导致粘连 */
+    .glyph-naive-bold {
+      font-weight: 900;
+      text-shadow: 0 0 1.5px #000, 0 0 2px #000;
+      letter-spacing: -2px;
+    }
+
+    /* 笔阵加粗：非对称解耦，横细竖粗，内白通透 */
+    .glyph-bizhen-ink {
+      font-weight: 700;
+      transform: scaleY(1.04);
+      filter: contrast(1.8);
+    }
+
+    .glyph-desc-col h4 {
+      font-size: 14px;
+      font-weight: 800;
+    }
+
+    .glyph-desc-col p {
+      font-size: 11px;
+      color: var(--ink-5);
+      line-height: 1.45;
+      margin-top: 4px;
+    }
+
+    /* =================== 右侧技术评估与对比报告 =================== */
+    .report-column {
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    .report-card {
+      background: #ffffff;
+      border-radius: 16px;
+      padding: 26px 30px;
+      border: 1px solid #e2e8f0;
+      box-shadow: 0 4px 18px rgba(0, 0, 0, 0.04);
+    }
+
+    .report-card h2 {
+      font-size: 19px;
+      font-weight: 800;
+      color: #0f172a;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 14px;
+      border-bottom: 1px solid #f1f5f9;
+      padding-bottom: 10px;
+    }
+
+    .report-card p {
+      font-size: 14px;
+      color: #475569;
+      line-height: 1.7;
+      margin-bottom: 12px;
+    }
+
+    /* 扬弃对比矩阵表 */
+    .dialectical-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+      margin-top: 10px;
+    }
+
+    .dialectical-table th {
+      background: #f8fafc;
+      color: #1e293b;
+      font-weight: 700;
+      text-align: left;
+      padding: 10px 12px;
+      border-bottom: 2px solid #e2e8f0;
+    }
+
+    .dialectical-table td {
+      padding: 12px;
+      border-bottom: 1px solid #f1f5f9;
+      vertical-align: top;
+      line-height: 1.55;
+    }
+
+    .badge-absorb {
+      background: #e0f2fe;
+      color: #0369a1;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .badge-reject {
+      background: #fee2e2;
+      color: #991b1b;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .badge-innovate {
+      background: #dcfce7;
+      color: #166534;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    /* 创新方案卡片流 */
+    .innovations-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 16px;
+      margin-top: 10px;
+    }
+
+    @media (max-width: 800px) {
+      .innovations-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .innov-card {
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      padding: 16px;
+      background: #f8fafc;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .innov-card-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .innov-card-title {
+      font-size: 15px;
+      font-weight: 800;
+      color: #0f172a;
+    }
+
+    .innov-card-desc {
+      font-size: 13px;
+      color: #475569;
+      line-height: 1.6;
+    }
+
+    .innov-card-code {
+      font-size: 12px;
+      color: #2563eb;
+      font-family: monospace;
+      background: #eff6ff;
+      padding: 4px 8px;
+      border-radius: 6px;
+      margin-top: auto;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="main-wrap">
+
+    <!-- 顶部项目标头 -->
+    <header class="hero-header">
+      <div class="hero-title-group">
+        <h1>
+          <span>小纸 Pico (PageRest) 原创 UI/UE 进阶体系</span>
+        </h1>
+        <p>拒绝全抄与机械复制 · 汲取 <strong>RickyOS</strong> 与 <strong>KiikoRead</strong> 的实用教训 · 立足 ESP32-S3 + 错相揭页波形 + 手帐生态的本体创新</p>
+      </div>
+      <div class="meta-badges">
+        <span class="meta-badge highlight">自主创新体系</span>
+        <span class="meta-badge">错相揭页 (e0470_page_turn)</span>
+        <span class="meta-badge">连续 DU 跟手 (continuous_du)</span>
+        <span class="meta-badge">PMU 真实农历手帐</span>
+      </div>
+    </header>
+
+    <!-- 工作台：左侧可交互真机原型，右侧深度对比与论证报告 -->
+    <div class="workspace-layout">
+
+      <!-- ================= 左侧：真机模拟器 ================= -->
+      <div class="device-column">
+
+        <!-- 原创 6 大场景切换器 -->
+        <div class="scene-selector-bar">
+          <button class="scene-btn active" onclick="selectScene('standby')">1. 浮生诗笺待机</button>
+          <button class="scene-btn" onclick="selectScene('marginalia')">2. 拾光印章边注</button>
+          <button class="scene-btn" onclick="selectScene('edge')">3. 实体书切边厚度</button>
+          <button class="scene-btn" onclick="selectScene('origami')">4. 墨香折页速控</button>
+          <button class="scene-btn" onclick="selectScene('gyro')">5. 重力自适应双持</button>
+          <button class="scene-btn" onclick="selectScene('bizhen')">6. 笔阵字体拓印</button>
+        </div>
+
+        <!-- 硬件机身壳 (Read Pico RDP-G01-W 仿真) -->
+        <div class="hardware-chassis" id="hwChassis">
+          <div class="hw-power-button" title="长按关机 / 短按进入诗笺待机" onclick="selectScene('standby')"></div>
+
+          <div class="hw-brand-strip">
+            <span class="hw-brand-text">READ PICO · 小纸</span>
+            <span class="hw-status-led"></span>
+          </div>
+
+          <!-- 4.7 寸墨水屏显示区 (684 x 1216 等比物理缩放) -->
+          <div class="eink-screen-viewport" id="screenViewport">
+
+            <!-- 全局公用：轻量状态栏 (28px) -->
+            <div class="screen-header">
+              <span>小纸手帐 · 肆点柒寸</span>
+              <span id="topClockText">14:45</span>
+              <span>88% ■</span>
+            </div>
+
+            <!-- 动态界面内容区 -->
+            <div class="screen-container" id="screenContainer">
+
+              <!-- ================= 原创场景 1：浮生诗笺与书卷切片待机 ================= -->
+              <div class="scene-view-standby" id="scene-standby">
+                <div class="standby-toggle-chip" onclick="toggleStandbyMode()">切至书脊 ⇋</div>
+
+                <!-- 模式 A：浮生诗笺 (Poetic Excerpt Slip) -->
+                <div class="poetic-slip-layout" id="standbyPoetic">
+                  <div class="slip-lunar-date">
+                    <h3>寒露 · 壬寅九月初三</h3>
+                    <span>晴 · 东南风微拂</span>
+                  </div>
+
+                  <div class="slip-body-verse">
+                    <div class="verse-line">满地都是便士，他却抬头看见了月亮。</div>
+                    <div class="verse-meta">
+                      <span>毛姆 ·《月亮与六便士》</span>
+                      <div class="slip-seal-stamp">纸</div>
+                    </div>
+                  </div>
+
+                  <div class="slip-footer-clock">
+                    <div>
+                      <div class="slip-time-number">14:45</div>
+                      <div style="font-size: 11px; color: var(--ink-5); margin-top: 4px;">今日静心阅读 42 分钟</div>
+                    </div>
+                    <div class="slip-streak-tag">连续墨耕 · 第 18 天</div>
+                  </div>
+                </div>
+
+                <!-- 模式 B：书卷切片 (Shelf Cross-Section Spine View) -->
+                <div class="spine-slice-layout" id="standbySpine">
+                  <div class="slip-lunar-date">
+                    <h3>书卷切片 · 在读案头</h3>
+                    <span>3 本在读</span>
+                  </div>
+
+                  <div class="shelf-spines-rack">
+                    <div class="spine-book-item" style="height: 340px;">
+                      <span class="spine-title">人类简史</span>
+                      <div class="spine-progress-groove" style="height: 45%;"></div>
+                    </div>
+                    <div class="spine-book-item" style="height: 310px; background: #e6e3dc;">
+                      <span class="spine-title">月亮与六便士</span>
+                      <div class="spine-progress-groove" style="height: 82%;"></div>
+                    </div>
+                    <div class="spine-book-item" style="height: 380px;">
+                      <span class="spine-title">死神永生</span>
+                      <div class="spine-progress-groove" style="height: 12%;"></div>
+                    </div>
+                  </div>
+
+                  <div class="slip-footer-clock">
+                    <div class="slip-time-number">14:45</div>
+                    <div class="slip-streak-tag">案头总厚度 1,420 页</div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- ================= 原创场景 2：正文边注与拾光印章 ================= -->
+              <div class="scene-view-marginalia" id="scene-marginalia" style="display: none;">
+                <div class="reader-pure-text">
+                  <h4 style="font-size: 18px; margin-bottom: 14px; font-weight: 800;">第二章 · 知行录</h4>
+                  <p>世界上的事情，最忌讳的就是个十全十美，你看那天上的月亮，一旦圆满了，马上就要亏厌；树上的果子，一旦熟透了，马上就要坠跌。</p>
+                  <p>凡事总要<span class="highlighted-quote-phrase" onclick="toggleStampBubble()">稍留欠缺，方得长久天地。</span>真正懂得阅读生活的人，总在字句行间保留属于自己的留白。</p>
+                </div>
+
+                <!-- 独创：拾光印章微交互浮标 -->
+                <div class="stamp-action-bubble" id="stampBubble">
+                  <div class="stamp-btn-red" onclick="sealStampIntoJournal()">
+                    <span style="font-size: 15px;">印</span> 盖印至今日手帐
+                  </div>
+                  <span style="font-size: 11px; color: var(--ink-5);">| 农历归档</span>
+                </div>
+
+                <!-- 右侧边缘折角便签贴 -->
+                <div class="margin-pull-tag" onclick="toggleMarginaliaDrawer()">便签·2</div>
+
+                <!-- 侧滑浮签便签卡 (与 app_os_today.c 实时打通) -->
+                <div class="marginalia-sliding-drawer" id="marginDrawer" style="display: none;">
+                  <div class="drawer-header">
+                    <span>📜 手帐摘录卡 (已归档)</span>
+                    <span style="cursor: pointer;" onclick="toggleMarginaliaDrawer()">✕</span>
+                  </div>
+                  <div class="drawer-excerpt-box">
+                    “凡事总要稍留欠缺，方得长久天地。”<br>
+                    <small>—— 摘自《知行录》· 寒露记</small>
+                  </div>
+                  <div class="drawer-actions-row">
+                    <div class="drawer-btn" onclick="toggleMarginaliaDrawer()">返回阅读</div>
+                    <div class="drawer-btn solid" onclick="alert('已同步至「手帐」根页金句便签！')">查看全部手记</div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- ================= 原创场景 3：实体书切边厚度规与错相揭页 ================= -->
+              <div class="scene-view-edge" id="scene-edge" style="display: none;">
+                <div class="reader-edge-content">
+                  <h4 style="font-size: 18px; margin-bottom: 12px; font-weight: 800;">第三章 · 错相揭页</h4>
+                  <p>电子墨水屏翻页往往是生硬的黑白整屏刷新，或者生硬的平移。小纸 Pico 依托底层 <strong>e0470_page_turn</strong> 错相揭页波形引擎，将 16 个条带在多拍节拍中依次启动。</p>
+                  <p style="margin-top: 10px;">右侧边缘的<strong>实体书切边厚度规</strong>让你无需唤出菜单，一瞥即知全书厚度与当前书签位置。</p>
+                </div>
+
+                <!-- 独创：实体书切边厚度标尺 -->
+                <div class="book-edge-thickness-ruler" title="实体书侧切厚度规">
+                  <div class="edge-stripe-pattern"></div>
+                  <div class="edge-current-bookmark" id="edgeBookmark">42%</div>
+                </div>
+
+                <!-- 错相揭页条带模拟层 -->
+                <div class="staggered-bands-overlay" id="staggeredBands"></div>
+              </div>
+
+              <!-- ================= 原创场景 4：墨香折页速控卡与书香状态仪 ================= -->
+              <div class="scene-view-origami" id="scene-origami" style="display: none;">
+                <div class="origami-sheet-card">
+                  <div class="origami-corner-crease"></div>
+                  <div class="origami-header-row">
+                    <h2>墨香折页速控</h2>
+                    <span style="font-size: 11px; color: var(--ink-5);">轻下拉呼出 · 纸香自知</span>
+                  </div>
+
+                  <!-- 书香状态仪 -->
+                  <div class="bookish-diagnostics-box">
+                    <div class="diag-tile">
+                      <div class="diag-label">翻阅预算</div>
+                      <div class="diag-value">约 1,420 页</div>
+                      <div class="diag-sub">电池电量 88%</div>
+                    </div>
+                    <div class="diag-tile">
+                      <div class="diag-label">书架余量</div>
+                      <div class="diag-value">约 850 本</div>
+                      <div class="diag-sub">TF 卡可用 11.4 GB</div>
+                    </div>
+                  </div>
+
+                  <!-- 墨晕浓度增益滑尺 -->
+                  <div class="density-slider-wrap">
+                    <div class="density-title-row">
+                      <span>墨晕浓度增益 (Contrast & Density)</span>
+                      <span id="densityValText">+25% (扎实)</span>
+                    </div>
+                    <div class="density-slider-rail" onclick="adjustDensity(event)">
+                      <div class="density-slider-thumb" id="densityThumb"></div>
+                    </div>
+                  </div>
+
+                  <!-- 刷新档位与速动 -->
+                  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                    <button class="drawer-btn solid" style="text-align: center;" onclick="triggerPageTurnEffect()">⚡ 错相水波定稿</button>
+                    <button class="drawer-btn" style="text-align: center;" onclick="selectScene('standby')">🌙 浮生待机</button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- ================= 原创场景 5：重力自适应双持与镜像 ================= -->
+              <div class="scene-view-gyro" id="scene-gyro" style="display: none;">
+                <div class="gyro-banner">
+                  <h3>
+                    <span>重力感应自适应双持</span>
+                    <span id="handModeTag" style="font-size: 11px; border: 1px solid var(--ink-0); padding: 1px 6px; border-radius: 4px;">右手单持</span>
+                  </h3>
+                  <p>搭载 SC7A20H 三轴加速度计：倒转 180° 时，界面与物理三键映射完全镜像，底栏把手自适应靠近拇指侧。</p>
+                </div>
+
+                <div class="gyro-visual-diagram">
+                  <div class="gyro-hand-icon" id="gyroHandIcon">✋</div>
+                  <div class="gyro-status-label" id="gyroStatusLabel">当前：右手拇指握持模式</div>
+                  <button class="gyro-btn-rotate-test" onclick="toggleHandOrientation()">🔄 模拟 180° 倒转设备</button>
+                </div>
+
+                <div style="font-size: 11px; color: var(--ink-5); text-align: center;">
+                  倒转后：KEY1 与 KEY3 上下页自适应对调，避免反向翻页困扰
+                </div>
+              </div>
+
+              <!-- ================= 原创场景 6：笔阵非对称字形拓印 ================= -->
+              <div class="scene-view-bizhen" id="scene-bizhen" style="display: none;">
+                <div>
+                  <h3 style="font-size: 16px; font-weight: 800; margin-bottom: 6px;">汉字「笔阵」非对称字形拓印</h3>
+                  <p style="font-size: 12px; color: var(--ink-5); line-height: 1.5;">
+                    拒绝简单全向加粗（会导致 CJK 横竖粘连模糊）。基于墨水屏物理行扫描特性，对细横笔画进行 1.5x 膨胀增益，对主竖笔画保持锐利，内部留白充分保护。
+                  </p>
+                </div>
+
+                <div class="bizhen-comparison-box">
+                  <!-- 方案对比 A：普通机械加粗 (其他固件做法) -->
+                  <div class="bizhen-glyph-card">
+                    <div class="glyph-large-preview glyph-naive-bold">籍</div>
+                    <div class="glyph-desc-col">
+                      <h4>机械加粗 (易粘连)</h4>
+                      <p>全向粗化导致横划与竖划挤压，“籍”字竹字头与下部横线糊成墨团。</p>
+                    </div>
+                  </div>
+
+                  <!-- 方案对比 B：小纸「笔阵」拓印 (原创算法) -->
+                  <div class="bizhen-glyph-card" style="border-width: 2.5px; background: var(--paper-bg);">
+                    <div class="glyph-large-preview glyph-bizhen-ink">籍</div>
+                    <div class="glyph-desc-col">
+                      <h4>小纸「笔阵」拓印 (骨力透脱)</h4>
+                      <p>横细竖粗解耦加固，字心留白清晰通透，强光下不发虚且笔笔分明。</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div style="background: var(--paper-card); border: 1px solid var(--ink-0); border-radius: 8px; padding: 10px; font-size: 12px;">
+                  <strong>stb_truetype 扩展钩子：</strong> 单字形态学耗时 &lt;0.04ms，直接利用当前字形缓存池，不增加 ROM 空间。
+                </div>
+              </div>
+
+            </div>
+
+            <!-- 创新 5：物理三键灵动气泡标尺 (Tri-Key Ribbon) -->
+            <div class="trikey-floating-ribbon" id="trikeyRibbon">
+              <div class="trikey-ribbon-cell" id="ribbonKey1" onclick="hitRibbonKey(1)">
+                <span class="trikey-tag" id="tagKey1">KEY1</span>
+                <span id="labelKey1">上翻 · 逐页</span>
+              </div>
+              <div class="trikey-ribbon-cell" id="ribbonKey2" onclick="hitRibbonKey(2)">
+                <span class="trikey-tag" id="tagKey2">KEY2</span>
+                <span id="labelKey2">速控 · 折页</span>
+              </div>
+              <div class="trikey-ribbon-cell" id="ribbonKey3" onclick="hitRibbonKey(3)">
+                <span class="trikey-tag" id="tagKey3">KEY3</span>
+                <span id="labelKey3">下翻 · 逐页</span>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- 物理三按键 -->
+          <div class="hw-key-ribbon-bar">
+            <div class="hw-tactile-key" title="KEY1: 硬件物理左键" onclick="pressPhysicalKey(1)"></div>
+            <div class="hw-tactile-key" title="KEY2: 硬件物理中键" onclick="pressPhysicalKey(2)"></div>
+            <div class="hw-tactile-key" title="KEY3: 硬件物理右键" onclick="pressPhysicalKey(3)"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= 右侧技术评估与原创论证 ================= -->
+      <div class="report-column">
+
+        <!-- 辩证扬弃报告 -->
+        <div class="report-card">
+          <h2>⚖️ 辩证吸收与拒绝照搬：小纸 Pico 的独创破局路径</h2>
+          <p>
+            对开源优秀成果必须持“<strong>取其神、弃其赘、立己身</strong>”的态度。RickyOS 和 KiikoRead 提供了很多实用启示，但若简单搬运其代码和 UI，就会与小纸 Pico 的硬件架构（错相波形、连续 DU、PMU 库仑计、SC7A20H 加速度计）以及“纯真手帐阅读”的灵魂产生严重冲突：
+          </p>
+
+          <table class="dialectical-table">
+            <thead>
+              <tr>
+                <th style="width: 20%;">功能域</th>
+                <th style="width: 25%;">他山之石 (借鉴点)</th>
+                <th style="width: 25%;">为何拒绝照搬 (局限与冲突)</th>
+                <th style="width: 30%;">小纸 Pico 原创方案 (破局)</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>待机锁屏</strong></td>
+                <td><span class="badge-absorb">借鉴</span> 改变单一静态图，增强待机陪伴感</td>
+                <td><span class="badge-reject">拒绝照搬</span> KiikoRead 仅粗暴倾斜 15° 封面；RickyOS 偏卡通头像，缺乏文人纸墨意境</td>
+                <td><span class="badge-innovate">独创</span> <strong>浮生诗笺与书卷切片待机</strong>：打通农历二十四节气与文学金句，书脊厚度切片真实还原桌面案头</td>
+              </tr>
+              <tr>
+                <td><strong>排版与字体</strong></td>
+                <td><span class="badge-absorb">借鉴</span> 解决 CJK 细字体在墨水屏强光发虚痛点</td>
+                <td><span class="badge-reject">拒绝照搬</span> 机械加粗会导致复杂汉字（如“籍/赢/囊”）横竖全向粘连模糊</td>
+                <td><span class="badge-innovate">独创</span> <strong>「笔阵」非对称字形拓印</strong>：横细竖粗解耦加固，保护字心内白，骨力刚劲且笔笔分明</td>
+              </tr>
+              <tr>
+                <td><strong>快捷控制</strong></td>
+                <td><span class="badge-absorb">借鉴</span> 顶部下滑呼出常用系统调节</td>
+                <td><span class="badge-reject">拒绝照搬</span> 纯复制安卓式九宫格开关盒子，冰冷违和，缺乏书香质感</td>
+                <td><span class="badge-innovate">独创</span> <strong>墨香折页速控卡</strong>：仿折页微质感，提供“墨晕浓度增益”与“翻阅预算（可翻页数/可存书本）”书香状态仪</td>
+              </tr>
+              <tr>
+                <td><strong>阅读笔记</strong></td>
+                <td><span class="badge-absorb">借鉴</span> 用户需要标记与记录重点</td>
+                <td><span class="badge-reject">拒绝照搬</span> 割裂的独立 App，阅读与手帐互不相通，退出阅读记笔记成本高</td>
+                <td><span class="badge-innovate">独创</span> <strong>边注便签与拾光印章</strong>：正文划线一键盖印，自动携带农历与书目归档至手帐页；侧滑边缘浮签随时调出</td>
+              </tr>
+              <tr>
+                <td><strong>硬件按键与翻页</strong></td>
+                <td><span class="badge-absorb">借鉴</span> 物理按键与触屏结合的高效交互</td>
+                <td><span class="badge-reject">拒绝照搬</span> 机械死记三键映射，换手握持翻页方向颠倒；普通整屏黑白闪烁</td>
+                <td><span class="badge-innovate">独创</span> <strong>三键灵动气泡标尺 + 重力自适应双持 + 错相折页</strong>：底栏直观映射三键语义，倒转自适应镜像；厚度规一目了然</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- 原创六大体系技术卡片 -->
+        <div class="report-card">
+          <h2>🌿 小纸 Pico 六大原创体系工程落地架构</h2>
+          <div class="innovations-grid">
+
+            <div class="innov-card">
+              <div class="innov-card-head">
+                <span class="innov-card-title">1. 浮生诗笺待机 (Poetic Slip)</span>
+                <span class="badge-innovate">文化美学</span>
+              </div>
+              <p class="innov-card-desc">
+                结合本地真实 <code>os_lunar.c</code> 农历节气与 <code>book_quotes.h</code> 用户摘录，在浅睡/深睡时生成竖排毛笔诗笺，配有篆刻印章与连续打卡墨耕天数。另可一键切为“书卷案头书脊切片”。
+              </p>
+              <span class="innov-card-code">实现: main/apps/app_os_sleep.c · os_lunar.c</span>
+            </div>
+
+            <div class="innov-card">
+              <div class="innov-card-head">
+                <span class="innov-card-title">2. 拾光印章与边注浮签 (Marginalia)</span>
+                <span class="badge-innovate">生态联动</span>
+              </div>
+              <p class="innov-card-desc">
+                彻底打通阅读器与「手帐」根页。阅读中轻触划句，呼出微型朱砂印章气泡，一键盖印归档，附带时间截语；屏幕右边缘提供便签贴折角，随时单指滑出半屏便签卡。
+              </p>
+              <span class="innov-card-code">实现: main/apps/app_book.c · app_os_today.c</span>
+            </div>
+
+            <div class="innov-card">
+              <div class="innov-card-head">
+                <span class="innov-card-title">3. 实体书切边厚度规 (Thickness Gauge)</span>
+                <span class="badge-innovate">物理感知</span>
+              </div>
+              <p class="innov-card-desc">
+                屏幕右侧 14px 细带呈现逼真纸张纹理与书签滑块，直观感受全书厚度；翻页时调度 <code>e0470_page_turn</code> 的 16 带 37 相多拍错相引擎，实现水波纹般的揭页微动效。
+              </p>
+              <span class="innov-card-code">实现: components/e0470_page_turn · ui_kit.c</span>
+            </div>
+
+            <div class="innov-card">
+              <div class="innov-card-head">
+                <span class="innov-card-title">4. 墨香折页速控卡 (InkFlow Sheet)</span>
+                <span class="badge-innovate">书香诊断</span>
+              </div>
+              <p class="innov-card-desc">
+                顶部下拉呼出纸质折角卡片。摒弃冷冰冰的硬件参数，换算为“翻阅预算（可翻页数）”与“书架余量（可存书本）”；提供平滑的墨晕浓度增益滑尺，兼顾功耗与黑度。
+              </p>
+              <span class="innov-card-code">实现: main/ui/ui_sheet.c · read_pico_pmu</span>
+            </div>
+
+            <div class="innov-card">
+              <div class="innov-card-head">
+                <span class="innov-card-title">5. 三键气泡标尺 & 重力双持</span>
+                <span class="badge-innovate">人机工学</span>
+              </div>
+              <p class="innov-card-desc">
+                屏幕底栏正对物理三键浮现即时语义气泡，按下微凹、松开即隐；SC7A20H 陀螺仪检测到设备旋转 180° 时，界面与按键映射瞬间镜像，单手左持/右持完全无痛。
+              </p>
+              <span class="innov-card-code">实现: main/apps/app_axis.c · ui_product.c</span>
+            </div>
+
+            <div class="innov-card">
+              <div class="innov-card-head">
+                <span class="innov-card-title">6. 「笔阵」非对称字形拓印 (Bi-Zhen)</span>
+                <span class="badge-innovate">字形算法</span>
+              </div>
+              <p class="innov-card-desc">
+                墨水屏横向行扫描导致横细竖粗。算法在 <code>stb_truetype</code> 渲染后针对横向实施 1.5x 垂直形态学加固，竖向保持高对比锐利，并在密集汉字核心留白区施加保护，杜绝粘连。
+              </p>
+              <span class="innov-card-code">实现: main/font/ttf_font.c (Morphology Filter)</span>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- 资源开销与执行保障 -->
+        <div class="report-card">
+          <h2>⚡ 硬件性能预算与波形保障</h2>
+          <ul style="padding-left: 20px; font-size: 13.5px; color: #475569; line-height: 1.8;">
+            <li><strong>PSRAM 预算</strong>：ESP32-S3 8MB Octal PSRAM 极其宽裕。实体书切边厚度规仅消耗 14px 宽度 framebuffer 计算，零额外大内存开销；浮生待机帧只在锁屏前一次性生成 16 灰阶 bin 写入 TF 卡，唤醒 40ms DMA 极速上屏。</li>
+            <li><strong>波形纪律</strong>：错相揭页严格恪守 <code>e0470_page_turn.h</code> 的 16 带 37 相多拍启动，不截短脉冲宽度；气泡标尺与印章微动效走 <code>&E0470_FOLLOW_WAVEFORM</code> 结合 <code>MODE_DU</code> 差分刷，不引起全屏黑白闪烁。</li>
+            <li><strong>手帐数据持久化</strong>：拾光印章摘录直接复用现有的 <code>book_quotes_t</code> 结构体持久化存储，与 PMU 真实 RTC 农历时间紧密缝合，绝无虚假数据。</li>
+          </ul>
+        </div>
+
+      </div>
+
+    </div>
+
+  </div>
+
+  <script>
+    // 场景切换逻辑
+    function selectScene(sceneId) {
+      const scenes = ['standby', 'marginalia', 'edge', 'origami', 'gyro', 'bizhen'];
+      scenes.forEach(id => {
+        const el = document.getElementById('scene-' + id);
+        if (el) el.style.display = (id === sceneId) ? 'flex' : 'none';
+      });
+
+      const btns = document.querySelectorAll('.scene-btn');
+      btns.forEach((b, idx) => {
+        if (scenes[idx] === sceneId) b.classList.add('active');
+        else b.classList.remove('active');
+      });
+
+      updateRibbonForScene(sceneId);
+    }
+
+    // 更新底部三键气泡标尺语义
+    function updateRibbonForScene(sceneId) {
+      const l1 = document.getElementById('labelKey1');
+      const l2 = document.getElementById('labelKey2');
+      const l3 = document.getElementById('labelKey3');
+
+      if (sceneId === 'standby') {
+        l1.innerText = '唤醒 · 首页';
+        l2.innerText = '切换 · 诗笺';
+        l3.innerText = '开机 · 续读';
+      } else if (sceneId === 'marginalia') {
+        l1.innerText = '上划 · 选句';
+        l2.innerText = '盖印 · 拾光';
+        l3.innerText = '呼出 · 便签';
+      } else if (sceneId === 'edge') {
+        l1.innerText = '上页 · 错相';
+        l2.innerText = '厚度 · 标尺';
+        l3.innerText = '下页 · 错相';
+      } else if (sceneId === 'origami') {
+        l1.innerText = '收起 · 折页';
+        l2.innerText = '定稿 · 清残';
+        l3.innerText = '待机 · 诗笺';
+      } else if (sceneId === 'gyro') {
+        l1.innerText = '镜像 · 左持';
+        l2.innerText = '翻转 · 180°';
+        l3.innerText = '镜像 · 右持';
+      } else if (sceneId === 'bizhen') {
+        l1.innerText = '字形 · 原生';
+        l2.innerText = '笔阵 · 拓印';
+        l3.innerText = '扎实 · 粗黑';
+      }
+    }
+
+    // 诗笺与书脊待机模式切换
+    function toggleStandbyMode() {
+      const poetic = document.getElementById('standbyPoetic');
+      const spine = document.getElementById('standbySpine');
+      const chip = document.querySelector('.standby-toggle-chip');
+
+      if (poetic.style.display !== 'none') {
+        poetic.style.display = 'none';
+        spine.style.display = 'flex';
+        chip.innerText = '切至诗笺 ⇋';
+      } else {
+        poetic.style.display = 'flex';
+        spine.style.display = 'none';
+        chip.innerText = '切至书脊 ⇋';
+      }
+    }
+
+    // 拾光印章气泡显示与盖印
+    function toggleStampBubble() {
+      const bubble = document.getElementById('stampBubble');
+      bubble.style.display = (bubble.style.display === 'none') ? 'flex' : 'none';
+    }
+
+    function sealStampIntoJournal() {
+      const bubble = document.getElementById('stampBubble');
+      bubble.innerHTML = '<span style="font-weight:800; color:var(--ink-0);">✓ 已盖印归档至「手帐」！</span>';
+      setTimeout(() => {
+        bubble.style.display = 'none';
+        bubble.innerHTML = '<div class="stamp-btn-red" onclick="sealStampIntoJournal()"><span style="font-size: 15px;">印</span> 盖印至今日手帐</div><span style="font-size: 11px; color: var(--ink-5);">| 农历归档</span>';
+        toggleMarginaliaDrawer();
+      }, 700);
+    }
+
+    function toggleMarginaliaDrawer() {
+      const drawer = document.getElementById('marginDrawer');
+      drawer.style.display = (drawer.style.display === 'none') ? 'flex' : 'none';
+    }
+
+    // 错相揭页动效触发
+    function triggerPageTurnEffect() {
+      const bands = document.getElementById('staggeredBands');
+      bands.classList.remove('active');
+      void bands.offsetWidth; // 触发 reflow
+      bands.classList.add('active');
+
+      const bookmark = document.getElementById('edgeBookmark');
+      let curr = parseInt(bookmark.innerText) || 42;
+      curr = (curr + 2 > 100) ? 1 : curr + 2;
+      bookmark.innerText = curr + '%';
+      bookmark.style.top = curr + '%';
+    }
+
+    // 墨晕浓度滑条调节
+    function adjustDensity(event) {
+      const rail = event.currentTarget;
+      const rect = rail.getBoundingClientRect();
+      const x = Math.max(0, Math.min(rect.width, event.clientX - rect.x));
+      const pct = Math.round((x / rect.width) * 100);
+      document.getElementById('densityThumb').style.left = (pct - 5) + '%';
+      document.getElementById('densityValText').innerText = `+${pct}% (${pct > 50 ? '扎实' : '清爽'})`;
+    }
+
+    // 重力感应翻转测试
+    let isFlipped = false;
+    function toggleHandOrientation() {
+      isFlipped = !isFlipped;
+      const chassis = document.getElementById('hwChassis');
+      const tag = document.getElementById('handModeTag');
+      const label = document.getElementById('gyroStatusLabel');
+      const hand = document.getElementById('gyroHandIcon');
+
+      const k1 = document.getElementById('labelKey1');
+      const k3 = document.getElementById('labelKey3');
+
+      if (isFlipped) {
+        chassis.classList.add('flipped');
+        tag.innerText = '左手单持 (镜像翻转)';
+        label.innerText = '当前：左手拇指握持模式 (KEY1 与 KEY3 镜像对调)';
+        hand.innerText = '🤚';
+        k1.innerText = '下翻 · 逐页';
+        k3.innerText = '上翻 · 逐页';
+      } else {
+        chassis.classList.remove('flipped');
+        tag.innerText = '右手单持';
+        label.innerText = '当前：右手拇指握持模式';
+        hand.innerText = '✋';
+        k1.innerText = '上翻 · 逐页';
+        k3.innerText = '下翻 · 逐页';
+      }
+    }
+
+    // 物理按键与气泡标尺联动
+    function pressPhysicalKey(keyIndex) {
+      const cell = document.getElementById('ribbonKey' + keyIndex);
+      cell.classList.add('pressed');
+      setTimeout(() => {
+        cell.classList.remove('pressed');
+      }, 200);
+
+      if (keyIndex === 1) {
+        triggerPageTurnEffect();
+      } else if (keyIndex === 2) {
+        // 中键翻转速控
+        const origami = document.getElementById('scene-origami');
+        if (origami.style.display !== 'none') {
+          selectScene('marginalia');
+        } else {
+          selectScene('origami');
+        }
+      } else if (keyIndex === 3) {
+        triggerPageTurnEffect();
+      }
+    }
+
+    function hitRibbonKey(keyIndex) {
+      pressPhysicalKey(keyIndex);
+    }
+  </script>
+
+</body>
+</html>

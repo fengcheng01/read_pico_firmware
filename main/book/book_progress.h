@@ -17,6 +17,11 @@
 #include <stdint.h>
 #include "esp_err.h"
 
+/// 阅读字号档位共用范围，步进 4；进度记录、设置默认值与阅读器放大边界共用，避免各自漂移。
+/// Shared reading font-tier bounds in steps of 4; progress records, the default setting and the reader bounds share them so they cannot drift.
+#define BOOK_PROGRESS_PX_MIN 36
+#define BOOK_PROGRESS_PX_MAX 80
+
 /// 调用方须串行化所有进度写入与遗忘；HTTP 退出并 join 后才交回阅读页。
 /// Callers serialize progress writes and forget operations; HTTP stops and joins before returning to reading.
 
@@ -44,6 +49,10 @@ typedef struct {
     bool approximate;
     /// 持久阅读顺序；保留旧字段名，v1 记录读取为 0。/ Persistent reading order; legacy field name, v1 records load as zero.
     uint32_t last_open_s;
+    /// 本书累计有效阅读毫秒与有效翻页数（v3；旧版读取为 0），用于估算剩余阅读时间。
+    /// Cumulative effective reading milliseconds and page turns for this book (v3; older
+    /// records load zero), feeding the remaining-reading-time estimate.
+    uint32_t read_ms, pages;
 } book_progress_t;
 
 /// 校验版本、完整路径与文件大小后恢复；失败不改 out。/ Restore after version, full-path and size validation; leave out unchanged on failure.

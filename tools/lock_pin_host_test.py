@@ -46,7 +46,14 @@ assert(key_only||(!wrong&&area.x<=164&&area.x+area.width>=524&&area.y<=216&&area
 static void vTaskDelay(int ms){now+=ms;}
 static int64_t esp_timer_get_time(void){return now*1000;}
 static void rails_idle_check(int64_t ms){assert(ms==now);idles++;}
-static void read_pico_pmu_drain_events(void){}
+__attribute__((unused)) static void read_pico_pmu_drain_events(void){}
+// 入口等键静默的替身：真实实现会抽干残余 SHORT 事件，这里只推进时间。
+// Stand-in for the entry key-idle wait: the real one drains leftover SHORT
+// events; this only advances time.
+static void app_lock_wait_key_idle(int t){now+=t;}
+#define READ_PICO_PMU_WAKE_KEY 0x01
+static unsigned takes; static int key_on_take = -1;
+static unsigned char read_pico_pmu_take_wake_events(void){ return takes++ == (unsigned)key_on_take ? 1u : 0u; }
 static int cst836u_read(int tp,cst836u_touch_t* t){(void)tp;
 if(failure && prefix<2){prefix++;*t=(cst836u_touch_t){.touched=true,.count=prefix==2&&failure==2?2:1,.x=9};return prefix==2&&failure==1?1:0;}
 assert(reads<16);*t=(cst836u_touch_t){.touched=reads%2==0,.count=1,.x=keys[reads/2]};reads++;return 0;}
@@ -56,7 +63,12 @@ tests=r'''
 int main(void){EpdiyHighlevelState hl=0;assert(app_lock_pin_challenge(&hl,1));assert(fulls==1&&areas==13&&pages==2&&idles==8&&reads==16&&highlights==8&&restores==0);
 for(failure=1;failure<=2;failure++){prefix=0;reads=fulls=areas=pages=idles=paints=highlights=restores=0;wrong=false;now=0;
 assert(app_lock_pin_challenge(&hl,1));assert(reads==16&&fulls==1&&highlights==9&&restores==1);}
-puts("lock PIN: highlights, dot unions, cleanup, read-error and multitouch cancellation PASS");}
+// 输入途中按电源键：立即返回 false 请求重锁（开机页转软睡）。
+// A power key mid-entry returns false at once to request relocking (boot turns it into soft sleep).
+takes=0;key_on_take=2;reads=fulls=areas=pages=idles=paints=highlights=restores=0;wrong=false;now=0;
+assert(!app_lock_pin_challenge(&hl,1)&&takes==3&&fulls==1);
+key_on_take=-1;takes=0;
+puts("lock PIN: highlights, dot unions, cleanup, read-error, multitouch cancellation and power-key relock PASS");}
 '''
 out=root/'build-host/lock-pin-test';out.mkdir(parents=True,exist_ok=True)
 c=out/'test.c';c.write_text(harness+production+tests)

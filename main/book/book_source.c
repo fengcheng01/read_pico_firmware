@@ -91,6 +91,7 @@ void book_close(void) {
     free(s_book.entries); memset(&s_book, 0, sizeof(s_book));
 }
 size_t book_chapter_count(void) { return s_epub ? book_epub_chapter_count(s_epub) : s_book.count; }
+void book_prepare_toc(void) { if (s_epub) book_epub_prepare_toc(s_epub); }
 esp_err_t book_chapter_title(size_t i, char *buf, size_t cap) {
     if (s_epub) return book_epub_chapter_title(s_epub, i, buf, cap);
     if (!buf || !cap || i >= s_book.count) return ESP_ERR_INVALID_ARG;

@@ -38,9 +38,20 @@ esp_err_t zip_extract(zip_reader_t* z,int i,void* dst,size_t cap) {
     return ESP_OK;
 }
 bool book_image_decode(const uint8_t* d,size_t n,size_t b,uint8_t** out,uint16_t* w,uint16_t* h) {
-    (void)d;(void)n;(void)b;
+    (void)d;(void)n;assert(b==128u*1024u);
     *w=4;*h=4;*out=malloc(16);memset(*out,0x33,16);return true;
 }
+
+// 封面缩放宿主替身：最近邻即可；管线测试不校验像素质量（像素规则由 test_book_images 覆盖）。
+// Host stand-in for cover scaling: nearest sampling; the pipeline test does not check
+// pixel quality (sampling rules are covered by test_book_images).
+void book_image_resample(const uint8_t* src, unsigned stride, unsigned sw, unsigned sh,
+                         uint8_t* dst, unsigned dw, unsigned dh) {
+    for (unsigned y = 0; y < dh; ++y)
+        for (unsigned x = 0; x < dw; ++x)
+            dst[(size_t)y * dw + x] = src[(size_t)(y * sh / dh) * stride + x * sw / dw];
+}
+
 static bool load(void) {uint8_t* out=NULL;bool ok=book_cover_load("fixture.epub",&out);if(ok) assert(out);else assert(!out);free(out);return ok;}
 int main(void) {
     container_size=0;extracts=0;assert(!load() && extracts==0);
@@ -53,5 +64,10 @@ int main(void) {
     container="<rootfile missing='OPS/book.opf'/>";container_size=strlen(container);assert(!load());
     container="<rootfile full-path='OPS/book.opf'/>";container_size=strlen(container);
     opf="<item href='art.png' properties='cover-image'/>";opf_size=strlen(opf);assert(load());
+    container="<c:container><c:rootfile full-path = 'OPS/book.opf'/></c:container>";container_size=strlen(container);
+    opf="<opf:item properties = 'cover-image' href = './../OPS/art%2Epng#cover'/>";opf_size=strlen(opf);assert(load());
+    opf="<item properties='cover-image' href='missing.png'/>";opf_size=strlen(opf);uint8_t* out=NULL;assert(book_cover_read("fixture.epub",&out)==BOOK_COVER_RETRY&&!out);
+    opf="<package><manifest/></package>";opf_size=strlen(opf);assert(book_cover_read("fixture.epub",&out)==BOOK_COVER_ABSENT&&!out);
+    assert(book_cover_read("fixture.txt",&out)==BOOK_COVER_ABSENT&&!out);
     puts("book_cover: raw XML, bounds, missing attributes and cover scaling passed");
 }

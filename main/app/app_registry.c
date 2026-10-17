@@ -19,10 +19,12 @@ extern const app_desc_t app_home;
 extern const app_desc_t app_os_home;
 extern const app_desc_t app_os_today;
 extern const app_desc_t app_os_settings;
+extern const app_desc_t app_os_bluetooth;
 extern const app_desc_t app_os_time;
 extern const app_desc_t app_os_reading;
 extern const app_desc_t app_os_sleep;
 extern const app_desc_t app_os_pin;
+extern const app_desc_t app_image;
 extern const app_desc_t app_os_storage;
 extern const app_desc_t app_os_tools;
 extern const app_desc_t app_refresh;
@@ -53,8 +55,10 @@ static const struct { os_app_id_t id; const app_desc_t* app; } s_apps[] = {
     {OS_APP_READING, &app_os_reading},
     {OS_APP_SLEEP, &app_os_sleep},
     {OS_APP_PIN, &app_os_pin},
+    {OS_APP_IMAGES, &app_image},
     {OS_APP_STORAGE, &app_os_storage},
     {OS_APP_TOOLS, &app_os_tools},
+    {OS_APP_BLUETOOTH, &app_os_bluetooth},
     {OS_APP_DIAGNOSTICS, &app_home},
     {OS_APP_NONE, &app_refresh},
     {OS_APP_NONE, &app_reading},
@@ -72,7 +76,9 @@ static const struct { os_app_id_t id; const app_desc_t* app; } s_apps[] = {
 
 #define APP_COUNT ((int)(sizeof(s_apps) / sizeof(s_apps[0])))
 #define PRODUCT_COUNT 4
-#define DIAGNOSTIC_FIRST 12
+// 首个诊断行：跟在设置子页（含锁屏图片）之后。/ First diagnostic row: after the
+// Settings children (including lock images).
+#define DIAGNOSTIC_FIRST 14
 
 int app_product_count(void) { return PRODUCT_COUNT; }
 int app_diagnostic_count(void) { return APP_COUNT - DIAGNOSTIC_FIRST; }
@@ -104,6 +110,14 @@ const app_desc_t* app_by_id(os_app_id_t id) {
     if (id == OS_APP_NONE) return NULL;
     for (int i = 0; i < APP_COUNT; ++i) if (s_apps[i].id == id) return s_apps[i].app;
     return NULL;
+}
+
+// 锁屏来源记录用：稳定产品 ID，无产品 ID 的演示页按首页处理。
+// For the lock-origin record: the stable product ID, with demo pages without
+// one counting as home.
+os_app_id_t app_id_of(const app_desc_t* app) {
+    for (int i = 0; i < APP_COUNT; ++i) if (s_apps[i].app == app) return s_apps[i].id ? s_apps[i].id : OS_APP_HOME;
+    return OS_APP_HOME;
 }
 
 const app_desc_t* app_selftest_page(void) {

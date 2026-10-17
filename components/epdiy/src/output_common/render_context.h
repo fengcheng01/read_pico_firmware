@@ -64,6 +64,15 @@ typedef struct {
     /// LUT building function. Must not be NULL
     lut_build_func_t lut_build_func;
 
+    // 一次性相位覆盖（揭页错相）：本帧逐行或逐列带各自的波形相位，用后即清。
+    // One-shot phase overrides (staggered page turn): rows or column bands carry their own waveform phase this draw; consumed once.
+    const uint8_t* const* phase_luts;
+    const int8_t* line_phase;
+    const int* col_band_x0;
+    const int* col_band_x1;
+    const int8_t* col_band_phase;
+    int col_band_n;
+
     /// Queue of lines prepared for output to the display,
     /// one for each thread.
     LineQueue_t line_queues[NUM_RENDER_THREADS];

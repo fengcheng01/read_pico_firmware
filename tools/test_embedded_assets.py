@@ -38,6 +38,14 @@ void* asset_test_malloc(size_t bytes, int caps) {
 void asset_test_free(void* p) { if(p) { assert(live>0); live--; free(p); } }
 int epd_rotated_display_width(void) { return 684; }
 int epd_rotated_display_height(void) { return 1216; }
+int epd_width(void) { return 1216; }
+int epd_height(void) { return 684; }
+static int brand_draws;
+void ui_text(uint8_t* fb,int x,int y,int px,const char* text,enum EpdFontFlags align,bool inverted) {
+    assert(fb && x==342 && !inverted && align==EPD_DRAW_ALIGN_CENTER);
+    assert((y==190 && px==64 && !strcmp(text,"PageRest")) || (y==1100 && px==28 && !strcmp(text,"test-version")));
+    brand_draws++;
+}
 void ui_draw_full_image(uint8_t* fb,const uint8_t* image) {
     paintings++; assert(fb && fb!=image);
     if(image) memcpy(fb,image,684*1216/2); else memset(fb,255,684*1216/2);
@@ -63,6 +71,17 @@ int main(int argc,char** argv) {
         input[0]^=1;
         assert(!live);
         if (raw==684*1216/2) {
+            brand_draws=0;
+            ui_draw_boot_splash(output,expected,"test-version",false);
+            assert(brand_draws==2 && !live);
+            for(size_t n=0;n<raw;++n) {
+                assert((output[n]&15)>=(expected[n]&15));
+                assert((output[n]>>4)>=(expected[n]>>4));
+            }
+            ui_draw_boot_splash(output,expected,"test-version",true);
+            assert(brand_draws==4 && !memcmp(output,expected,raw));
+            ui_draw_boot_splash(output,NULL,"test-version",true);
+            assert_white(output,raw);
             allocation_calls=0; fail_allocation=0;
             assert(ui_draw_packed_full_image(output,input,packed));
             assert(!memcmp(output,expected,raw) && !live && allocation_calls==2);

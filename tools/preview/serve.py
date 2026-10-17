@@ -95,7 +95,7 @@ def action_command(action, pages):
     if kind == "asset":
         return "asset %d" % integer("asset", 0, 1)
     if kind == "home_fixture":
-        return "fixture %d" % integer("fixture", 0, 2)
+        return "fixture %d" % integer("fixture", 0, 5)
     if kind in ("menu", "tick"):
         return kind
     raise ValueError("Unknown action")

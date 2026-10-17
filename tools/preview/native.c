@@ -7,8 +7,8 @@
  * Frozen: Adapted pages only; presents record zero physical time and do not fabricate sensor values.
  * 冻结：布局入口同步设备的一次导航清理标志；普通重绘不重复，全程不模拟纸屏残影。
  * Frozen: Layout entries mirror the device's one-shot navigation cleanup marker; ordinary redraws do not repeat it, and panel ghosting is never modeled.
- * 冻结：成功夜间正文翻页共用gc_every计数；整屏GC归零，普通控件、局推、页脚和日间翻页不计。
- * Frozen: Successful night body turns share the gc_every count; full-screen GC resets it, and controls, local pushes, footers and day turns never count.
+ * 冻结：日间产品出口与旧夜间路径分别累计成功正文翻页；整屏GC归零，控件、局推和页脚不计。
+ * Frozen: Day product and legacy night paths count successful body turns separately; full-screen GC resets them, excluding controls, local pushes and footers.
  */
 #include "preview_host.h"
 #include "display_pixels.h"
@@ -18,6 +18,8 @@
 #include "settings.h"
 #include "ttf_font.h"
 #include "ui_kit.h"
+#include "asset_pack.h"
+#include "firmware_version.h"
 #include "ui_menu.h"
 #include "ui_gesture.h"
 #include "book_entry.h"
@@ -25,6 +27,7 @@
 #include "book_home.h"
 #include "book_source.h"
 #include "os_time.h"
+#include "os_page_turner.h"
 #include <string.h>
 #include <time.h>
 
@@ -40,18 +43,28 @@ static int s_prev_ctx_leaf;
 static bool s_navigation_entry;
 static bool menu_open = true, white_exit;
 static int menu_leaf, unsupported = -1, asset = -1, refresh_mode, presents, gc_presents;
+static unsigned s_day_body_turns, s_clean_generation;
 static unsigned s_night_body_turns, body_presents, quiet_presents, night_area_presents;
-static unsigned physical_clears, crossmux_presents;
-static int crossmux_action = -1;
+static unsigned physical_clears;
 static EpdRect refresh_area;
 static int refresh_wave;
 static char font_path[TTF_FONT_PATH_MAX];
 void preview_home_fixture(int value);
+void preview_transfer_fixture(int value);
 void preview_fixture(int value);
 unsigned preview_sync_starts(void);
+extern unsigned preview_lock_requests;
+void preview_ble_key(int usage);
+void preview_ble_failure(int value);
 int preview_sync_job(void);
 void preview_time_step(int seconds);
+void preview_time_valid(bool valid);
+void preview_heap_fail(int count);
 void preview_draw_lock_clock(uint8_t* framebuffer);
+bool preview_draw_lock_excerpt(uint8_t* framebuffer);
+void preview_quote_save_fail(unsigned count);
+void preview_style_save_fail(unsigned count);
+void preview_goal_save_fail(unsigned count);
 
 const EpdWaveform E0470_WAVEFORM = {0}, E0470_FULL_WAVEFORM = {1}, E0470_GRAY8_WAVEFORM = {2};
 const EpdWaveform E0470_FOLLOW_WAVEFORM = {3};
@@ -59,7 +72,6 @@ const EpdWaveform E0470_NAVIGATION_WAVEFORM = {4};
 const EpdWaveform E0470_TEXTTURN_NIGHT_WAVEFORM = {5};
 const EpdWaveform E0470_TEXTTURN_WAVEFORM = {7};
 const EpdWaveform E0470_DIRECT_WAVEFORM = {6};
-const EpdWaveform E0470_CROSSMUX_WAVEFORM = {8};
 const EpdWaveform E0470_GRAY_DIRECT_WAVEFORM = {9};
 static int64_t s_time_bias_ms;
 
@@ -81,7 +93,7 @@ bool display_take_white_exit(void) { bool result = white_exit; white_exit = fals
 
 static enum EpdDrawError record_refresh(enum EpdDrawMode mode) {
     refresh_mode = mode; presents++;
-    if ((mode & 0xF) == MODE_GC16) gc_presents++;
+    if ((mode & 0xF) == MODE_GC16) { gc_presents++; s_day_body_turns = 0; ++s_clean_generation; }
     return EPD_DRAW_SUCCESS;
 }
 enum EpdDrawError update_display_mode(EpdiyHighlevelState* state, enum EpdDrawMode mode) {
@@ -159,6 +171,9 @@ static enum EpdDrawError record_body(bool night, bool direct) {
 enum EpdDrawError update_display_text_turn(EpdiyHighlevelState* state, bool white_on_black) {
     (void)state; return record_body(white_on_black, false);
 }
+enum EpdDrawError update_display_page_turn(EpdiyHighlevelState* state, EpdRect area, bool forward) {
+    (void)area; (void)forward; return record_body(false, false);
+}
 enum EpdDrawError update_display_text_direct(EpdiyHighlevelState* state, bool white_on_black) {
     display_prepare_direct_frame(state->front_fb, epd_width(), epd_height(), white_on_black);
     return record_body(white_on_black, true);
@@ -170,34 +185,40 @@ enum EpdDrawError update_display_text_gray_direct(EpdiyHighlevelState* state, bo
     return result;
 }
 
-// 只记录真实reader选择的对照出口、周期与模式；不模拟波形或光学残影。
-// Record the production reader's comparison call, interval and mode without simulating waveforms or optical ghosts.
-enum EpdDrawError update_display_night_crossmux(EpdiyHighlevelState* state, display_crossmux_action_t action) {
-    display_prepare_direct_frame(state->front_fb, epd_width(), epd_height(), true);
+// 清白直绘只记录实际出口与周期，不把预览像素当作面板洁净度证据。
+// White-clear repaint records actions and intervals only, never treating preview pixels as evidence of panel cleanliness.
+enum EpdDrawError update_display_reader_turn(EpdiyHighlevelState* hl, display_reader_mode_t mode,
+                                            EpdRect area, bool forward) {
+    if (mode < DISPLAY_READER_STANDARD || mode > DISPLAY_READER_ANIMATED) return EPD_DRAW_INVALID_CROP;
     unsigned every = app_settings_gc_every();
-    bool entry = action == DISPLAY_CROSSMUX_ENTRY || s_navigation_entry;
-    bool turn = action == DISPLAY_CROSSMUX_TURN;
-    bool clean = action == DISPLAY_CROSSMUX_CLEAN || (turn && !entry && every && s_night_body_turns + 1 >= every);
-    refresh_wave = E0470_CROSSMUX_WAVEFORM.unused;
-    refresh_area = (EpdRect){0, 0, 684, 1216};
-    crossmux_action = action;
-    crossmux_presents++;
-    enum EpdDrawError result = record_refresh(clean ? MODE_GC16 : entry ? MODE_GL16 : MODE_DU);
-    if (result == EPD_DRAW_SUCCESS) {
-        if (clean || entry) { s_night_body_turns = 0; s_navigation_entry = false; }
-        else if (turn) s_night_body_turns = every ? s_night_body_turns + 1 : 0;
-        if (turn) body_presents++;
+    bool due = every && s_day_body_turns >= every - 1;
+    uint32_t generation = s_clean_generation;
+    unsigned before_body = body_presents;
+    // 二值目标在周期清理时也保持二值，避免清理页与随后快刷粗细跳变。
+    // Keep binary targets binary even at cleanup, preventing weight changes between cleanup and fast pages.
+    if (mode == DISPLAY_READER_BINARY)
+        display_prepare_direct_frame(hl->front_fb, epd_width(), epd_height(), false);
+    enum EpdDrawError result;
+    if (due) result = update_display_full(hl);
+    else switch (mode) {
+        case DISPLAY_READER_STANDARD: result = update_display_text_turn(hl, false); break;
+        case DISPLAY_READER_BINARY: result = update_display_text_direct(hl, false); break;
+        case DISPLAY_READER_GRAY: result = update_display_text_gray_direct(hl, false); break;
+        default: result = update_display_page_turn(hl, area, forward); break;
     }
+    // 成功的手动/入口/故障恢复全刷已统一清零；失败不推进，到期失败留给下一次重试。
+    // Manual/entry/recovery GC already reset the count; failures never advance it, retaining due retries.
+    if (result == EPD_DRAW_SUCCESS && generation == s_clean_generation)
+        s_day_body_turns = every ? s_day_body_turns + 1 : 0;
+    if (result == EPD_DRAW_SUCCESS && body_presents == before_body) ++body_presents;
     return result;
 }
 
-// 清白直绘只记录实际出口与周期，不把预览像素当作面板洁净度证据。
-// White-clear repaint records actions and intervals only, never treating preview pixels as evidence of panel cleanliness.
-enum EpdDrawError update_display_night_white_repaint(EpdiyHighlevelState* state, display_crossmux_action_t action, bool direct, bool gray_direct) {
+enum EpdDrawError update_display_night_white_repaint(EpdiyHighlevelState* state, display_night_action_t action, bool direct, bool gray_direct) {
     if (direct && !gray_direct) display_prepare_direct_frame(state->front_fb, epd_width(), epd_height(), true);
     unsigned every = app_settings_gc_every();
-    bool turn = action == DISPLAY_CROSSMUX_TURN;
-    bool clean = s_navigation_entry || action == DISPLAY_CROSSMUX_ENTRY || action == DISPLAY_CROSSMUX_CLEAN ||
+    bool turn = action == DISPLAY_NIGHT_TURN;
+    bool clean = s_navigation_entry || action == DISPLAY_NIGHT_ENTRY || action == DISPLAY_NIGHT_CLEAN ||
                  (turn && every && s_night_body_turns + 1 >= every);
     if (clean) physical_clears++;
     refresh_area = (EpdRect){0, 0, 684, 1216};
@@ -294,7 +315,14 @@ static void tap(int x, int y) {
     if (asset >= 0) { asset = -1; menu_open = true; display_request_navigation_settle(); draw_menu(); return; }
     if (ui_menu_handle_hit_test((uint16_t)x, (uint16_t)y)) {
         display_request_navigation_settle();
-        if (menu_open && current) { menu_open = false; present(APP_REDRAW_PAGE); }
+        if (menu_open && current) {
+            menu_open = false; present(APP_REDRAW_PAGE);
+            // 与设备同轮 consumed tick 一致，丢弃全局菜单期间的外部输入。
+            // Match the device's consumed tick on closing a global menu, discarding external input received within it.
+            ctx.now_ms = preview_now_ms(); ctx.consumed = true;
+            if (current->on_tick) present(current->on_tick(&ctx));
+            ctx.consumed = false;
+        }
         else { menu_open = true; menu_leaf = ui_menu_leaf_for_app(current); draw_menu(); }
         return;
     }
@@ -340,7 +368,7 @@ static void key(int key) {
 }
 
 static bool load_asset(int which) {
-    const char* path = which == 0 ? "main/assets/loading_4bpp.pack" : "main/assets/lock_4bpp.pack";
+    const char* path = which == 1 ? "main/assets/lock_4bpp.pack" : "main/assets/loading_4bpp.pack";
     FILE* f = fopen(path, "rb");
     if (!f) return false;
     if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return false; }
@@ -350,7 +378,13 @@ static bool load_asset(int which) {
     if (!image) { fclose(f); return false; }
     bool ok = fread(image, 1, (size_t)length, f) == (size_t)length && fgetc(f) == EOF;
     fclose(f);
-    if (ok) ok = ui_draw_packed_full_image(fb, image, (size_t)length);
+    if (ok && which >= 2) {
+        size_t bytes = (size_t)684 * 1216 / 2;
+        uint8_t* raw = malloc(bytes);
+        ok = raw && asset_pack_unpack(image, (size_t)length, raw, bytes);
+        if (ok) ui_draw_boot_splash(fb, raw, firmware_version(), which == 3);
+        free(raw);
+    } else if (ok) ok = ui_draw_packed_full_image(fb, image, (size_t)length);
     if (ok) { asset = which; unsupported = -1; menu_open = false; }
     free(image); return ok;
 }
@@ -383,14 +417,56 @@ int main(int argc, char** argv) {
         if (!export_frame(argv[1])) { perror("frame export"); return 1; }
         static book_quote_t quote_snapshot[BOOK_QUOTES_MAX];
         size_t quote_count = book_quotes_list(quote_snapshot, BOOK_QUOTES_MAX);
-        printf("{\"page\":%d,\"menu\":%s,\"menu_leaf\":%d,\"leaf\":%d,\"asset\":%d,\"unsupported\":%d,\"refresh_mode\":%d,\"presents\":%d,\"gc_presents\":%d,\"refresh_wave\":%d,\"night_turns\":%u,\"body_presents\":%u,\"quiet_presents\":%u,\"night_area_presents\":%u,\"reading\":%s,\"sync_starts\":%u,\"sync_job\":%d,\"quote_count\":%u,\"history_page\":%u,\"history_count\":%u,\"physical_clears\":%u,\"crossmux_presents\":%u,\"crossmux_action\":%d,\"refresh_area\":[%d,%d,%d,%d]}\n",
-               app_index_of(current), menu_open ? "true" : "false", menu_leaf, ctx.leaf, asset, unsupported, refresh_mode, presents, gc_presents, refresh_wave, s_night_body_turns, body_presents, quiet_presents, night_area_presents,
+        static book_quote_t lock_snapshot;
+        unsigned lock_seq=book_quotes_lock_get(&lock_snapshot)?lock_snapshot.seq:0;
+        const os_page_turner_info_t* ble = os_page_turner_info();
+        printf("{\"font_ready\":%s,\"font_builtin\":%s,\"daily_goal\":%u,\"reader_stroke\":%d,\"ble_enabled\":%s,\"ble_saved\":%s,\"ble_phase\":%d,\"ble_learning\":%d,\"ble_bound_lock\":%s,\"lock_requests\":%u,\"page\":%d,\"menu\":%s,\"menu_leaf\":%d,\"leaf\":%d,\"asset\":%d,\"unsupported\":%d,\"refresh_mode\":%d,\"presents\":%d,\"gc_presents\":%d,\"refresh_wave\":%d,\"night_turns\":%u,\"body_presents\":%u,\"quiet_presents\":%u,\"night_area_presents\":%u,\"reading\":%s,\"sync_starts\":%u,\"sync_job\":%d,\"quote_count\":%u,\"history_page\":%u,\"history_count\":%u,\"physical_clears\":%u,\"shelf_grid\":%s,\"lock_seq\":%u,\"lock_style\":%u,\"lock_mode\":%d,\"time_state\":%d,\"refresh_area\":[%d,%d,%d,%d]}\n",
+               ttf_font_ready()?"true":"false", ttf_font_is_builtin()?"true":"false", app_settings_daily_goal(), app_settings_book_stroke(), ble->enabled ? "true" : "false", ble->saved ? "true" : "false", ble->radio.phase, ble->learning, ble->bound_lock ? "true" : "false", preview_lock_requests, app_index_of(current), menu_open ? "true" : "false", menu_leaf, ctx.leaf, asset, unsupported, refresh_mode, presents, gc_presents, refresh_wave, s_night_body_turns, body_presents, quiet_presents, night_area_presents,
                current == app_by_id(OS_APP_LIBRARY) && book_chapter_count() > 0 ? "true" : "false",
                preview_sync_starts(), preview_sync_job(), (unsigned)quote_count, book_home_snapshot()->recent_page, book_home_snapshot()->history_count,
-               physical_clears, crossmux_presents, crossmux_action, refresh_area.x, refresh_area.y, refresh_area.width, refresh_area.height);
+               physical_clears, app_settings_shelf_grid() ? "true" : "false", lock_seq, app_settings_lock_style(), app_settings_effective_lock_mode(), os_time_info()->state, refresh_area.x, refresh_area.y, refresh_area.width, refresh_area.height);
         fflush(stdout);
         if (!fgets(command, sizeof(command), stdin)) break;
         int value, x, y, x1, y1;
+        if (sscanf(command, "time_valid %d", &value) == 1) {
+            preview_time_valid(value != 0); ctx.consumed = false; ctx.now_ms = preview_now_ms();
+            os_time_poll(ctx.now_ms);
+            if (current && current->on_tick) present(current->on_tick(&ctx));
+            continue;
+        }
+        if (!strncmp(command, "font_reclaim", 12)) { ttf_font_reclaim(); continue; }
+        if (sscanf(command, "heap_fail %d", &value) == 1) { preview_heap_fail(value); continue; }
+        if (sscanf(command, "quote_fixture %d", &value) == 1 && (value==-1 || (value>=1 && value<=32))) {
+            for(int i=1;i<=(value==-1?1:value);++i){
+                book_quote_t q={.chapter=0,.byte_off=(uint32_t)i*20,.end_off=(uint32_t)i*20+12,.pct=10};
+                snprintf(q.path,sizeof(q.path),"/flash/books/摘录选择测试.txt");
+                snprintf(q.text,sizeof(q.text),"第%d条摘录。清晨的街道很安静，我沿着河岸走了一段路。",i);
+                if(i==1){
+                    snprintf(q.path,sizeof(q.path),"/flash/books/月亮与六便士.txt");
+                    snprintf(q.text,sizeof(q.text),"满地都是便士，他却抬头看见了月亮。");
+                }
+                if(value==-1){
+                    snprintf(q.path,sizeof(q.path),"/flash/books/短篇.txt");
+                    snprintf(q.text,sizeof(q.text),"雨过天晴。");
+                }
+                book_quotes_add(&q);
+            }
+            if(current&&current->on_tick)present(current->on_tick(&ctx));
+            continue;
+        }
+        if (sscanf(command, "ble_key %d", &value) == 1) { preview_ble_key(value); continue; }
+        if (sscanf(command, "ble_fail %d", &value) == 1) { preview_ble_failure(value); continue; }
+        if (sscanf(command, "goal_fail %d", &value) == 1) { preview_goal_save_fail(value>0?value:0);continue; }
+        if (sscanf(command, "style_fail %d", &value) == 1) { preview_style_save_fail(value>0?value:0);continue; }
+        if (sscanf(command, "quote_fail %d", &value) == 1) { preview_quote_save_fail(value > 0 ? value : 0); continue; }
+        if (sscanf(command, "transfer_fixture %d", &value) == 1) {
+            preview_transfer_fixture(value);
+            ctx.consumed = false;
+            s_time_bias_ms += 3000;
+            ctx.now_ms = preview_now_ms();
+            if (current && current->on_tick) present(current->on_tick(&ctx));
+            continue;
+        }
         if (sscanf(command, "time_step %d", &value) == 1) {
             preview_time_step(value);
             s_time_bias_ms += (int64_t)value * 1000;
@@ -406,11 +482,23 @@ int main(int argc, char** argv) {
             os_time_apply((uint32_t)x, 32);
             preview_draw_lock_clock(fb);
         }
+        else if (!strncmp(command, "lock_quote", 10)) {
+            if (!preview_draw_lock_excerpt(fb)) load_asset(1);
+        }
         else if (sscanf(command, "glyph %d", &x) == 1) {
             ui_clear_page(fb);
             ui_text(fb, 40, 300, x, "3", EPD_DRAW_ALIGN_LEFT, false);
         }
         else if (sscanf(command, "key %d", &value) == 1 && value >= 0 && value < 3) key(value);
+        else if (sscanf(command, "key_hold %d", &value) == 1 && value >= 0 && value < 3) {
+            key(value);
+            if (!menu_open && current && current->owns_keys && current->on_key_long)
+                present(current->on_key_long(&ctx, value));
+            requests();
+        }
+        else if (sscanf(command, "boot %d", &value) == 1 && (value == 0 || value == 1)) {
+            if (!load_asset(value + 2)) { fprintf(stderr, "Boot asset unavailable\n"); return 1; }
+        }
         else if (sscanf(command, "asset %d", &value) == 1 && (value == 0 || value == 1)) {
             if (!load_asset(value)) { fprintf(stderr, "Asset unavailable\n"); return 1; }
         } else if (strncmp(command, "menu", 4) == 0) {
@@ -446,7 +534,7 @@ int main(int argc, char** argv) {
                 requests();
             }
         }
-        else if (sscanf(command, "fixture %d", &value) == 1 && value >= 0 && value <= 3) {
+        else if (sscanf(command, "fixture %d", &value) == 1 && value >= 0 && value <= 5) {
             nvs_flash_erase();
             preview_home_fixture(value);
             // 夹具重置主动重入首页；普通同页导航仍按设备语义不重入。

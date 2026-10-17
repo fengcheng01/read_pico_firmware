@@ -17,10 +17,16 @@ bool asset_pack_unpack(const uint8_t* data, size_t size, uint8_t* out, size_t ca
     if (!out || !capacity || asset_pack_size(data, size) != capacity || capacity > 3u * 1024u * 1024u) return false;
     tinfl_decompressor* decoder = heap_caps_malloc(sizeof(*decoder), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!decoder) return false;
+    // 与 ZIP 路径一致：先清零，宿主适配才可安全检查活动流。
+    // Match the ZIP path: zero first so the host adapter can safely inspect live streams.
+    memset(decoder, 0, sizeof(*decoder));
     tinfl_init(decoder);
     size_t in = size - 8, written = capacity;
     tinfl_status status = tinfl_decompress(decoder, data + 8, &in, out, out, &written,
         TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF | TINFL_FLAG_PARSE_ZLIB_HEADER);
+    // 截断流也释放宿主内部窗口；ROM re-init 不分配外部资源。
+    // Release host windows for truncated streams too; ROM re-init owns no external resources.
+    tinfl_init(decoder);
     heap_caps_free(decoder);
     return status == TINFL_STATUS_DONE && in == size - 8 && written == capacity;
 }

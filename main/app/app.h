@@ -157,6 +157,8 @@ void app_lock_ignore_for(int64_t ms);
 /// 页面声明“刚发生了无触摸的活动”（如自动翻页），推迟空闲自动锁屏；每轮消费一次。
 /// / A page reports touchless activity (auto page turns) to defer idle auto-lock; consumed each tick.
 void app_loop_stay_awake(void);
+/// UI任务请求共用电源键锁屏路径，下一轮消费；切页/菜单取消。/ Request the shared power-key lock path on the UI task; consumed next tick, cancelled by navigation/menu.
+void app_loop_request_lock(void);
 
 #ifdef __cplusplus
 }

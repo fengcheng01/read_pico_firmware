@@ -39,6 +39,7 @@ int xTaskCreatePinnedToCore(void (*fn)(void*), const char* name, unsigned stack,
     if (!result) {pthread_detach(thread); *task = (void*)1;} return result ? 0 : 1;
 }
 void vTaskDelay(int ms) {usleep((unsigned)ms * 1000);}
+unsigned long ulTaskNotifyTake(int clear, unsigned ticks) {(void)clear; usleep(ticks * 1000); return 0;}
 static void send_contact(int count, int x, int64_t ms, int error) {
     pthread_mutex_lock(&device_mutex);
     device_touch = (cst836u_touch_t){.touched=count>0,.count=count,.x=x,.y=400};
@@ -94,5 +95,26 @@ int main(void) {
     assert(app_touch_input_read(tp,&t,&ms)==ESP_OK&&t.touched);
     assert(app_touch_input_read(tp,&t,&ms)==ESP_OK&&!t.touched);
     app_touch_input_enable(false);
-    puts("touch input: three taps across blocked display, timestamps, transition lift, read-error/overflow cancellation and sleep pause passed");
+    // 功耗审查回归：静止时读频显著低于触摸中（125Hz→50Hz 兜底），禁用后完全停读。
+    // Power-review regression: idle reads land well below touching reads (125Hz to the
+    // 50Hz fallback), and disabling stops reads entirely.
+    app_touch_input_enable(true);
+    pthread_mutex_lock(&device_mutex); device_touch.touched=false; device_error=0; pthread_mutex_unlock(&device_mutex);
+    usleep(60000);
+    pthread_mutex_lock(&device_mutex); int idle_before=reads; pthread_mutex_unlock(&device_mutex);
+    usleep(200000);
+    pthread_mutex_lock(&device_mutex); int idle_after=reads; pthread_mutex_unlock(&device_mutex);
+    assert(idle_after - idle_before <= 14);
+    pthread_mutex_lock(&device_mutex);
+    device_touch.touched=true; device_touch.count=1; device_touch.points[0].active=true;
+    pthread_mutex_unlock(&device_mutex);
+    usleep(20000);
+    pthread_mutex_lock(&device_mutex); int active_before=reads; pthread_mutex_unlock(&device_mutex);
+    usleep(200000);
+    pthread_mutex_lock(&device_mutex); int active_after=reads; pthread_mutex_unlock(&device_mutex);
+    assert(active_after - active_before >= 20);
+    app_touch_input_enable(false);
+    usleep(30000);
+    pthread_mutex_lock(&device_mutex); assert(reads == active_after); pthread_mutex_unlock(&device_mutex);
+    puts("touch input: three taps across blocked display, timestamps, transition lift, read-error/overflow cancellation, sleep pause and adaptive idle rate passed");
 }

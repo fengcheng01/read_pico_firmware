@@ -39,11 +39,47 @@ int main(void){
     size_t a,b;const char*t="第一句。第二句！第三句？";
     assert(book_quote_sentence(t,strlen(t),14,&a,&b)&&a==12&&b==24);
     book_quote_t q={.chapter=2,.byte_off=12,.end_off=24,.pct=18};strcpy(q.path,"/flash/books/a.txt");memcpy(q.text,t+a,b-a);
+    // v2 章节名快照随记录往返；滚动与锁屏副本都保留。/ v2 chapter-title snapshots
+    // round-trip through the rolling records and the lock copy.
+    strcpy(q.chapter_title,"第七章 夜航西飞");
     assert(book_quotes_add(&q)==ESP_OK);book_quote_t out[BOOK_QUOTES_MAX];assert(book_quotes_list(out,16)==1 && !strcmp(out[0].text,"第二句！") && out[0].byte_off==12);
-    assert(book_quotes_add(&q)==ESP_OK && book_quotes_list(out,16)==1);
+    assert(!strcmp(out[0].chapter_title,"第七章 夜航西飞"));
+    assert(book_quotes_add(&q)==ESP_OK && book_quotes_list(out,16)==1 && !strcmp(out[0].chapter_title,"第七章 夜航西飞"));
     fail_save=1;q.byte_off=24;q.end_off=36;assert(book_quotes_add(&q)!=ESP_OK);assert(book_quotes_list(out,16)==1&&out[0].byte_off==12);fail_save=0;
     for(unsigned i=1;i<=20;++i){q.byte_off=i*40;q.end_off=q.byte_off+12;assert(book_quotes_add(&q)==ESP_OK);}
     assert(book_quotes_list(out,16)==16 && out[0].byte_off==800 && out[15].byte_off==200);
+    // 固定非最新摘录；重读、写失败、滚动替换与坏记录都不偷偷切成最新一句。
+    // Pin a non-newest excerpt; reopen, failed writes, rolling eviction and corrupt data never silently choose the newest.
+    book_quote_t selected, pinned=out[10];assert(!book_quotes_lock_get(&selected));
+    assert(book_quotes_lock_set(&pinned)==ESP_OK&&book_quotes_lock_get(&selected));
+    assert(selected.byte_off==pinned.byte_off&&!strcmp(selected.text,pinned.text));
+    fail_save=1;assert(book_quotes_lock_set(&out[0])!=ESP_OK);fail_save=0;
+    assert(book_quotes_lock_get(&selected)&&selected.byte_off==pinned.byte_off);
+    for(unsigned i=21;i<=40;++i){q.byte_off=i*40;q.end_off=q.byte_off+12;assert(book_quotes_add(&q)==ESP_OK);}
+    assert(book_quotes_list(out,16)==16&&out[15].byte_off>pinned.byte_off);
+    assert(book_quotes_lock_get(&selected)&&selected.byte_off==pinned.byte_off);
+    assert(book_quotes_lock_set(NULL)==ESP_ERR_INVALID_ARG);
+    nvs_handle_t lh;assert(nvs_open("rp_lockquote",NVS_READWRITE,&lh)==ESP_OK);
+    cell_t* locked=find(lh,"chosen");assert(locked);locked->bytes[0]='X';
+    assert(!book_quotes_lock_get(&selected));nvs_close(lh);
+    assert(book_quotes_list(out,16)==16);
+    // v1 旧记录（无章节名字段）照常载入，标题为空回退仅书名。/ Legacy v1 records
+    // without the title field load normally with an empty title for book-only sources.
+    {
+        nvs_handle_t h;assert(nvs_open("rp_quotes",NVS_READWRITE,&h)==ESP_OK);
+        static const char* legacy_path="/flash/books/旧书.epub", *legacy_text="旧记录的句子。";
+        size_t pn=strlen(legacy_path)+1, tn=strlen(legacy_text)+1;
+        uint8_t v1[96]={'R','P','Q',1};
+        v1[4]=9; v1[8]=3; v1[9]=0; v1[10]=30; v1[11]=0; v1[12]=0; v1[13]=0; v1[14]=44; v1[15]=0; v1[16]=0; v1[17]=0; v1[18]=50;
+        v1[20]=(uint8_t)pn; v1[21]=(uint8_t)(pn>>8); v1[22]=(uint8_t)tn; v1[23]=(uint8_t)(tn>>8);
+        memcpy(v1+24,legacy_path,pn); memcpy(v1+24+pn,legacy_text,tn);
+        cell_t* slot=find(h,"q00");assert(slot);slot->blob=true;slot->used=true;snprintf(slot->ns,16,"rp_quotes");snprintf(slot->key,16,"q00");
+        memcpy(slot->bytes,v1,24+pn+tn);slot->len=24+pn+tn;nvs_close(h);
+        assert(book_quotes_list(out,16)==16);
+        bool seen=false;for(unsigned i=0;i<16;++i)if(!strcmp(out[i].path,legacy_path)){seen=true;assert(out[i].chapter_title[0]==0&&out[i].pct==50);break;}
+        assert(seen);
+    }
+    puts("quote lock snapshot: explicit non-newest selection, NVS reopen, failed replacement, sixteen-record eviction, invalid/corrupt isolation PASS");
     char longtext[900];memset(longtext,'a',899);longtext[899]=0;assert(book_quote_sentence(longtext,899,780,&a,&b)&&a<=780&&b>780&&b-a<BOOK_QUOTE_TEXT_MAX);
     char chinese[901];for(unsigned i=0;i<300;++i)memcpy(chinese+i*3,"字",3);chinese[900]=0;
     assert(book_quote_sentence(chinese,900,780,&a,&b)&&a<=780&&b>780&&b-a<BOOK_QUOTE_TEXT_MAX&&a%3==0&&b%3==0);

@@ -25,7 +25,12 @@
 #endif
 #define CACHE_DIR BOOK_CACHE_MEDIA_ROOT "/.read-pico-cache"
 #define CACHE_HEADER 52U
-#define CACHE_PAYLOAD_MAX (100U * 1024U)
+// EPUB 万章级书籍的章节表可达数百 KB；封面/TXT 目录远低于此，按 512 KB 封顶，
+// 超限只造成该条目不缓存（照常解析）。
+// EPUB chapter tables for ten-thousand-chapter novels reach several hundred KB;
+// covers and TXT indexes stay far below. The 512 KB cap only skips caching
+// oversized entries (parsing proceeds as usual).
+#define CACHE_PAYLOAD_MAX (512U * 1024U)
 #define CACHE_BYTES_MAX (8U * 1024U * 1024U)
 #define CACHE_ITEMS_MAX 128U
 #define CACHE_SCAN_MAX 512U
@@ -92,7 +97,7 @@ static uint64_t get64(const uint8_t* p) { uint64_t v = 0; for (unsigned n = 0; n
 static bool paths(const char* source, book_cache_kind_t kind, char out[CACHE_PATH_MAX]) {
     size_t prefix = strlen(BOOK_CACHE_MEDIA_ROOT);
     if (!source || strlen(source) >= BOOK_STORE_PATH_MAX || strncmp(source, BOOK_CACHE_MEDIA_ROOT, prefix) ||
-        source[prefix] != '/' || kind < BOOK_CACHE_COVER || kind > BOOK_CACHE_TXT_TOC) return false;
+        source[prefix] != '/' || kind < BOOK_CACHE_COVER || kind > BOOK_CACHE_EPUB) return false;
     const char* part = source + prefix + 1;
     for (const char* at = part;; ++at) {
         if (((unsigned char)*at < 32 && *at) || *at == 127 || *at == '\\' || *at == ':') return false;
@@ -143,7 +148,7 @@ done:
 // 只淘汰本格式普通缓存；临时文件不参与命中，恢复时可直接丢弃。
 // Evict only regular files owned by this format; interrupted temporaries never count as cache hits.
 static bool owned_name(const char* name, bool* temporary) {
-    if (strlen(name) != 22 || name[16] != '-' || (name[17] != '1' && name[17] != '2') || name[18] != '.') return false;
+    if (strlen(name) != 22 || name[16] != '-' || (name[17] != '1' && name[17] != '2' && name[17] != '3') || name[18] != '.') return false;
     for (unsigned i = 0; i < 16; ++i)
         if (!(name[i] >= '0' && name[i] <= '9') && !(name[i] >= 'a' && name[i] <= 'f')) return false;
     *temporary = !strcmp(name + 19, "tmp");

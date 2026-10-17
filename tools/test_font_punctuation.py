@@ -124,9 +124,56 @@ static void check_stream_prewarm(int gid) {
     }
     assert(cache_lookup(0x22ef, 43) == NULL);
 }
+// 真正光栅化的粗细须单调，字宽不变，系统字重与原缓存可恢复。
+// Real raster coverage is monotonic, advances stay fixed, and native weight/cache recover.
+static void check_stroke(void) {
+    int weight = ttf_get_weight();
+    int advance = ttf_text_width_px(48, "A");
+    const glyph_entry_t* original = get_glyph('A', 48); assert(original);
+    uint64_t previous = 0;
+    for (int step = -16; step <= 16; ++step) {
+        ttf_set_stroke(step);
+        const glyph_entry_t* glyph = get_glyph('A', 48); assert(glyph && glyph->stroke == step);
+        uint64_t coverage = 0;
+        for (size_t i = 0; i < glyph->bitmap_bytes; ++i) coverage += glyph->bitmap[i];
+        assert(coverage >= previous); previous = coverage;
+        assert(ttf_text_width_px(48, "A") == advance && ttf_get_weight() == weight);
+        draw(actual, "A", 48, 0, false); draw(expected, "A", 48, 0, true);
+    }
+    ttf_set_stroke(99); assert(ttf_get_stroke() == 16);
+    ttf_set_stroke(-99); assert(ttf_get_stroke() == -16);
+    ttf_set_stroke(0); assert(cache_lookup('A',48) == original);
+}
+// 曲线用更细参考光栅核对误差，缓存分离且字框/字宽保持。/ Check curves against a finer reference, separate cache keys and preserve metrics.
+static void check_curves(void) {
+    unsigned total_old=0,total_new=0,changed=0;
+    for(int px=18;px<=72;px+=3) {
+        ttf_set_precise_curves(false);
+        const glyph_entry_t* old=get_glyph('S',px);assert(old);
+        size_t n=old->bitmap_bytes;unsigned char* copy=malloc(n);memcpy(copy,old->bitmap,n);
+        int advance=ttf_text_width_px(px,"S"), w=old->width,h=old->height;
+        ttf_set_precise_curves(true);
+        const glyph_entry_t* fine=get_glyph('S',px);assert(fine && fine!=old && fine->precise_curves);
+        assert(fine->width==w&&fine->height==h&&fine->bitmap_bytes==n&&ttf_text_width_px(px,"S")==advance);
+        int gid=stbtt_FindGlyphIndex(&font_info,'S'),x0,y0,x1,y1;
+        float scale=stbtt_ScaleForPixelHeight(&font_info,px);
+        stbtt_GetGlyphBitmapBox(&font_info,gid,scale,scale,&x0,&y0,&x1,&y1);
+        unsigned char* reference=calloc(n,1);stbtt_vertex* vertices=NULL;
+        int count=stbtt_GetGlyphShape(&font_info,gid,&vertices);
+        stbtt__bitmap bitmap={.w=w,.h=h,.stride=w,.pixels=reference};
+        stbtt_Rasterize(&bitmap,0.02f,vertices,count,scale,scale,0,0,x0,y0,1,font_info.userdata);
+        STBTT_free(vertices,font_info.userdata);
+        for(size_t k=0;k<n;k++) {total_old+=abs(copy[k]-reference[k]);total_new+=abs(fine->bitmap[k]-reference[k]);changed+=copy[k]!=fine->bitmap[k];}
+        ttf_set_precise_curves(false);assert(cache_lookup('S',px)==old&&!memcmp(copy,old->bitmap,n));
+        free(copy);free(reference);
+    }
+    assert(changed && total_new<total_old);
+    printf("curve reference absolute coverage error: %u -> %u\n",total_old,total_new);
+}
 static void check_fixture(const char* path, int mode) {
     host_largest_block = 0;
     assert(ttf_font_open(path) == ESP_OK);
+    check_curves();
     int native = stbtt_FindGlyphIndex(&font_info, 0x22ef);
     int alias = stbtt_FindGlyphIndex(&font_info, 0x2026);
     assert((native != 0) == (mode == 0 || mode == 3));
@@ -136,6 +183,7 @@ static void check_fixture(const char* path, int mode) {
     assert(resolve_glyph_index(0x2e3a) == 0);
     assert(!ttf_font_supports_text("\xe2\xb8\xba", 3));
     check_stream_prewarm(gid);
+    check_stroke();
     for (int px = 12; px <= 80; px += 4) {
         check_resident_metrics("\xe2\x8b\xaf", gid, px);
         if (alias) {
@@ -220,10 +268,10 @@ def rectangle(x0, y0, x1, y1):
 def fixture(path, native, alias):
     # 把目标字形放在缺字所在扇区之外，确认真实预热选择了替代字形。
     # Place target glyphs beyond the missing-glyph sector to verify real prewarm selection.
-    order = [".notdef", "A"] + [f"pad{i}" for i in range(240)] + ["ellipsis", "midline"]
+    order = [".notdef", "A"] + [f"pad{i}" for i in range(240)] + ["ellipsis", "midline", "curve"]
     font = FontBuilder(1000, isTTF=True)
     font.setupGlyphOrder(order)
-    cmap = {0x41: "A"}
+    cmap = {0x41: "A",0x53: "curve"}
     if native:
         cmap[0x22EF] = "midline"
     if alias:
@@ -234,6 +282,13 @@ def fixture(path, native, alias):
     glyphs["A"] = rectangle(50, 0, 500, 700)
     glyphs["ellipsis"] = rectangle(40, 0, 300, 100)
     glyphs["midline"] = rectangle(80, 350, 750, 450)
+    pen = TTGlyphPen(None)
+    pen.moveTo((70, 0))
+    pen.qCurveTo((700, 80),(40, 600),(550, 710))
+    pen.lineTo((570, 650))
+    pen.qCurveTo((80, 540),(730, 60),(90, -60))
+    pen.closePath()
+    glyphs["curve"] = pen.glyph()
     font.setupGlyf(glyphs)
     metrics = {name: (600, 0) for name in order}
     metrics.update({"A": (650, 0), "ellipsis": (400, 0), "midline": (900, 0)})

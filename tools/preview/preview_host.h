@@ -45,7 +45,7 @@ typedef struct { int x, y, width, height; } EpdRect;
 typedef struct { int width, height; } EpdDisplay_t;
 typedef struct { int unused; } EpdWaveform;
 typedef struct { uint8_t* front_fb; } EpdiyHighlevelState;
-enum EpdDrawError { EPD_DRAW_SUCCESS = 0 };
+enum EpdDrawError { EPD_DRAW_SUCCESS = 0, EPD_DRAW_INVALID_CROP = 0x40 };
 enum EpdDrawMode { MODE_DU = 1, MODE_GC16 = 2, MODE_GL16 = 5 };
 enum EpdRotation { EPD_ROT_LANDSCAPE, EPD_ROT_PORTRAIT, EPD_ROT_INVERTED_LANDSCAPE, EPD_ROT_INVERTED_PORTRAIT };
 enum EpdFontFlags { EPD_DRAW_BACKGROUND = 1, EPD_DRAW_ALIGN_LEFT = 2, EPD_DRAW_ALIGN_RIGHT = 4, EPD_DRAW_ALIGN_CENTER = 8 };
@@ -53,7 +53,7 @@ extern const EpdWaveform E0470_WAVEFORM, E0470_FULL_WAVEFORM, E0470_GRAY8_WAVEFO
 extern const EpdWaveform E0470_FOLLOW_WAVEFORM;
 extern const EpdWaveform E0470_NAVIGATION_WAVEFORM;
 extern const EpdWaveform E0470_TEXTTURN_WAVEFORM, E0470_TEXTTURN_NIGHT_WAVEFORM;
-extern const EpdWaveform E0470_DIRECT_WAVEFORM, E0470_CROSSMUX_WAVEFORM, E0470_GRAY_DIRECT_WAVEFORM;
+extern const EpdWaveform E0470_DIRECT_WAVEFORM, E0470_GRAY_DIRECT_WAVEFORM;
 int epd_width(void);
 int epd_height(void);
 int epd_rotated_display_width(void);
@@ -73,12 +73,16 @@ uint8_t* epd_hl_get_framebuffer(EpdiyHighlevelState* hl);
 enum EpdDrawError update_display_mode(EpdiyHighlevelState* hl, enum EpdDrawMode mode);
 enum EpdDrawError update_display_full(EpdiyHighlevelState* hl);
 enum EpdDrawError update_display_clean(EpdiyHighlevelState* hl);
+#include "display_reader_modes.h"
+enum EpdDrawError update_display_reader_turn(EpdiyHighlevelState*, display_reader_mode_t, EpdRect, bool);
 enum EpdDrawError update_display_text_turn(EpdiyHighlevelState* hl, bool white_on_black);
+// 错相揭页动画的预览替身：按日间标准翻页记录，不模拟错相时序。/ Preview stand-in for the
+// staggered page-turn animation: records a day-standard turn without staggered timing.
+enum EpdDrawError update_display_page_turn(EpdiyHighlevelState* hl, EpdRect area, bool forward);
 enum EpdDrawError update_display_text_direct(EpdiyHighlevelState* hl, bool white_on_black);
 enum EpdDrawError update_display_text_gray_direct(EpdiyHighlevelState* hl, bool white_on_black);
-typedef enum { DISPLAY_CROSSMUX_TURN, DISPLAY_CROSSMUX_ENTRY, DISPLAY_CROSSMUX_CLEAN, DISPLAY_CROSSMUX_REDRAW } display_crossmux_action_t;
-enum EpdDrawError update_display_night_crossmux(EpdiyHighlevelState* hl, display_crossmux_action_t action);
-enum EpdDrawError update_display_night_white_repaint(EpdiyHighlevelState* hl, display_crossmux_action_t action, bool direct, bool gray_direct);
+typedef enum { DISPLAY_NIGHT_TURN, DISPLAY_NIGHT_ENTRY, DISPLAY_NIGHT_CLEAN, DISPLAY_NIGHT_REDRAW } display_night_action_t;
+enum EpdDrawError update_display_night_white_repaint(EpdiyHighlevelState* hl, display_night_action_t action, bool direct, bool gray_direct);
 enum EpdDrawError update_display_white(EpdiyHighlevelState* hl);
 enum EpdDrawError update_display_with(EpdiyHighlevelState*, const EpdWaveform*, enum EpdDrawMode);
 enum EpdDrawError update_display_from_white(EpdiyHighlevelState* hl);
@@ -155,10 +159,13 @@ void heap_caps_free(void* pointer);
 size_t heap_caps_get_largest_free_block(uint32_t caps);
 
 /* ROM miniz 的最小声明；实现见 miniz_host.c。/ Minimal ROM-miniz declarations; implemented in miniz_host.c. */
+#include <zlib.h>
 typedef unsigned char mz_uint8;
-typedef struct { int m_state; } tinfl_decompressor;
-typedef enum { TINFL_STATUS_FAILED = -1, TINFL_STATUS_DONE = 0 } tinfl_status;
-#define tinfl_init(r) ((r)->m_state = 0)
+typedef struct { z_stream stream; int live; unsigned char scratch; } tinfl_decompressor;
+typedef enum { TINFL_STATUS_FAILED = -1, TINFL_STATUS_DONE = 0, TINFL_STATUS_NEEDS_MORE_INPUT = 1, TINFL_STATUS_HAS_MORE_OUTPUT = 2 } tinfl_status;
+#define TINFL_FLAG_HAS_MORE_INPUT 4
+#define TINFL_LZ_DICT_SIZE 32768
+void tinfl_init(tinfl_decompressor* state);
 tinfl_status tinfl_decompress(tinfl_decompressor* state, const mz_uint8* input, size_t* in_size,
                               mz_uint8* output, mz_uint8* out_buf_mark, size_t* out_size, unsigned flags);
 // 仅供完整设备书页语法检查，不链接或运行传感器。/ Used only for device book-page syntax checks; sensors are neither linked nor run.

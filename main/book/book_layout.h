@@ -33,6 +33,23 @@ void book_layout_free(void);
 size_t book_layout_page_count(void);
 /// 使用建立布局时的宽高与字号绘图；不匹配或越界时不绘制。/ Draw with the built dimensions and size; mismatches or invalid pages do nothing.
 void book_layout_draw_page(uint8_t* fb, size_t page, EpdRect rect, int px);
+typedef struct {
+    uint32_t generation; ///< 布局代次，零表示尚未开始 / Layout generation; zero before starting
+    size_t page, offset; ///< 目标页及下次绘制字节 / Target page and next source byte
+    int64_t used; ///< 已绘制高度 / Height already drawn
+    bool started, done; ///< 已开始及已完成 / Started and finished
+} book_layout_cursor_t;
+
+/// 布局生命周期标识；free/build 后旧游标失效。/ Layout lifetime ID; free/build invalidate old cursors.
+uint32_t book_layout_generation(void);
+/// 每次至多绘制一行；返回 -1 失效、0 未完、1 完成；调用方串行化并保留目标画布。
+/// Draw at most one row; -1 invalid, 0 partial, 1 complete; serialize calls and retain the target canvas.
+int book_layout_draw_slice(uint8_t* fb, size_t page, EpdRect rect, int px, book_layout_cursor_t* cursor);
+/// 当前已分页页面是否包含图片或占位。/ Whether a completed page contains images or placeholders.
+bool book_layout_page_has_images(size_t page);
+/// 从原文锚点绘制短文字预览，宽度/字号沿用当前布局，跳过插图；不分配页表或改变分页，返回是否绘出文字。
+/// Draw a short text preview from a source anchor at the current width/size, skipping images; no page allocation or pagination changes; true when text was drawn.
+bool book_layout_draw_preview(uint8_t* fb, size_t offset, EpdRect rect, int px);
 /// 命中本页未加载图片占位，返回块索引及可选矩形；未命中为 SIZE_MAX；与绘制使用相同锁。
 /// Hit an unloaded image placeholder, returning its block index and optional bounds; SIZE_MAX if absent; use the drawing lock.
 size_t book_layout_image_at(size_t page, EpdRect rect, int x, int y, EpdRect* hit);

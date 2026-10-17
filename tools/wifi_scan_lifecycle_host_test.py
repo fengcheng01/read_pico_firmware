@@ -23,7 +23,8 @@ harness = r'''
 #include "transfer_policy.h"
 typedef int esp_err_t;
 enum { ESP_OK, ESP_ERR_INVALID_ARG, ESP_ERR_INVALID_STATE, ESP_FAIL, ESP_ERR_WIFI_TIMEOUT,
-       ESP_ERR_NO_MEM, ESP_ERR_WIFI_NOT_INIT, ESP_ERR_WIFI_NOT_STARTED, ESP_ERR_NOT_FOUND };
+       ESP_ERR_NO_MEM, ESP_ERR_WIFI_NOT_INIT, ESP_ERR_WIFI_NOT_STARTED, ESP_ERR_NOT_FOUND,
+       ESP_ERR_HTTPD_TASK };
 enum { WIFI_STORAGE_RAM, WIFI_MODE_STA, WIFI_MODE_AP, WIFI_IF_STA, WIFI_IF_AP, WIFI_SCAN_TYPE_ACTIVE, WIFI_SCAN_TYPE_PASSIVE };
 enum { WIFI_AUTH_OPEN, WIFI_AUTH_WEP, WIFI_AUTH_WPA_PSK, WIFI_AUTH_WPA2_PSK,
        WIFI_AUTH_WPA_WPA2_PSK, WIFI_AUTH_WPA3_PSK, WIFI_AUTH_WPA2_WPA3_PSK, WIFI_AUTH_OWE };
@@ -32,13 +33,13 @@ enum { READ_PICO_TRANSFER_STOPPED, READ_PICO_TRANSFER_STARTING, READ_PICO_TRANSF
 enum { READ_PICO_TRANSFER_MODE_AP, READ_PICO_TRANSFER_MODE_STA };
 typedef struct { int state, mode, last_error; unsigned sta_count; bool network_ready; char url[64], ssid[33]; } read_pico_transfer_status_t;
 typedef struct {
-    bool network_only, is_flash; int mode; const char *root_dir, *font_dir;
+    bool network_only, is_flash; int mode; const char *root_dir, *font_dir, *image_dir;
     uint64_t (*free_bytes_cb)(void *); void *free_bytes_ctx;
 } read_pico_transfer_cfg_t;
 
 typedef struct { char cc[3]; uint8_t schan, nchan; int policy; } wifi_country_t;
-typedef struct { int static_rx_buf_num, static_tx_buf_num, dynamic_rx_buf_num, rx_ba_win, cache_tx_buf_num, tx_buf_type, magic; } wifi_init_config_t;
-#define WIFI_INIT_CONFIG_DEFAULT() ((wifi_init_config_t){16,16,32,16,32,0,0x12345678})
+typedef struct { int static_rx_buf_num, static_tx_buf_num, dynamic_rx_buf_num, rx_ba_win, cache_tx_buf_num, tx_buf_type, mgmt_sbuf_num, magic; } wifi_init_config_t;
+#define WIFI_INIT_CONFIG_DEFAULT() ((wifi_init_config_t){16,16,32,16,32,0,32,0x12345678})
 typedef struct {
     uint8_t *ssid, *bssid; uint8_t channel; bool show_hidden; int scan_type;
     struct { struct { uint32_t min, max; } active; uint32_t passive; } scan_time;
@@ -46,7 +47,7 @@ typedef struct {
 typedef struct { uint8_t ssid[33]; int8_t rssi; int authmode; } wifi_ap_record_t;
 static bool s_wifi, s_started, s_loop_owned, s_stopping, s_upload_active;
 static void *s_http, *s_netif, *s_events, *s_ip_events;
-static char *s_buffer; static char s_root[160], s_font_root[160];
+static char *s_buffer; static char s_root[160], s_font_root[160], s_image_root[160];
 static int s_lock;
 static read_pico_transfer_status_t s_status;
 static read_pico_transfer_cfg_t s_cfg;
@@ -92,6 +93,8 @@ static int esp_wifi_set_mode(int mode) { assert(initialized && (mode == WIFI_MOD
 static int esp_wifi_get_country(wifi_country_t *country) {
     ++country_reads; *country = configured_country; return ESP_OK;
 }
+enum { WIFI_PS_NONE };
+static int esp_wifi_set_ps(int mode) {assert(initialized&&started&&mode==WIFI_PS_NONE);return step();}
 static int esp_wifi_start(void) {
     assert(initialized && !started); int err = step(); if (!err) started = 1; return err;
 }
@@ -135,14 +138,42 @@ static int esp_wifi_stop(void) {
     assert(started); ++stopped; int err = step(); if (!err) started = 0; return err;
 }
 static int esp_wifi_deinit(void) {
-    assert(initialized && !started); ++deinitialized; int err = step(); if (!err) { initialized = 0; driver_bytes = 0; } return err;
+    assert(initialized && !started); ++deinitialized; int err = step();
+    // 组件把deinit的INVALID_STATE按已释放处理：模型同步回收内存，检验该契约不再闩锁。
+    // The component treats deinit INVALID_STATE as released; the model reclaims memory in step so the contract stays unlatched.
+    if (!err || err == ESP_ERR_INVALID_STATE) { initialized = 0; driver_bytes = 0; }
+    return err;
 }
 static int esp_event_loop_delete_default(void) {
-    assert(own_loop && !external_loop); ++deleted; int err = step(); if (!err) own_loop = 0; return err;
+    assert(own_loop && !external_loop); ++deleted; int err = step();
+    // IDF语义：INVALID_STATE表示默认循环已不存在，视为已删除。
+    // IDF semantics: INVALID_STATE means the default loop no longer exists; treat it as deleted.
+    if (!err || err == ESP_ERR_INVALID_STATE) own_loop = 0;
+    return err;
 }
 ''' + scan_body + r'''
 static int httpd_stop(void *handle) { assert(handle == s_http); return step(); }
 static int esp_event_handler_instance_unregister(int base, int id, void *instance) { (void)base; (void)id; assert(instance); return step(); }
+// httpd 边界供 stop_body 内的启动辅助使用，必须在切片前声明。
+// / The httpd boundary feeds the start helper inside stop_body, so it must precede the slice.
+enum { ESP_MAC_WIFI_SOFTAP, WPA3_SAE_PWE_BOTH, HTTP_GET, HTTP_PUT, HTTP_DELETE, HTTP_POST };
+typedef struct { unsigned stack_size, max_uri_handlers, recv_wait_timeout; bool lru_purge_enable; } httpd_config_t;
+#define HTTPD_DEFAULT_CONFIG() ((httpd_config_t){0})
+typedef struct { const char *uri; int method; int (*handler)(void *); void *user_ctx; } httpd_uri_t;
+static int netif_tokens[2];
+static int httpd_start(void **server, const httpd_config_t *config) {
+    assert(config->stack_size == 12288 && config->max_uri_handlers == 15); int err = step(); if (!err) *server = &netif_tokens[0]; return err;
+}
+static int httpd_register_uri_handler(void *server, const httpd_uri_t *route) { (void)server; (void)route; return step(); }
+static int index_handler(void *req) { (void)req; return ESP_OK; }
+#define info_handler index_handler
+#define upload_handler index_handler
+#define upload_check_handler index_handler
+#define font_info_handler index_handler
+#define books_handler index_handler
+#define fs_handler index_handler
+#define wifi_handler index_handler
+#define kind_delete_handler index_handler
 static void esp_netif_destroy_default_wifi(void *netif) { assert(netif == s_netif); }
 enum { WIFI_EVENT, IP_EVENT, ESP_EVENT_ANY_ID };
 ''' + stop_body + r'''
@@ -152,12 +183,8 @@ typedef struct {
     struct { uint8_t ssid[33]; char password[65]; size_t ssid_len; int channel, max_connection, authmode; } ap;
     struct { uint8_t ssid[33], password[65]; struct { int authmode; } threshold; struct { bool capable; } pmf_cfg; int sae_pwe_h2e; } sta;
 } wifi_config_t;
-enum { ESP_MAC_WIFI_SOFTAP, WPA3_SAE_PWE_BOTH, HTTP_GET, HTTP_PUT, HTTP_DELETE, HTTP_POST };
 #define READ_PICO_TRANSFER_PASSWORD "readpico"
 #define READ_PICO_TRANSFER_URL "http://192.168.4.1"
-typedef struct { unsigned stack_size, max_uri_handlers, recv_wait_timeout; bool lru_purge_enable; } httpd_config_t;
-#define HTTPD_DEFAULT_CONFIG() ((httpd_config_t){0})
-typedef struct { const char *uri; int method; int (*handler)(void *); void *user_ctx; } httpd_uri_t;
 static int load_credentials(transfer_credentials_t *saved) {
     *saved = (transfer_credentials_t){.version = 1}; strcpy(saved->ssid, "fixture"); return ESP_OK;
 }
@@ -165,7 +192,6 @@ static void publish_credentials(const transfer_credentials_t *saved) { (void)sav
 static int cleanup_interrupted(const char *path, unsigned *removed, unsigned *restored) {
     (void)path; *removed = *restored = 0; return 0;
 }
-static int netif_tokens[2];
 static void *esp_netif_create_default_wifi_sta(void) { return &netif_tokens[0]; }
 static void *esp_netif_create_default_wifi_ap(void) { return &netif_tokens[1]; }
 static int esp_read_mac(uint8_t mac[6], int type) { (void)type; memset(mac, 0, 6); return step(); }
@@ -176,16 +202,6 @@ static int esp_event_handler_instance_register(int base, int id, void (*handler)
 }
 static int esp_wifi_set_config(int mode, const wifi_config_t *config) { (void)mode; (void)config; return step(); }
 static void *heap_caps_malloc(size_t size, unsigned caps) { assert(caps == (MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)); return malloc(size); }
-static int httpd_start(void **server, const httpd_config_t *config) {
-    assert(config->stack_size == 12288 && config->max_uri_handlers == 10); int err = step(); if (!err) *server = &netif_tokens[0]; return err;
-}
-static int httpd_register_uri_handler(void *server, const httpd_uri_t *route) { (void)server; (void)route; return step(); }
-static int index_handler(void *req) { (void)req; return ESP_OK; }
-#define info_handler index_handler
-#define upload_handler index_handler
-#define font_info_handler index_handler
-#define books_handler index_handler
-#define wifi_handler index_handler
 static int64_t esp_timer_get_time(void) { return 100000; }
 static void read_pico_transfer_service_poll(void) { assert(s_started); }
 static void set_error(int err) { s_status.last_error = err; s_status.state = err ? READ_PICO_TRANSFER_ERROR : READ_PICO_TRANSFER_READY; }
@@ -267,13 +283,13 @@ static void failures(void) {
 static void low_memory_scans(void) {
     read_pico_transfer_network_t out[READ_PICO_TRANSFER_SCAN_MAX]; size_t count;
     reset(1); heap_budget = 32000;
-    wifi_init_config_t full = wifi_init_for_session(false);
+    wifi_init_config_t full = WIFI_INIT_CONFIG_DEFAULT();
     assert(esp_wifi_init(&full) == ESP_ERR_NO_MEM && !initialized);
     assert(read_pico_transfer_scan_wifi(out, &count) == ESP_OK && count == 1);
-    assert(used_config.static_rx_buf_num == 6 && used_config.static_tx_buf_num == 4);
-    assert(used_config.dynamic_rx_buf_num == 12 && used_config.rx_ba_win == 6 && used_config.cache_tx_buf_num == 4);
+    assert(used_config.static_rx_buf_num == 4 && used_config.static_tx_buf_num == 3);
+    assert(used_config.dynamic_rx_buf_num == 8 && used_config.rx_ba_win == 4 && used_config.cache_tx_buf_num == 2 && used_config.mgmt_sbuf_num == 6);
     clean();
-    puts("Low-memory boundary: default 16+16 buffers fail, scan 6+4 succeeds and returns memory PASS");
+    puts("Low-memory boundary: default 16+16 buffers fail, scan 4+3 succeeds and returns memory PASS");
 }
 
 static uint64_t free_bytes(void *ctx) { (void)ctx; return 100000000; }
@@ -282,8 +298,8 @@ static void lock_network_then_scan(void) {
     for (int iteration = 0; iteration < 200; ++iteration) {
         reset(1); heap_budget = 32000;
         assert(read_pico_transfer_start_saved_network() == ESP_OK);
-        assert(s_started && s_wifi && s_netif && own_loop && s_loop_owned && driver_bytes == 16000);
-        assert(!s_http && !s_buffer && used_config.static_rx_buf_num == 6 && used_config.static_tx_buf_num == 4);
+        assert(s_started && s_wifi && s_netif && own_loop && s_loop_owned && driver_bytes == 11200);
+        assert(!s_http && !s_buffer && used_config.static_rx_buf_num == 4 && used_config.static_tx_buf_num == 3);
         assert(read_pico_transfer_start_saved_network() == ESP_ERR_INVALID_STATE);
         read_pico_transfer_stop(); clean();
         assert(s_status.state == READ_PICO_TRANSFER_STOPPED && !s_netif && !s_events && !s_ip_events);
@@ -292,7 +308,8 @@ static void lock_network_then_scan(void) {
     reset(1);
     const read_pico_transfer_cfg_t full = {.mode=READ_PICO_TRANSFER_MODE_AP, .root_dir="/tmp", .free_bytes_cb=free_bytes};
     assert(read_pico_transfer_start(&full) == ESP_OK);
-    wifi_init_config_t defaults = WIFI_INIT_CONFIG_DEFAULT();
+    wifi_init_config_t defaults = wifi_init_for_session(false);
+    assert(defaults.static_rx_buf_num==8&&defaults.static_tx_buf_num==6&&defaults.mgmt_sbuf_num==6);
     assert(!memcmp(&used_config, &defaults, sizeof(defaults)) && s_http && s_buffer);
     assert(read_pico_transfer_try_stop_if_idle()); clean();
     const read_pico_transfer_cfg_t full_sta = {.mode=READ_PICO_TRANSFER_MODE_STA, .root_dir="/tmp", .free_bytes_cb=free_bytes};
@@ -342,8 +359,82 @@ static void failed_release_retains_ownership(void) {
     fail_step = 0; assert(read_pico_transfer_try_stop_if_idle()); clean();
     puts("Failed HTTP/stop/deinit/event deletion retains ownership; later stop retries before another scan PASS");
 }
+static void retained_latch_start_self_heals(void) {
+    // 停止失败留下的stopping残留：下一次start必须先重试停止再发起连接，保存新密码不能永远停在“已保存，尚未连接”。
+    // Residue with stopping held from a failed stop: the next start must retry the stop before
+    // connecting, so a freshly saved password never rests on saved-but-not-connected forever.
+    reset(1);
+    assert(read_pico_transfer_start_saved_network() == ESP_OK);
+    fail_step = calls + 3; fail_code = ESP_ERR_NO_MEM;
+    read_pico_transfer_stop();
+    assert(s_status.state == READ_PICO_TRANSFER_ERROR && s_stopping && s_wifi && driver_bytes);
+    fail_step = 0;
+    assert(read_pico_transfer_start_saved_network() == ESP_OK);
+    assert(s_started && s_wifi && !s_stopping && s_status.state == READ_PICO_TRANSFER_STARTING);
+    read_pico_transfer_stop(); clean();
+    // 重试停止仍失败时维持原INVALID_STATE拒绝并保留残留待下次再试。
+    // When the retried stop fails again, keep the original INVALID_STATE rejection and residue for a later retry.
+    reset(1);
+    assert(read_pico_transfer_start_saved_network() == ESP_OK);
+    int failed_deinit = calls + 3;
+    fail_step = failed_deinit; fail_code = ESP_ERR_NO_MEM; read_pico_transfer_stop();
+    fail_step = failed_deinit + 1; fail_code = ESP_ERR_NO_MEM;
+    assert(read_pico_transfer_start_saved_network() == ESP_ERR_INVALID_STATE);
+    assert(s_stopping && s_wifi && s_status.state == READ_PICO_TRANSFER_ERROR);
+    fail_step = 0; assert(read_pico_transfer_try_stop_if_idle()); clean();
+    // 正在运行的会话不被自愈拆掉：仍返回INVALID_STATE。
+    // A running session is never torn down by self-healing: it still returns INVALID_STATE.
+    reset(1);
+    assert(read_pico_transfer_start_saved_network() == ESP_OK);
+    assert(read_pico_transfer_start_saved_network() == ESP_ERR_INVALID_STATE && s_started);
+    read_pico_transfer_stop(); clean();
+    puts("Retained-teardown latch: start retries stop once and connects, persistent failure keeps residue, running sessions keep rejection PASS");
+}
+static void already_gone_release_tolerated(void) {
+    // IDF对已删除对象返回INVALID_STATE：视作已释放，停止成功，不再形成闩锁。
+    // IDF returns INVALID_STATE for already-deleted objects: treat them as released so stop succeeds without latching.
+    reset(1);
+    assert(read_pico_transfer_start_saved_network() == ESP_OK);
+    fail_step = calls + 3; fail_code = ESP_ERR_INVALID_STATE; read_pico_transfer_stop();
+    assert(s_status.state == READ_PICO_TRANSFER_STOPPED && !s_wifi && !s_stopping && !driver_bytes);
+    clean();
+    reset(1);
+    assert(read_pico_transfer_start_saved_network() == ESP_OK);
+    fail_step = calls + 5; fail_code = ESP_ERR_INVALID_STATE; read_pico_transfer_stop();
+    assert(s_status.state == READ_PICO_TRANSFER_STOPPED && !s_loop_owned && !own_loop);
+    clean();
+    puts("Already-gone INVALID_STATE from deinit/event deletion clears ownership without latching PASS");
+}
+static void full_session_low_memory_clamps(void) {
+    // 全量会话16+16拿不下时回退小缓冲重试一次：配网连接优先于传书吞吐。
+    // When the full 16+16 set cannot be allocated, fall back once to the smaller buffers: provisioning beats throughput.
+    reset(1); heap_budget = 20000;
+    const read_pico_transfer_cfg_t full = {.mode=READ_PICO_TRANSFER_MODE_STA, .root_dir="/tmp", .free_bytes_cb=free_bytes};
+    assert(read_pico_transfer_start(&full) == ESP_OK);
+    assert(used_config.static_rx_buf_num == 2 && used_config.static_tx_buf_num == 2);
+    assert(s_started && s_http && s_buffer && !s_stopping);
+    assert(read_pico_transfer_try_stop_if_idle()); clean();
+    puts("Full-session NO_MEM falls back to clamped buffers so provisioning still connects PASS");
+}
+static void minimal_profiles(void) {
+    for(int network=0;network<2;++network){
+        reset(1);heap_budget=6400;
+        assert(wifi_driver_init(network,"test")==ESP_OK);
+        assert(initialized&&used_config.static_rx_buf_num==2&&used_config.static_tx_buf_num==2);
+        assert(used_config.dynamic_rx_buf_num==4&&used_config.rx_ba_win==2&&used_config.mgmt_sbuf_num==6);
+        assert(esp_wifi_deinit()==ESP_OK);clean();
+        reset(1);heap_budget=6399;
+        assert(wifi_driver_init(network,"test")==ESP_ERR_NO_MEM&&!initialized);
+        clean();
+    }
+    read_pico_transfer_network_t out[READ_PICO_TRANSFER_SCAN_MAX];size_t count;
+    reset(1);heap_budget=6400;assert(read_pico_transfer_scan_wifi(out,&count)==ESP_OK);clean();
+    reset(1);heap_budget=6399;assert(read_pico_transfer_scan_wifi(out,&count)==ESP_ERR_NO_MEM&&!count);clean();
+    puts("Bounded minimal WiFi fallback: scan/compact/full success, exhausted-budget cleanup, static TX and management bounds PASS");
+}
 int main(void) {
     successful_scans(); failures(); low_memory_scans(); lock_network_then_scan(); failed_release_retains_ownership();
+    retained_latch_start_self_heals(); already_gone_release_tolerated(); full_session_low_memory_clamps(); minimal_profiles();
     puts("Production WiFi scan lifecycle PASS");
 }
 '''
@@ -367,18 +458,17 @@ with tempfile.TemporaryDirectory(prefix="pico-wifi-scan-", dir="/tmp") as direct
         assert result.returncode != 0 and "scans ==" in result.stderr
         print("Former short dwell misses delayed beacon fixture (negative control) PASS")
         controls = [
-            ("wifi_init_for_session(true)", "wifi_init_for_session(false)", "low_memory_scans", "Former scan buffers exhaust constrained DMA budget"),
-            ("wifi_init_for_session(cfg->network_only)", "wifi_init_for_session(false)", "lock_network_then_scan", "Former lock-sync buffers exhaust constrained DMA budget"),
+            ('wifi_init_config_t init = wifi_init_for_session(network_only);', 'wifi_init_config_t init = WIFI_INIT_CONFIG_DEFAULT(); (void)network_only;', "low_memory_scans", "Former unbounded WiFi buffers fail the constrained DMA fixture"),
         ]
         for fixed_config, old_config, check, description in controls:
             assert harness.count(fixed_config) == 1
-            controlled = harness.replace(fixed_config, old_config)
+            controlled = harness.replace(fixed_config, old_config).replace("if (err != ESP_ERR_NO_MEM) return err;", "return err;")
             controlled = controlled[:controlled.rindex("int main(void) {")] + f"int main(void) {{ {check}(); }}\n"
             test.write_text(controlled); subprocess.run(command, cwd=ROOT, check=True)
             result = subprocess.run([str(temp / "test")], capture_output=True, text=True)
             assert result.returncode != 0 and "== ESP_OK" in result.stderr
             print(description + " (negative control) PASS")
-        fixed_release = "if (err != ESP_OK && err != ESP_ERR_WIFI_NOT_INIT) return err;\n        *initialized = false;"
+        fixed_release = "if (err != ESP_OK && err != ESP_ERR_WIFI_NOT_INIT && err != ESP_ERR_INVALID_STATE) return err;\n        *initialized = false;"
         old_release = "*initialized = false;\n        if (err != ESP_OK && err != ESP_ERR_WIFI_NOT_INIT) return err;"
         assert harness.count(fixed_release) == 1
         controlled = harness.replace(fixed_release, old_release)

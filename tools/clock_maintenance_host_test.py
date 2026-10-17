@@ -14,6 +14,8 @@ harness=scope['harness'].split('static void sleep_minutes')[0]
 harness=harness.replace('static int esp_netif_sntp_sync_wait(int wait) {assert(wait==0);bool received=ntp_event;ntp_event=false;return received?ESP_OK:1;}',
  'static bool ntp_available=true; static int esp_netif_sntp_sync_wait(int wait) {assert(wait==0);bool received=ntp_event&&ntp_available;if(received)ntp_event=false;return received?ESP_OK:1;}')
 harness+=r'''
+static bool ble_stopped=true;
+static bool os_page_turner_pause(void){return ble_stopped;}
 #include "read_pico_transfer.h"
 static bool auto_on=true,configured=true,claimed,claim_allowed=true;
 static unsigned starts,stops,polls;
@@ -44,7 +46,7 @@ static void reset_clock(void) {
  s_rate=(os_clock_rate_t){0};s_rate_loaded=s_rate_learned=false;s_last_sync_ms=-1;
  s_lock_sync_state=OS_TIME_LOCK_SYNC_IDLE;s_anchored=s_force_reanchor=false;s_recently_synced=false;s_last_poll_ms=-OS_TIME_POLL_MS;
  s_active=s_claimed=false;s_started_ms=s_service_ms=s_retry_ms=0;
- auto_on=configured=claim_allowed=ntp_available=true;claimed=false;starts=stops=polls=0;start_error=0;
+ auto_on=configured=claim_allowed=ntp_available=ble_stopped=true;claimed=false;starts=stops=polls=0;start_error=0;
  status=(read_pico_transfer_status_t){0};snapshot=(pmu_snapshot_t){0};
 }
 static void static_fast_window(int64_t real_us) {
@@ -98,6 +100,7 @@ int main(void) {
  assert(saved_count>=1&&saved_ppm>=-4480&&saved_ppm<=-4477&&starts>=2&&starts==stops&&!claimed);
  os_time_poll(tick_us/1000);error=(int64_t)os_time_info()->unix_utc-network_us/1000000;assert(error>=-1&&error<=1);
  puts("static low-frequency deadlines complete first rate learning and retain clock-model accuracy PASS; simulation does not measure hardware drift");
+ reset_clock();ble_stopped=false;assert(!os_time_lock_sync_tick(0)&&!starts&&!claimed);check_status("网络正忙");
  reset_clock();configured=false;assert(!os_time_lock_sync_tick(0));check_status("未配置 WiFi");
  assert(os_time_lock_sync_delay_ms(0)==3600000);
  reset_clock();status.state=READ_PICO_TRANSFER_READY;assert(!os_time_lock_sync_tick(0));check_status("网络正忙");
@@ -111,7 +114,7 @@ int main(void) {
 '''
 with tempfile.TemporaryDirectory(prefix='pico-clock-maint-',dir='/tmp') as folder:
  d=Path(folder);(d/'test.c').write_text(harness)
- flags=['-std=gnu11','-Wall','-Wextra','-Werror','-fsanitize=address,undefined']
+ flags=['-DCONFIG_LWIP_SNTP_MAX_SERVERS=2','-std=gnu11','-Wall','-Wextra','-Werror','-fsanitize=address,undefined']
  if os.uname().sysname=='Darwin':flags+=['-isysroot','/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk']
  subprocess.run([os.environ.get('CC','cc'),*flags,'-Imain/os','-Itools/book_storage_stubs','-Icomponents/read_pico_transfer/include',str(d/'test.c'),'main/os/os_time.c','-o',str(d/'test')],cwd=ROOT,check=True)
  subprocess.run([str(d/'test')],check=True)

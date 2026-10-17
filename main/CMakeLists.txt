@@ -1,11 +1,14 @@
 set(main_requires
     read_pico
+    bt
     espressif__esp_tinyusb
     read_pico_transfer
     read_pico_search
     espressif__qrcode
     continuous_du
     e0470_epaper_waveform
+    e0470_page_turn
+    jpegdec
     read_pico_pmu
     esp_netif
     espressif__cjson
@@ -27,6 +30,7 @@ idf_component_register(
     SRCS
         "app_main.c"
         "asset_pack.c"
+        "boot_state.c"
         "display.c"
         "display_pixels.c"
         "sleep.c"
@@ -38,22 +42,32 @@ idf_component_register(
         "ui/ui_kit.c"
         "ui/ui_assets.c"
         "ui/ui_gesture.c"
+        "ui/ui_press.c"
+        "ui/ui_sheet.c"
         "ui/ui_wifi_qr.c"
         "ui/datamatrix.c"
         "ui/ui_menu.c"
+        "ui/ui_dither.c"
+        "ui/ui_image.c"
+        "ui/ui_image_cache.c"
         "apps/app_home.c"
         "apps/app_os_home.c"
         "apps/app_os_today.c"
         "apps/app_os_settings.c"
+        "apps/app_os_bluetooth.c"
         "apps/app_os_time.c"
         "apps/app_os_reading.c"
         "apps/app_os_sleep.c"
         "apps/app_os_pin.c"
+        "apps/app_image.c"
         "apps/app_os_storage.c"
         "apps/app_os_tools.c"
         "os/os_device_pico.c"
         "os/os_usb_disk_pico.c"
         "usb/usb_disk.c"
+        "os/ble_hid.c"
+        "os/os_ble_radio_pico.c"
+        "os/os_page_turner.c"
         "os/os_time.c"
         "os/os_time_pico.c"
         "os/os_time_maintenance.c"
@@ -67,6 +81,7 @@ idf_component_register(
         "book/book_entry.c"
         "book/book_home.c"
         "book/book_cover.c"
+        "book/book_cover_auto.c"
         "book/book_cache.c"
         "book/book_cover_job.c"
         "book/book_stats.c"
@@ -88,6 +103,7 @@ idf_component_register(
         "book/html_text.c"
         "book/book_xpointer.c"
         "book/book_layout.c"
+        "book/book_hyphen.c"
         "book/gbk.c"
         "apps/app_touch.c"
         "apps/app_axis.c"

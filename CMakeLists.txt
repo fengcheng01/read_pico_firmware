@@ -27,3 +27,15 @@ if(app_desc_launcher)
     list(APPEND app_desc_utc_launcher ${app_desc_launcher})
 endif()
 set_property(TARGET ${app_desc_lib} PROPERTY C_COMPILER_LAUNCHER "${app_desc_utc_launcher}")
+
+# 每次普通构建同步产出完整/仅应用镜像；依赖同次启动程序、分区表、应用和容量校验。
+# Every normal build produces full/app-only images from the same bootloader, partition table, app and size check.
+idf_build_get_property(pico_images_python PYTHON)
+add_custom_target(firmware_images ALL
+    COMMAND "${pico_images_python}" "${CMAKE_SOURCE_DIR}/tools/firmware_images.py"
+        --build-dir "${CMAKE_BINARY_DIR}"
+    DEPENDS gen_project_binary bootloader app_check_size
+    BYPRODUCTS "${CMAKE_BINARY_DIR}/firmware/manifest.json"
+    COMMENT "Generating paired full and incremental firmware images"
+    VERBATIM
+)

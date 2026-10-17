@@ -13,7 +13,7 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / "build-host/desktop-preview"
-SUPPORTED = {"app_os_home", "app_os_today", "app_os_settings", "app_os_time", "app_os_reading", "app_os_sleep", "app_os_pin", "app_os_storage", "app_os_tools", "app_transfer", "app_book", "app_reading", "app_refresh", "app_font_pick"}
+SUPPORTED = {"app_os_home", "app_os_today", "app_os_settings", "app_os_bluetooth", "app_os_time", "app_os_reading", "app_os_sleep", "app_os_pin", "app_os_storage", "app_os_tools", "app_transfer", "app_book", "app_reading", "app_refresh", "app_font_pick", "app_image"}
 
 
 def metadata():
@@ -73,8 +73,8 @@ def build(sanitize=False):
 
     # 夹具书目录：预览用真实文件系统扫描与解析。/ Fixture book dirs feed the real scanner and parsers.
     fixtures = OUT / "fx"
-    full = fixtures / "f"; empty = fixtures / "e"; flash = fixtures / "h"
-    for d in (full, empty, flash):
+    full = fixtures / "f"; empty = fixtures / "e"; flash = fixtures / "h"; long_title = fixtures / "l"
+    for d in (full, empty, flash, long_title):
         d.mkdir(parents=True, exist_ok=True)
         for old in d.iterdir():
             old.unlink()
@@ -90,6 +90,8 @@ def build(sanitize=False):
     }
     for name, text in books.items():
         (full / name).write_text(text)
+    # 独立长书名书根，不改变普通六本夹具。/ Separate long-title root keeps the six-book fixture unchanged.
+    (long_title / "一本标题很长的测试图书用于检查首页标题不会覆盖进度上传按钮以及宽续读区域.txt").write_text(sample)
 
     # 真 EPUB 夹具（含生成的 PNG 封面）：验证封面提取与 EPUB 打开全链路。
     # A real EPUB fixture (with a generated PNG cover) exercising cover extraction end to end.
@@ -106,6 +108,10 @@ def build(sanitize=False):
 
     cover_png = _png_gray(200, 260, lambda x, y: 255 if x < 8 or x >= 192 or y < 8 or y >= 252 else
                           max(0, min(255, 250 - (x * 3 + y) // 3)))
+    image_directory = OUT / "sd/images"
+    image_directory.mkdir(parents=True, exist_ok=True)
+    (image_directory / "a.png").write_bytes(cover_png)
+    (image_directory / "b.png").write_bytes(_png_gray(200, 260, lambda x, y: (x * 7 + y * 3) % 256))
     body = '<p>图文正文，图片应直接显示。</p><img src="cover.png"/>' + ''.join('<p>第%d段。潮水在旧码头往复，纸页间的光随之明暗。</p>' % i for i in range(220))
     with _zipfile.ZipFile(full / '封面之书.epub', 'w') as epub:
         info = _zipfile.ZipInfo('mimetype'); info.compress_type = _zipfile.ZIP_STORED
@@ -144,7 +150,7 @@ def build(sanitize=False):
     # 样文转换成纯文本，避免把 Markdown 标记当作读者正文。/ Convert the sample to plaintext instead of showing Markdown marks as prose.
     sample = (ROOT / "main/assets/reading.md").read_text()
     (OUT / "sample.txt").write_text(re.sub(r"^#+[ \t]*", "", sample, flags=re.M).replace("**", ""))
-    for name, path in (("builtin_pack", "main/assets/builtin.pack"), ("reading_md", "main/assets/reading.md"),
+    for name, path in (("lock_4bpp_pack", "main/assets/lock_4bpp.pack"), ("builtin_pack", "main/assets/builtin.pack"), ("reading_md", "main/assets/reading.md"),
                        ("preview_sample_txt", str(OUT / "sample.txt"))):
         assets += [f".globl _binary_{name}_start", f"_binary_{name}_start:",
                    f'.incbin "{path}"', f".globl _binary_{name}_end", f"_binary_{name}_end:", ".byte 0"]
@@ -155,12 +161,20 @@ def build(sanitize=False):
     sleep = (ROOT / "main/sleep.c").read_text()
     clock = sleep[sleep.index("static void draw_lock_clock("):sleep.index("// 当月日历锁屏")]
     clock = clock.replace("static void draw_lock_clock(", "void preview_draw_lock_clock(")
-    (OUT / "lock_clock.c").write_text('#include "preview_host.h"\n#include "ui_kit.h"\n#include "ttf_font.h"\n#include "os_time.h"\n' + clock)
+    (OUT / "lock_clock.c").write_text('#include "preview_host.h"\n#include "ui_kit.h"\n#include "ttf_font.h"\n#include "os_time.h"\n#include "settings.h"\n' + clock)
+    # 抽取锁屏入口的真实摘录读取与绘制，宿主只替换NVS和电源边界。
+    # Extract the real excerpt loading/painter; the host replaces only NVS and power boundaries.
+    excerpt = sleep[sleep.index("static bool draw_lock_excerpt("):sleep.index("static bool draw_lock_face(")]
+    with (OUT / "lock_clock.c").open("a") as f:
+        f.write('\n#include "book_quotes.h"\n#include "book_stats.h"\n#include "ui_product.h"\n' +
+                excerpt.replace("static bool draw_lock_excerpt(", "bool preview_draw_lock_excerpt("))
     command = [os.environ.get("CC", "cc"), "-std=gnu11", "-O1" if sanitize else "-O2", "-g",
                '-DTTF_SD_ROOT="build-host/desktop-preview/sd"',
+               '-DUI_IMAGE_MEDIA_ROOT="build-host/desktop-preview/sd"',
                "-Wall", "-Wextra", "-Wno-sign-compare", "-Wno-unused-variable", "-Wno-unused-function", "-Wno-unused-parameter",
                "-Itools/preview", f"-I{includes}", "-Imain/app", "-Imain/ui", "-Imain/ui/product",
-               "-Imain/os", "-Imanaged_components/espressif__cjson/cJSON", "-Imain/book", "-Imain/font", "-Imain", "-Icomponents/read_pico_transfer/include"]
+               "-Imain/os", "-Imanaged_components/espressif__cjson/cJSON", "-Imain/book", "-Imain/font", "-Imain", "-Icomponents/read_pico_transfer/include",
+               "-Icomponents/jpegdec/src"]
     if os.uname().sysname == "Darwin":
         developer = Path(subprocess.check_output(["xcode-select", "-p"], text=True).strip())
         sdk = Path(os.environ.get("PREVIEW_MACOS_SDK", developer / "Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"))
@@ -169,15 +183,15 @@ def build(sanitize=False):
     if sanitize:
         command += ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
     command += ["tools/preview/native.c", "tools/preview/esp_host.c",
-                "tools/preview/today_port.c", "tools/preview/transfer_port.c", "tools/preview/device_port.c", "tools/preview/miniz_host.c",
+                "tools/preview/ble_port.c", "tools/preview/today_port.c", "tools/preview/transfer_port.c", "tools/preview/device_port.c", "tools/preview/miniz_host.c", "tools/jpegdec_host_stub.c",
                 "main/asset_pack.c", "main/display_pixels.c", "main/settings.c", "main/book/book_progress.c", "main/book/book_stats.c", "main/book/book_stats_store.c",
-                "main/book/book_entry.c", "main/book/book_layout.c", "main/book/book_source.c", "main/book/book_home.c", "main/book/book_cover.c", "main/book/book_cover_job.c", "main/book/book_marks.c", "main/book/book_quotes.c",
+                "main/book/book_entry.c", "main/book/book_layout.c", "main/book/book_source.c", "main/book/book_home.c", "main/book/book_cover.c", "main/book/book_cover_auto.c", "main/book/book_cover_job.c", "main/book/book_marks.c", "main/book/book_quotes.c",
                 "main/book/book_txt.c", "main/book/book_cache.c", "main/book/gbk.c", "main/book/book_epub.c", "main/book/zip_reader.c",
-                "main/book/html_text.c", "main/book/book_xpointer.c", "main/book/book_image.c", "main/book/vendor/tjpgd.c",
-                "components/read_pico_search/read_pico_search.c", "main/os/os_time.c", "main/os/os_device_pico.c", "main/os/os_sync.c", "main/os/os_sync_http.c", "managed_components/espressif__cjson/cJSON/cJSON.c", "main/os/os_lunar.c", "main/os/os_crash.c",
+                "main/book/html_text.c", "main/book/book_xpointer.c", "main/book/book_image.c", "main/book/book_hyphen.c", "main/book/vendor/tjpgd.c",
+                "components/read_pico_search/read_pico_search.c", "main/os/ble_hid.c", "main/os/os_page_turner.c", "main/os/os_time.c", "main/os/os_device_pico.c", "main/os/os_sync.c", "main/os/os_sync_http.c", "managed_components/espressif__cjson/cJSON/cJSON.c", "main/os/os_lunar.c", "main/os/os_crash.c",
                 "main/app/app_sleep_hooks.c",
                 "main/ui/product/ui_product.c", str(OUT / "graphics.c"), str(OUT / "unavailable.c"), str(OUT / "lock_clock.c"),
-                str(OUT / "assets.S"), "main/ui/ui_kit.c", "main/ui/ui_assets.c", "main/ui/ui_gesture.c", "main/ui/ui_menu.c", "main/ui/datamatrix.c",
+                str(OUT / "assets.S"), "main/ui/ui_kit.c", "main/ui/ui_assets.c", "main/ui/ui_gesture.c", "main/ui/ui_press.c", "main/ui/ui_sheet.c", "main/ui/ui_menu.c", "main/ui/ui_dither.c", "main/ui/ui_image.c", "main/ui/ui_image_cache.c", "main/ui/datamatrix.c",
                 "main/font/ttf_font.c", "main/app/app_registry.c",
                 *[item["source"] for item in items if item["supported"]], "-lz", "-lm"]
     # 编译成功才替换程序，避免影响仍在运行的预览。/ Replace only after success; preserve running previews.

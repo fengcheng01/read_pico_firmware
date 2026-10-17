@@ -29,6 +29,8 @@
  * Frozen: Return consumes the latest page origin, restoring its page and menu position.
  * 冻结：明确菜单入口由页面 on_menu_select 准备，同页也退出重入；主循环不解释书架等业务状态。
  * Frozen: Pages prepare explicit menu entry through on_menu_select, exiting/reentering even the same page; the loop does not interpret shelf/business state.
+ * 冻结修订：正文可请求共用锁屏事务，仍由UI任务停止无线/保存/睡眠；导航取消待办，不解释BLE报告。
+ * Frozen revision: Body pages may request the shared lock transaction; the UI task still stops radio/saves/sleeps, navigation cancels pending work, and this loop never interprets BLE reports.
  */
 
 #include "app_loop.h"
@@ -38,6 +40,7 @@
 
 #include "app_registry.h"
 #include "book_cover.h"
+#include "boot_state.h"
 #include "continuous_du.h"
 #include "display.h"
 #include "e0470_epaper_waveform.h"
@@ -73,6 +76,9 @@ static bool s_stay_awake;
 void app_lock_ignore_for(int64_t ms) {
     s_lock_ignore_until_ms = esp_timer_get_time() / 1000 + ms;
 }
+
+static bool s_lock_requested;
+void app_loop_request_lock(void) { s_lock_requested = true; }
 
 void app_loop_stay_awake(void) {
     s_stay_awake = true;
@@ -272,6 +278,7 @@ void app_loop_run(const app_loop_config_t* config) {
     cst836u_get_info(config->tp, &touch_info);
     cst836u_touch_t latest = { 0 };
 
+    s_lock_requested = false;
     app_ctx_t ctx = {
         .hl = config->hl,
         .fb = config->fb,
@@ -306,6 +313,8 @@ void app_loop_run(const app_loop_config_t* config) {
     // 首帧必须整屏 GC16：fb 里还是 app_main 画的开机图，DU 盖不掉。
     // First frame must be full GC16: fb still holds the splash; DU cannot cover it.
     app_present(&ctx, current, APP_REDRAW_FULL);
+    // 首个完整界面成功上屏才允许宣布启动完成。/ Startup counts as complete only after the first full frame reaches the panel.
+    pico_boot_ready();
     ESP_LOGI(TAG, "UI ready on %s", current->title);
 
     app_touch_input_init(config->tp);
@@ -471,21 +480,23 @@ void app_loop_run(const app_loop_config_t* config) {
 
         // 电源键短按 = 锁屏。自检页要连着占用 PMU，这时不抢它的事件队列。
         // Short power-key press locks. A page that holds the PMU keeps its event queue.
-        // Short power-key press locks. A page that holds the PMU keeps its event queue.
+        bool remote_lock = s_lock_requested && !menu_open && !ctx.request_app && !ctx.request_menu && !ctx.request_return;
+        s_lock_requested = false;
         if (read_pico_pmu_ready() && !current->holds_pmu
-            && ctx.now_ms - last_lock_poll_ms >= APP_LOCK_POLL_MS) {
+            && (remote_lock || ctx.now_ms - last_lock_poll_ms >= APP_LOCK_POLL_MS)) {
             last_lock_poll_ms = ctx.now_ms;
             bool key_short = read_pico_pmu_take_key_short();
-            if (key_short && ctx.now_ms < s_lock_ignore_until_ms) {
+            if (key_short && !remote_lock && ctx.now_ms < s_lock_ignore_until_ms) {
                 ESP_LOGI(TAG, "ignore boot KEY_SHORT");
-            } else if (key_short || idle_lock) {
-                if (idle_lock && !key_short) ESP_LOGI(TAG, "idle lock after %u min", idle_min);
+            } else if (key_short || idle_lock || remote_lock) {
+                if (idle_lock && !key_short && !remote_lock) ESP_LOGI(TAG, "idle lock after %u min", idle_min);
                 held_key = -1;
                 cancel_gesture(&ctx, current, &gesture);
                 if (menu_pressed >= 0) menu_feedback(&ctx, current, menu_leaf, menu_pressed, false, &feedback);
                 menu_pressed = UI_MENU_HIT_NONE;
                 app_touch_input_enable(false);
-                enter_lock_and_sleep(ctx.hl, &s_lock_ignore_until_ms, ctx.acc, ctx.tp);
+                enter_lock_and_sleep(ctx.hl, &s_lock_ignore_until_ms, ctx.acc, ctx.tp,
+                                     (uint8_t)app_id_of(current));
                 app_touch_input_enable(current->on_gesture != NULL);
                 was_touched = false;
                 // 浅睡保留 ESP 单调钟，不把 PMU 漂移重复带回显示。/ Light sleep preserves the ESP clock; never import PMU drift on every wake.
@@ -551,6 +562,7 @@ void app_loop_run(const app_loop_config_t* config) {
         // 返回来源优先；普通请求仍按切页优先处理。
         // Return requests win; ordinary requests still prioritize page switches.
         if (ctx.request_return || ctx.request_app || ctx.request_menu) {
+            s_lock_requested = false;
             held_key = -1;
             const app_desc_t* next = ctx.request_app;
             const bool rearm_touch = ctx.request_app_rearm_touch;

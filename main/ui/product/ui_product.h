@@ -12,8 +12,19 @@
 #include "book_cover.h"
 #include "os_catalog.h"
 #include "app.h"
+#include "os_time.h"
 
 #define UI_PRODUCT_SHELF_ROWS 3
+
+/// 三键当前语义，只画底部提示带，不改变键位或触区。/ Current meanings of three keys; paints the bottom hint strip without changing keys or hits.
+void ui_product_key_hints(uint8_t* fb, const char* left, const char* middle, const char* right);
+/// 摘录确认共用按钮与自适应卡片；只绘图。/ Shared excerpt buttons and adaptive confirmation card; paints only.
+EpdRect ui_product_excerpt_button(int index);
+void ui_product_excerpt_confirm(uint8_t* fb, const char* text, const char* source, const char* notice);
+/// 竖排摘录锁屏，来源组成为「出自-书名·章节名」；章节为空退回仅书名。时间与统计由回调注入快照，绘图不做IO。
+/// Vertical excerpt lock sourcing “出自-书名·章节名”; an empty chapter falls back to the book alone. Callbacks inject time/stats snapshots and painting never does IO.
+void ui_product_excerpt_lock(uint8_t* fb, const char* text, const char* path, const char* chapter, const char* wake,
+                             const os_time_info_t* time, unsigned minutes, unsigned active_days, bool live_clock, bool preview);
 
 /// 最多绘制指定行数，超长文本 UTF-8 边界省略；用于文件名回退。/ Draw bounded lines, ellipsizing at UTF-8 boundaries; for filename fallbacks.
 void ui_product_title(uint8_t* fb, EpdRect rect, const char* title, int px, int max_lines);
@@ -40,20 +51,38 @@ void ui_product_cover(uint8_t* fb, EpdRect rect, const char* title, int px);
 /// 三行书封列表与翻页管理行的共享绘图/触区。/ Shared three-row cover list and paging/management geometry.
 EpdRect ui_product_shelf_rect(int row);
 EpdRect ui_product_shelf_nav_rect(int index);
-/// cover 为 146×188 灰度位图（BOOK_COVER_W/H），NULL 回退文件名排版。
-/// / cover is a 146×188 grayscale bitmap (BOOK_COVER_W/H); NULL falls back to the typographic cover.
+/// 书架统一工具栏，末格容纳列表/封面选择。/ Unified shelf toolbar; the last cell selects list/covers.
+EpdRect ui_product_shelf_control_rect(int index);
+/// 绘制列表/封面双图标，突出当前布局。/ Paint list/cover icons with the current layout selected.
+void ui_product_shelf_layout(uint8_t* fb, bool grid);
+/// 六封面布局中的一格及绘图：标题两行、来源与进度保留。/ One six-cover tile, keeping two title lines, source and progress.
+EpdRect ui_product_shelf_grid_rect(int index);
+void ui_product_shelf_grid_card(uint8_t* fb, EpdRect rect, const char* title, const char* meta,
+                                 const char* format, unsigned percent, bool has_progress,
+                                 bool pressed, const uint8_t* cover);
+/// cover 为 BOOK_COVER_W/H 灰度位图，NULL 回退文件名排版。
+/// cover uses BOOK_COVER_W/H grayscale dimensions; NULL falls back to the typographic cover.
 void ui_product_shelf_card(uint8_t* fb, EpdRect rect, const char* title, const char* meta,
                            unsigned percent, bool has_progress, bool pressed, const uint8_t* cover);
-/// 阅读工具与字号面板共用六项触区；夜间模式在更多设置。/ Tools and size panels share six targets; night mode lives in grouped settings.
+/// 阅读工具与字号面板共用六项触区；退出按钮与预览区独立。/ Tools and sizes share six targets; return buttons and the preview area are separate.
 EpdRect ui_product_tool_rect(int index);
 void ui_product_reader_tools(uint8_t* fb, const char* title, int px, bool night, int pressed);
 /// 字号子面板，复用工具触区。/ Size subpanel sharing toolbar hit geometry.
 void ui_product_reader_sizes(uint8_t* fb, const char* title, int px, int pressed);
-/// 正文与缺字告知/页脚共用几何；status 为左侧可选时钟/电量，bar 控制百分比文字。
-/// Shared body/font notice/footer geometry; status is the optional clock/battery cluster and bar toggles percentage text.
+/// 当前字号面板的文字预览槽位，调用方按真实正文边距收窄。/ Text-preview slot for the size panel; caller applies the real body margins.
+EpdRect ui_product_reader_preview_rect(void);
+/// 阅读覆盖层统一的返回触区；0 工具，1 正文。/ Shared reader-overlay return targets: 0 tools, 1 body.
+EpdRect ui_product_reader_return_rect(int index);
+/// 正文与缺字告知/页脚共用几何。
+/// Shared body/font-notice/footer geometry.
 EpdRect ui_product_reader_body(bool missing_glyphs);
+/// 阅读页脚：status 为左侧时钟/电量/剩余时间串，bar 打开时画进度轨道；ticks 为章节
+/// 起点的千分比位置（0..999），随轨道画成章节刻度。
+/// Reader footer: status is the clock/battery/time-left cluster on the left; bar draws
+/// the progress track, with ticks as chapter-start permille positions (0..999).
 void ui_product_reader_chrome(uint8_t* fb, const char* title, unsigned page, unsigned pages,
-                             unsigned percent, bool missing_glyphs, const char* status, bool bar);
+                             unsigned percent, bool missing_glyphs, const char* status, bool bar,
+                             const uint16_t* ticks, int tick_count);
 /// 锁屏密码键盘绘制/命中；digits 为已输位数，back 额外画返回按钮，命中 0..9 数字、10 清空、11 退格。
 /// Lock-PIN keypad draw/hit; digits are entered dots, back adds a return button, hits return 0..9 digits, 10 clear, 11 backspace.
 void ui_product_lock_keypad(uint8_t* fb, const char* title, const char* message, unsigned digits, bool back);

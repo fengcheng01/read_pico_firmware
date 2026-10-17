@@ -9,10 +9,15 @@
  */
 
 #pragma once
-
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+
+/// 每日阅读目标（分钟），0为未设置；只影响目标进度，不改历史分钟。
+/// Daily reading goal in minutes; zero is unset, affecting goal progress without changing historical minutes.
+unsigned app_settings_daily_goal(void);
+/// 持久保存0..360分钟、5分钟步进；成功才更新缓存。/ Persist0..360 minutes in five-minute steps; update cached state only on success.
+bool app_settings_set_daily_goal(unsigned minutes);
 
 /// 默认深睡。浅睡：按键回原页；拿起唤醒默认关。软睡：SOFT_SLEEP 拉低 EN，再短按开机。关机：EN=0，长按开机。
 /// Default is deep. Light: key returns to the page; pickup-wake defaults off. Soft sleep: SOFT_SLEEP drops EN, then a short press boots. Off: EN=0, long-press to boot.
@@ -26,6 +31,10 @@ void app_settings_init(void);
 app_sleep_mode_t app_settings_sleep_mode(void);
 void app_settings_set_sleep_mode(app_sleep_mode_t mode);
 const char* app_sleep_mode_name(app_sleep_mode_t mode);
+/// 锁屏实际电源模式：动态样式在深睡选择下保留浅睡，与现有锁屏策略一致。/ Effective lock mode: dynamic faces retain light sleep when Deep is selected, matching existing policy.
+app_sleep_mode_t app_settings_effective_lock_mode(void);
+/// 实际电源模式对应的电源键唤醒提示。/ Power-key wake hint for the effective mode.
+const char* app_settings_lock_wake_hint(void);
 /// 空路径表示固件内建字体；非空为 SD 上的 TTF。/ Empty path is the built-in font; non-empty is a TTF on the SD card.
 const char* app_settings_font_path(void);
 void app_settings_set_font_path(const char* path);
@@ -42,14 +51,26 @@ void app_settings_set_pickup_wake(bool on);
 uint8_t app_settings_book_px(void);
 /// 无效字号恢复 48。/ Invalid sizes fall back to 48.
 void app_settings_set_book_px(uint8_t px);
+/// 六封面书架，默认三行列表。/ Six-cover shelf; the default remains a three-row list.
+bool app_settings_shelf_grid(void);
+/// 保存书架布局选择，不改变排序与筛选。/ Persist shelf layout without changing sorting/filtering.
+void app_settings_set_shelf_grid(bool grid);
 /// 实验性晃动翻页，默认关闭。/ Experimental shake page turn, off by default.
 bool app_settings_book_shake(void);
 /// 保存实验性晃动翻页开关。/ Persist the experimental shake page-turn switch.
 void app_settings_set_book_shake(bool on);
+/// 实验性错相揭页动画，默认关闭；仅日间标准文字翻页生效。/ Experimental staggered page-turn animation, off by default; day standard text turns only.
+bool app_settings_book_turn_anim(void);
+/// 保存实验性错相揭页动画开关。/ Persist the experimental staggered page-turn switch.
+void app_settings_set_book_turn_anim(bool on);
 /// 本地时区偏移，四分之一小时为单位，默认 +32（UTC+8）。/ Local timezone offset in quarter-hours, default +32 (UTC+8).
 int8_t app_settings_tz_qh(void);
 /// 保存时区；越界值被拒绝。/ Persist the timezone; out-of-range values are rejected.
 void app_settings_set_tz_qh(int8_t qh);
+/// 正文字重覆盖率微调，-16..16，默认0；仅保存成功后更新内存值。
+/// Body stroke coverage adjustment, -16..16, initially zero; update RAM only after successful persistence.
+int app_settings_book_stroke(void);
+bool app_settings_set_book_stroke(int steps);
 /// 正文行距加成 0/15/30%，默认 0。/ Body extra leading of 0/15/30 percent, initially 0.
 uint8_t app_settings_book_leading(void);
 void app_settings_set_book_leading(uint8_t percent);
@@ -71,13 +92,27 @@ void app_settings_set_book_auto(uint8_t tier);
 /// 正文左右分区点击翻页，默认开。/ Body left/right tap-zone page turns, on by default.
 bool app_settings_book_tap(void);
 void app_settings_set_book_tap(bool on);
-/// 阅读画面夜间模式：正文、边距、页脚及阅读覆盖层统一反色，默认关；目录/设置等其它页面不反色。
-/// Reader night mode inverts body, margins, footer and reading overlays together, off by default; TOC/settings and other pages keep their palette.
+/// 阅读画面夜间模式（暂时下线，恒为关）：多轮实机调残影未果撤掉入口，存量值保留不再生效。
+/// Reader night mode (temporarily withdrawn, always off): entries removed after failed ghost tuning; stored values remain but no longer apply.
 bool app_settings_book_night(void);
-void app_settings_set_book_night(bool on);
-/// 锁屏样式 0=静态 1=时钟 2=日历 3=黄历，默认静态。/ Lock style 0=static 1=clock 2=calendar 3=almanac, initially static.
+/// 个人摘录使用独立值5，保留旧壁纸值4的升级兼容。/ Personal excerpts use value 5, preserving legacy wallpaper value 4 migration.
+#define APP_LOCK_STYLE_QUOTE 5
+/// 锁屏样式 0=图片 1=时钟 2=日历 3=黄历 5=个人摘录，默认图片；缺图或无摘录回退内置图。
+/// Lock style 0=image 1=clock 2=calendar 3=almanac 5=personal excerpt, initially image; missing images/excerpts use the built-in image.
 uint8_t app_settings_lock_style(void);
-void app_settings_set_lock_style(uint8_t style);
+/// 保存成功后更新样式缓存，失败保留旧样式。/ Update the cached style only after a successful save, retaining the old style on failure.
+bool app_settings_set_lock_style(uint8_t style);
+/// 锁屏壁纸 TF 路径，空为未设；只接受 /sdcard/ 前缀。/ Lock wallpaper TF path, empty when unset; /sdcard/ prefix only.
+const char* app_settings_lock_image(void);
+void app_settings_set_lock_image(const char* path);
+/// 锁屏来源：断电级睡眠（深睡/关机/久置降级）前记下当时页面，下次开机直达；读取即清除，缺省 0=首页。
+/// Lock origin: the active page recorded before a power-cut sleep (deep/off/idle descent); the next boot returns to it. Reads clear it; default 0=home.
+void app_settings_set_lock_origin(uint8_t app);
+uint8_t app_settings_take_lock_origin(void);
+/// 锁屏时阅读页持有正文：配合来源键让开机直接续读；读取即清除。
+/// The reader held live text at lock: pairs with the origin key to auto-resume reading at boot; reads clear it.
+void app_settings_set_lock_reading(bool reading);
+bool app_settings_take_lock_reading(void);
 /// 正文对齐 0=左 1=居中 2=两端对齐（段末行除外），默认左。/ Body alignment 0=left 1=center 2=justified (last line excepted), initially left.
 uint8_t app_settings_book_align(void);
 void app_settings_set_book_align(uint8_t align);
@@ -88,6 +123,9 @@ bool app_settings_footer_battery(void);
 void app_settings_set_footer_battery(bool on);
 bool app_settings_footer_bar(void);
 void app_settings_set_footer_bar(bool on);
+/// 页脚是否显示按历史每页耗时估算的剩余阅读时间。/ Whether the footer shows the per-page-average remaining reading time.
+bool app_settings_footer_time(void);
+void app_settings_set_footer_time(bool on);
 /// 空闲自动锁屏分钟数，0=关，可选 0/5/10/30，默认关。/ Idle auto-lock minutes, 0=off with 0/5/10/30 choices, initially off.
 uint8_t app_settings_idle_lock_min(void);
 void app_settings_set_idle_lock_min(uint8_t minutes);
@@ -127,13 +165,17 @@ void app_settings_set_book_direct(bool on);
 bool app_settings_book_edge_gray(void);
 void app_settings_set_book_edge_gray(bool on);
 
+/// 夜间白预驱实验，默认关；普通夜间翻页15→0先用白脉冲再走厂家黑迁移，白像素加白光学不可见，黑底残影改善待同板验证。
+/// Night white pre-drive experiment, off by default; ordinary night turns drive 15→0 white first before the vendor black transitions, optically invisible on white pixels, with black-background ghost relief awaiting same-board proof.
+bool app_settings_book_night_prewipe(void);
+void app_settings_set_book_night_prewipe(bool on);
+
 enum {
     BOOK_NIGHT_PROFILE_CURRENT = 0, ///< 当前清理 / Current cleanup
-    BOOK_NIGHT_PROFILE_CROSSMUX = 1, ///< Crossmux Pico 对照 / Crossmux Pico comparison
     BOOK_NIGHT_PROFILE_WHITE_REPAINT = 3, ///< 物理清白后直绘 / Repaint after physical white clearing
 };
-/// 夜间默认当前清理；纯文字可选Crossmux黑白DU/单次GC，或实际清白后GL/DU直绘，不移植其它固件功能。
-/// Night defaults to current cleanup; text may select Crossmux BW DU/single GC or physical-white-clear/GL-DU repaint, without transplanting other firmware features.
+/// 夜间默认当前清理；纯文字可选实际清白后GL/DU直绘；已移除的Crossmux对照值1回当前，不移植其它固件功能。
+/// Night defaults to current cleanup; text may select physical-white-clear/GL-DU repaint; the removed Crossmux comparison value 1 falls back to Current without transplanting other firmware features.
 uint8_t app_settings_book_night_profile(void);
 /// 保存有效方案，拒绝未知值；独立于已撤回的实验设置。/ Persist a valid profile, rejecting unknown values; independent of the withdrawn experiment setting.
 void app_settings_set_book_night_profile(uint8_t profile);

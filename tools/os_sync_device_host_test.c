@@ -19,9 +19,11 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+static bool test_ble_stopped = true;
+bool os_page_turner_pause(void) { return test_ble_stopped; }
 static pthread_t ui, worker;
 static char path[288];
-static book_progress_t progress={.file_size=100,.chapter=1,.byte_off=20,.px=48,.pct=20,.last_open_s=1};
+static book_progress_t progress={.file_size=100,.chapter=1,.byte_off=20,.px=76,.pct=20,.last_open_s=1};
 static unsigned saves;
 static bool paragraph_mapping;
 static const char* paragraph_path="/body/DocFragment[3]/body/div[1]/section[1]/div[2]/p[19]/text()[2].137";
@@ -92,12 +94,17 @@ static void finish(char* note) {for(int i=0;i<2000;i++){if(os_sync_job_poll(note
 int main(void) {
     ui=pthread_self();char note[128];snprintf(path,sizeof(path),"/tmp/pico-sync-%ld.txt",(long)getpid());FILE* f=fopen(path,"wb");assert(f);for(int i=0;i<100;i++)fputc('a',f);fclose(f);
     response="{\"progress\":\"rp1|100|2|50|52\",\"percentage\":0.5}";
+    test_ble_stopped=false;
+    assert(!os_sync_job_start(OS_SYNC_JOB_PULL,note,sizeof(note)) && !net_starts && !claimed);
+    test_ble_stopped=true;
     assert(os_sync_job_start(OS_SYNC_JOB_PULL,note,sizeof(note)));
     assert(os_sync_job_busy() && !os_sync_job_start(OS_SYNC_JOB_PUSH,note,sizeof(note)));
     finish(note);assert(net_starts==1 && net.state==READ_PICO_TRANSFER_STOPPED && claimed);assert(os_sync_pull_pending() && saves==0 && progress.pct==20);
     assert(os_sync_pull_confirm(false,note,sizeof(note)) && saves==0 && !claimed);
     assert(os_sync_job_start(OS_SYNC_JOB_PULL,note,sizeof(note)));finish(note);
-    assert(os_sync_pull_confirm(true,note,sizeof(note)) && saves==1 && progress.pct==50 && progress.byte_off==50);
+    // 远端 rp1 带 px=52、全局桩是 48：应用后必须保留本地 76 档。
+    // The remote rp1 carries px=52 and the stubbed global is 48: applying must keep the local tier 76.
+    assert(os_sync_pull_confirm(true,note,sizeof(note)) && saves==1 && progress.pct==50 && progress.byte_off==50 && progress.px==76);
     assert(os_sync_job_start(OS_SYNC_JOB_PULL,note,sizeof(note)));finish(note);
     progress.last_open_s++;assert(!os_sync_pull_confirm(true,note,sizeof(note)) && saves==1);
     assert(os_sync_job_start(OS_SYNC_JOB_PULL,note,sizeof(note)));finish(note);
@@ -110,7 +117,7 @@ int main(void) {
     response="{\"progress\":\"/body/p[9]\",\"percentage\":0.73}";
     assert(os_sync_job_start(OS_SYNC_JOB_PULL,note,sizeof(note))); finish(note);
     assert(strstr(note,"近似位置") && os_sync_pull_confirm(true,note,sizeof(note)));
-    assert(progress.approximate && progress.pct==73 && progress.chapter==0 && progress.byte_off==0);
+    assert(progress.approximate && progress.pct==73 && progress.chapter==0 && progress.byte_off==0 && progress.px==76);
     unsigned starts_before=net_starts, stops_before=net_stops;
     net.mode=READ_PICO_TRANSFER_MODE_STA;net.state=READ_PICO_TRANSFER_READY;atomic_store(&link_ready,true);
     assert(os_sync_job_start(OS_SYNC_JOB_AUTH,note,sizeof(note)));finish(note);
@@ -130,6 +137,6 @@ int main(void) {
     unsigned saves_before=saves;
     assert(strstr(note,"文本位置")&&saves==saves_before);
     assert(os_sync_pull_confirm(true,note,sizeof(note))&&saves==saves_before+1);
-    assert(progress.chapter==2&&progress.byte_off==37&&!progress.approximate);
-    unlink(path);puts("os_sync_device: worker-only HTTP/EPUB mapping, UI-only NVS, staged paragraph/rp1 pulls, cancel, reuse and conflicts passed");
+    assert(progress.chapter==2&&progress.byte_off==37&&!progress.approximate&&progress.px==76);
+    unlink(path);puts("os_sync_device: worker-only HTTP/EPUB mapping, UI-only NVS, staged paragraph/rp1 pulls, local font tiers, cancel, reuse and conflicts passed");
 }

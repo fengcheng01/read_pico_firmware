@@ -290,6 +290,10 @@ esp_err_t zip_extract(zip_reader_t* z, int index, void* dst, size_t cap) {
         uint8_t* input = heap_caps_malloc(entry->packed ? entry->packed : 1, PSRAM);
         tinfl_decompressor* state = heap_caps_malloc(sizeof(*state), PSRAM);
         if (!input || !state) { free(input); free(state); return ESP_ERR_NO_MEM; }
+        // 状态结构清零后再 init：ROM 容忍任意初值，宿主替身要求指针域为零。
+        // Zero the state before init: ROM tolerates any initial bytes; the host
+        // stand-in requires NULL pointer fields.
+        memset(state, 0, sizeof(*state));
         bool ok = read_at(z, data_pos, input, entry->packed);
         if (ok) {
             tinfl_init(state);
@@ -298,6 +302,10 @@ esp_err_t zip_extract(zip_reader_t* z, int index, void* dst, size_t cap) {
                                                    TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF);
             ok = status == TINFL_STATUS_DONE && in_size == entry->packed && out_size == entry->unpacked;
         }
+        // 截断流停在可续状态：先 re-init 归还宿主替身的 zlib 内部状态；ROM 上是空操作。
+        // Truncated streams stop resumable: re-init first to release the host stand-in's
+        // zlib internals; a no-op on ROM.
+        tinfl_init(state);
         free(input); free(state);
         if (!ok) return ESP_ERR_INVALID_SIZE;
     }

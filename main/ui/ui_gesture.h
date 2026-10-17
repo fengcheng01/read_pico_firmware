@@ -20,6 +20,7 @@ typedef enum {
     UI_GESTURE_SWIPE_U, ///< 上滑 / Swipe up
     UI_GESTURE_SWIPE_D, ///< 下滑 / Swipe down
     UI_GESTURE_CANCEL, ///< 取消 / Cancel
+    UI_GESTURE_DRAG, ///< 越容差后的中途移动 / Mid-sequence move after the slop
 } ui_gesture_type_t;
 
 typedef struct ui_gesture_event_s {
@@ -38,10 +39,14 @@ typedef struct {
     int64_t last_ms; ///< 最近时刻，倒退时取消 / Last time, cancel on clock regression
     bool moved; ///< 曾超出容差 / Has exceeded movement slop
     bool long_fired; ///< 已发出长按 / Long press emitted
+    uint16_t drag_x, drag_y; ///< 上次 DRAG 的坐标 / Coordinates of the last emitted DRAG
 } ui_gesture_t;
 
 /// 清除状态；进出页面时调用。/ Clear state when entering or leaving a page.
 void ui_gesture_reset(ui_gesture_t *gesture);
-/// 每次最多一个事件；consumed、多点或缺失快照取消活动序列。
-/// Emit at most one event; consumed, multitouch or a missing snapshot cancels an active sequence.
+/// 每次最多一个事件；consumed、多点或缺失快照取消活动序列。DRAG 是越容差移动的
+/// 中途通知，不改变松手时的终态分类（仍为 SWIPE/TAP/CANCEL），页面可安全忽略。
+/// Emit at most one event; consumed, multitouch or a missing snapshot cancels an active
+/// sequence. DRAG is a mid-sequence notification after the slop and never changes the
+/// release classification (still SWIPE/TAP/CANCEL), so pages may safely ignore it.
 bool ui_gesture_feed(ui_gesture_t *gesture, const app_ctx_t *ctx, ui_gesture_event_t *out);

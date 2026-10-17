@@ -37,6 +37,7 @@ typedef struct {
     read_pico_transfer_mode_t mode; ///< 网络模式，默认热点 / Network mode, default AP
     const char *root_dir; ///< 已挂载根目录，start 内复制 / Mounted root, copied by start
     const char *font_dir; ///< 可选 TF 字体目录；调用方须暂停 SD 字体读取至 stop 返回 / Optional TF font directory; caller must suspend SD font reads until stop returns
+    const char *image_dir; ///< 可选 TF 图片目录；上传 JPG/PNG 供锁屏图片页使用 / Optional TF image directory; JPG/PNG uploads feed the lock-image page
     bool is_flash; ///< 内置存储标志 / Internal storage flag
     size_t file_limit; ///< 单文件上限，零表示不限 / Per-file limit, zero means unlimited
     uint64_t (*free_bytes_cb)(void *ctx); ///< 查询可用字节 / Query available bytes

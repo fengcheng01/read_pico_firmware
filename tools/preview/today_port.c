@@ -13,11 +13,13 @@
 
 static int16_t s_tz = 32;
 static int s_seconds;
+static bool s_time_valid = true;
+void preview_time_valid(bool valid) { s_time_valid = valid; }
 void preview_time_step(int seconds) { s_seconds = seconds; }
 
 void os_time_poll(int64_t now_ms) {
     (void)now_ms;
-    os_time_apply(TODAY_FIXTURE_UNIX + s_seconds, s_tz);
+    os_time_apply(s_time_valid ? TODAY_FIXTURE_UNIX + s_seconds : 0, s_tz);
 }
 
 void os_time_invalidate(void) {}

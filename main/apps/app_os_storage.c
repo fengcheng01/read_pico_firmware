@@ -26,12 +26,16 @@
 #include "ui_gesture.h"
 #include "ui_menu.h"
 #include "ui_product.h"
+#include "ui_press.h"
+#include "ui_sheet.h"
 #include <stdio.h>
 
 static EpdRect back_rect(void) { return ui_product_back_rect(); }
 static EpdRect refresh_rect(void) { return (EpdRect){UI_MARGIN, 880, 260, 84}; }
 
 static EpdRect usb_rect(void) { return (EpdRect){324, 880, 320, 84}; }
+static ui_press_t s_press;
+static bool pressed_id(int id) { return ui_press_active(&s_press) && s_press.id == id; }
 static bool s_usb_confirm, s_usb_start;
 static char s_usb_message[96];
 static bool s_probing = true;
@@ -58,9 +62,15 @@ static void start_probe(app_ctx_t* ctx) {
     os_storage_probe();
 }
 
-static void on_enter(app_ctx_t* ctx) { s_usb_confirm = s_usb_start = false; s_usb_message[0] = 0; start_probe(ctx); }
+static void on_enter(app_ctx_t* ctx) {
+    s_usb_confirm = s_usb_start = false;
+    s_usb_message[0] = 0;
+    ui_press_reset(&s_press);
+    start_probe(ctx);
+}
 
 static app_redraw_t on_tick(app_ctx_t* ctx) {
+    ui_press_settle(ctx, &s_press, ctx->now_ms);
     if (ctx->consumed) return APP_REDRAW_NONE;
     if (s_usb_start) {
         esp_err_t err = ttf_font_suspend_sd(true);
@@ -123,46 +133,67 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
     ui_product_title(fb, (EpdRect){UI_MARGIN, 726, ui_content_width(), 130},
                      "图书优先保存到 TF 卡；未插卡时使用内置存储。拔插卡或上传后可重新检测，结果只用于展示，不改动数据。",
                      26, 3);
+    if (pressed_id(0)) ui_draw_pressed_round_rect(fb, refresh_rect(), UI_BTN_RADIUS);
     ui_draw_button(fb, refresh_rect(), "重新检测", !s_probing);
+    if (pressed_id(1)) ui_draw_pressed_round_rect(fb, usb_rect(), UI_BTN_RADIUS);
     ui_draw_button(fb, usb_rect(), "USB 连接电脑", false);
-    if (s_usb_confirm || s_usb_start || s_usb_message[0]) {
+    if (s_usb_confirm) {
+        // 确认走统一底部面板：原按钮不变身，取消/确认位置固定。
+        // Confirmation uses the shared bottom sheet: source buttons keep their identity and Cancel/Confirm stay put.
+        ui_draw_confirm_sheet(fb, "重启进入 USB 模式？",
+                              "电脑将独占 TF 卡；阅读与传书暂停。退出前先在电脑安全弹出。",
+                              "确认连接", pressed_id(3) ? 1 : pressed_id(2) ? 0 : -1);
+    } else if (s_usb_start || s_usb_message[0]) {
         EpdRect panel = {UI_MARGIN - 16, 726, ui_content_width() + 32, 320};
         ui_clear_rect_fast(fb, panel);
         ui_draw_round_rect(fb, panel, UI_BTN_RADIUS, UI_GRAY_BLACK);
         ui_product_title(fb, (EpdRect){UI_MARGIN, 750, ui_content_width(), 100},
-            s_usb_start ? "正在重启进入 USB 卡盘…" : s_usb_message[0] ? s_usb_message : "重启后电脑独占 TF 卡；阅读和传书暂停。退出前先在电脑安全弹出。", 28, 3);
-        if (s_usb_confirm && !s_usb_start) {
-            ui_draw_button(fb, refresh_rect(), "取消", false);
-            ui_draw_button(fb, usb_rect(), "确认连接", false);
-        }
+            s_usb_start ? "正在重启进入 USB 卡盘…" : s_usb_message, 28, 3);
     }
     ui_draw_menu_handle(fb, false);
 }
 
-static app_redraw_t gesture(app_ctx_t* ctx, const ui_gesture_event_t* ev) {
-    if (ev->type != UI_GESTURE_TAP) return APP_REDRAW_NONE;
-    if (s_usb_start) return APP_REDRAW_NONE;
+// 命中当前实际画出的动作键：确认态是面板 取消/确认，平时是 重新检测/USB。
+// / Hit the action keys actually drawn: sheet Cancel/Confirm while confirming, otherwise Refresh/USB.
+static int control_at(uint16_t x, uint16_t y, EpdRect* rect) {
     if (s_usb_confirm) {
-        if (ui_rect_hit(refresh_rect(), ev->x0, ev->y0) && ui_rect_hit(refresh_rect(), ev->x, ev->y)) s_usb_confirm = false;
-        else if (ui_rect_hit(usb_rect(), ev->x0, ev->y0) && ui_rect_hit(usb_rect(), ev->x, ev->y)) s_usb_start = true;
-        return APP_REDRAW_PAGE;
+        int hit = ui_confirm_sheet_hit(x, y);
+        if (hit == 0 || hit == UI_SHEET_HIT_OUTSIDE) { if (rect) *rect = ui_sheet_confirm_button(0); return 2; }
+        if (hit == 1) { if (rect) *rect = ui_sheet_confirm_button(1); return 3; }
+        return -1;
     }
-    if (ui_rect_hit(usb_rect(), ev->x0, ev->y0) && ui_rect_hit(usb_rect(), ev->x, ev->y)) {
-        if (s_probing) snprintf(s_usb_message, sizeof(s_usb_message), "请等待 TF 卡检测完成");
-        else if (!s_sd.present) snprintf(s_usb_message, sizeof(s_usb_message), "请先插入 TF 卡，再重新检测");
-        else { s_usb_message[0] = 0; s_usb_confirm = true; }
-        return APP_REDRAW_PAGE;
+    if (ui_rect_hit(back_rect(), x, y)) { if (rect) *rect = back_rect(); return 100; }
+    if (!s_probing && ui_rect_hit(refresh_rect(), x, y)) { if (rect) *rect = refresh_rect(); return 0; }
+    if (ui_rect_hit(usb_rect(), x, y)) { if (rect) *rect = usb_rect(); return 1; }
+    return -1;
+}
+
+static app_redraw_t gesture(app_ctx_t* ctx, const ui_gesture_event_t* ev) {
+    EpdRect rect = {0};
+    int id = s_usb_start ? -1 : control_at(ev->x0, ev->y0, &rect);
+    if (ev->type == UI_GESTURE_PRESS)
+        return id >= 0 ? ui_press_begin(ctx, &s_press, id, rect, render) : APP_REDRAW_NONE;
+    if (ev->type != UI_GESTURE_TAP) return ui_press_restore(ctx, &s_press, render);
+    int held = s_press.id;
+    EpdRect held_rect = s_press.rect;
+    ui_press_forget(&s_press);
+    app_redraw_t result = APP_REDRAW_NONE;
+    if (id >= 0 && id == control_at(ev->x, ev->y, NULL)) {
+        if (id == 2) s_usb_confirm = false;
+        else if (id == 3) s_usb_start = true;
+        else if (id == 1) {
+            if (s_probing) snprintf(s_usb_message, sizeof(s_usb_message), "请等待 TF 卡检测完成");
+            else if (!s_sd.present) snprintf(s_usb_message, sizeof(s_usb_message), "请先插入 TF 卡，再重新检测");
+            else { s_usb_message[0] = 0; s_usb_confirm = true; }
+        } else if (id == 100) {
+            ctx->request_app = app_by_id(OS_APP_SETTINGS);
+            return APP_REDRAW_NONE;
+        } else start_probe(ctx);
+        result = APP_REDRAW_PAGE;
     }
-    if (ui_rect_hit(back_rect(), ev->x0, ev->y0) && ui_rect_hit(back_rect(), ev->x, ev->y)) {
-        ctx->request_app = app_by_id(OS_APP_SETTINGS);
-        return APP_REDRAW_NONE;
-    }
-    if (!s_probing && ui_rect_hit(refresh_rect(), ev->x0, ev->y0) &&
-        ui_rect_hit(refresh_rect(), ev->x, ev->y)) {
-        start_probe(ctx);
-        return APP_REDRAW_PAGE;
-    }
-    return APP_REDRAW_NONE;
+    if (result == APP_REDRAW_NONE && held >= 0 && !ctx->request_app && !ctx->request_menu && !ctx->request_return)
+        return ui_press_rewind(ctx, &s_press, held_rect, render);
+    return result;
 }
 
 static app_redraw_t key(app_ctx_t* ctx, int key) {

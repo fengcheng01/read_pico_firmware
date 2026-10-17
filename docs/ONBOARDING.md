@@ -130,7 +130,7 @@ python -m serial.tools.miniterm COMx 115200     # Ctrl+] 退出，看开机日�
 0x10000 Read_Pico.bin
 ```
 
-`Read_Pico.bin` 只是 app，**必须落在 0x10000**。把它写到 `0x0` 会覆盖 bootloader、分区表、NVS、phy_init，设备不再启动——而墨水屏会保留上一帧画面，看起来"没坏"。这个错误已经在实测中发生过一次，用上面的命令全量重写后恢复（§13.2）。想要单文件烧写，先 `idf.py merge-bin` 生成合并镜像再写 0x0。
+`Read_Pico.bin` 只是 app，**必须落在 0x10000**。把它写到 `0x0` 会覆盖 bootloader、分区表、NVS、phy_init，设备不再启动——而墨水屏会保留上一帧画面，看起来"没坏"。这个错误已经在实测中发生过一次，用上面的命令全量重写后恢复（§13.2）。普通 `idf.py build` 现已自动在 `build/firmware/` 生成 `PageRest-Read_Pico-<版本>-full.bin`（写 0x0）与 `-incremental.bin`（仅 app，写 0x10000）；完整镜像会重置段间 NVS 设置，日常升级使用增量镜像并关闭全片擦除。
 
 实测踩坑：
 - 端口写 `COMx`，**不要写 `\\.\COMx`**。后者在 esptool 5.x 下报 `Failed to get VID/PID` + `Write timeout`，很容易被误判成"没进下载模式"。

@@ -6,6 +6,7 @@
 """
 from pathlib import Path
 import subprocess
+import shutil
 import tempfile
 import zipfile
 import sys
@@ -43,11 +44,17 @@ def main():
         platform_flags = ['-Wl,--wrap=free']
         if os.uname().sysname == 'Darwin':
             platform_flags = ['-DBOOK_HEAP_DIRECT_FREE', '-isysroot', os.environ.get('PREVIEW_MACOS_SDK', '/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk')]
-        subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Werror', '-g', '-fsanitize=address,undefined', '-DBOOK_HEAP_TRACK', *platform_flags,
+        # book_cache 的缓存键要求源路径位于媒体根之下：夹具全部收进 work，缓存根即 work。
+        # book_cache keys require source paths under the media root: gather every
+        # fixture into work and use work itself as the cache root.
+        for fixed in sorted((ROOT / 'build/book-fixtures/books').glob('*.epub')):
+            shutil.copy(fixed, work / fixed.name)
+        subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Werror', '-g', '-fsanitize=address,undefined', '-DBOOK_HEAP_TRACK',
+                        f'-DBOOK_CACHE_MEDIA_ROOT="{work}"', *platform_flags,
                         '-I' + str(ROOT / 'tools/book_epub_stubs'), '-I' + str(ROOT / 'tools/zip_host_stubs'),
                         '-I' + str(ROOT / 'main/book'), str(ROOT / 'tools/book_epub_host_test.c'),
                         str(ROOT / 'main/book/book_epub.c'), str(ROOT / 'main/book/book_xpointer.c'), str(ROOT / 'main/book/zip_reader.c'),
-                        str(ROOT / 'main/book/html_text.c'), str(ROOT / 'main/book/book_image.c'), str(ROOT / 'main/book/vendor/tjpgd.c'), str(ROOT / 'tools/book_heap_track.c'), '-lz', '-o', str(exe)], check=True)
+                        str(ROOT / 'main/book/html_text.c'), str(ROOT / 'main/book/book_cache.c'), str(ROOT / 'main/book/book_image.c'), str(ROOT / 'main/book/vendor/tjpgd.c'), str(ROOT / 'tools/jpegdec_host_stub.c'), str(ROOT / 'tools/book_heap_track.c'), '-I' + str(ROOT / 'components/jpegdec/src'), '-lz', '-o', str(exe)], check=True)
         cases = []
 
         def case(name, edit=None):
@@ -91,7 +98,7 @@ def main():
         case('good_manifest_limit', replace_opf('</manifest>', ''.join(f'<item id="extra{i}" href="extra{i}" media-type="image/png"/>' for i in range(32762)) + '</manifest>'))
         case('bad_manifest_limit', replace_opf('</manifest>', ''.join(f'<item id="extra{i}" href="extra{i}" media-type="image/png"/>' for i in range(32763)) + '</manifest>'))
         case('bad_container', lambda f: f.__setitem__('META-INF/container.xml', '<container><rootfile full-path="../../escape.opf"/></container>'))
-        subprocess.run([str(exe)] + [str(p) for p in sorted((ROOT / 'build/book-fixtures/books').glob('*.epub'))] + [str(p) for p in cases], check=True)
+        subprocess.run([str(exe)] + [str(p) for p in sorted(work.glob('*.epub'))] + [str(p) for p in cases], check=True)
         if len(sys.argv) > 1:
             subprocess.run([str(exe), '--inspect'] + sys.argv[1:], check=True)
 

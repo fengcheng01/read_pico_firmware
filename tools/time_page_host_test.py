@@ -15,6 +15,9 @@ def function(name):
     return source[match.start():end]
 
 harness = r'''
+static int test_ble_stopped=1;
+static int os_page_turner_pause(void){return test_ble_stopped;}
+
 #include <assert.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -23,6 +26,8 @@ harness = r'''
 #include "read_pico_transfer.h"
 typedef struct { int x,y,width,height; } EpdRect;
 typedef struct {int64_t now_ms; bool consumed; uint8_t* fb;} app_ctx_t;
+typedef struct { int id; EpdRect rect; unsigned du; int64_t du_ms; EpdRect du_area; } ui_press_t;
+static void ui_press_settle(app_ctx_t* c, ui_press_t* p, int64_t now) {(void)c;(void)p;(void)now;}
 typedef enum {APP_REDRAW_NONE,APP_REDRAW_PAGE,APP_REDRAW_AREA} app_redraw_t;
 static read_pico_transfer_status_t status;
 static bool configured, claim_ok=true, claimed, synced, ntp_success;
@@ -50,6 +55,7 @@ production = '\n'.join(function(n) for n in ['stop_sync','prepare_sleep','time_o
 tests = r'''
 int main(void) {
  app_ctx_t ctx={0};
+ configured=true;test_ble_stopped=0;start_sync(&ctx);assert(!starts&&!claimed);test_ble_stopped=1;configured=false;
  start_sync(&ctx); assert(!s_sync_active && !starts && !claimed);
  configured=true;claim_ok=false;start_sync(&ctx);assert(!starts&&!claimed);
  claim_ok=true;status.state=READ_PICO_TRANSFER_READY;start_sync(&ctx);assert(!starts&&!claimed&&!stops);

@@ -257,6 +257,9 @@ void ui_draw_full_image(uint8_t* framebuffer, const uint8_t* image);
 /// 解包逻辑竖屏资源再旋转绘制；失败画白页，临时存储立即释放。
 /// Inflate a logical portrait asset then rotate it; paint white on failure and release temporary storage immediately.
 bool ui_draw_packed_full_image(uint8_t* framebuffer, const uint8_t* packed, size_t size);
+/// 画开机插画与固件名；两帧由浅至实，不负责解包、等待或推屏。
+/// Paint boot artwork and firmware name, fading from light to full ink in two frames; no inflate, waits or display I/O.
+void ui_draw_boot_splash(uint8_t* framebuffer, const uint8_t* image, const char* version, bool settled);
 
 void ui_draw_no_font_page(
     uint8_t* framebuffer, bool card_present, bool format_confirm

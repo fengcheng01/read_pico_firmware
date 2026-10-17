@@ -1,0 +1,8 @@
+Tool: built-in image_gen (two edit passes)
+用途：用户提供插画的开机资源，无水印、简化灰阶。 / Purpose: boot artwork edited from the user-supplied illustration, with the watermark removed and grayscale simplified.
+
+Pass 1:
+Use case: precise-object-edit. Edit target: supplied grayscale illustration of a cheerful child in a knit hat lying on a large open book, with small clouds and sparkles. Remove only the bottom-right text watermark ‘豆包 AI 生成’, replacing it with matching clean white background. Preserve the child’s face, expression, pose, hair, hat, clothing, open book, bookmark, outlines, soft gray fills, clouds, stars and composition. Clean white paper background, crisp grayscale line art suitable for a 16-gray e-ink boot screen. No letters, logo, watermark, title or new elements. Keep the full portrait composition and leave existing white margins. Return one clean high-resolution portrait image, no mockup or device frame.
+
+Pass 2:
+Use case: precise-object-edit. Edit target: the supplied clean illustration. Keep the exact child, face, expression, pose, knit hat, open book, bookmark, cloud and sparkle placement, thick black outlines, and portrait composition. Prepare this same art as a clean e-ink firmware asset: replace all paper grain, mottled fill, gradients, and texture with perfectly flat solid grayscale regions. Use only black outlines plus uniform dark gray hair/trousers, uniform pale gray hat and page shadow, and pure white background/skin/pages. Preserve shapes and keep anti-aliased edges clean. No text, watermark, logo, new objects or altered framing. One portrait image.

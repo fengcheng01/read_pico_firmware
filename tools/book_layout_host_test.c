@@ -12,6 +12,7 @@
 #include <string.h>
 #include "book_layout.h"
 #include "ttf_font.h"
+size_t host_layout_max_request, host_layout_fail_above;
 static char drawn[20000];
 static size_t measured_codepoints;
 static size_t measure_calls;
@@ -22,7 +23,9 @@ static EpdRect filled[1024];
 static uint8_t fill_colors[1024];
 static size_t fill_count;
 void epd_fill_rect(EpdRect rect, uint8_t color, uint8_t* fb) {
-    (void)fb; assert(color <= 15 || color == 0xB0 || color == 0x50 || color == 0xF0);
+    // 插图抖动输出 17*n 的 16 级灰；辅助线保留原灰阶。/ Dithered illustrations emit 17*n
+    // 16-level grays; guide rules keep their original values.
+    (void)fb; assert(color <= 15 || color == 0xB0 || color == 0x50 || color == 0xF0 || color % 17u == 0u);
     assert(fill_count < sizeof(filled) / sizeof(filled[0]));
     filled[fill_count] = rect; fill_colors[fill_count++] = color;
 }
@@ -35,6 +38,7 @@ int ttf_text_width_px(int px, const char* text) {
     int n = 0, width = 0;
     for (; *text; text++) if (((unsigned char)*text & 0xc0) != 0x80) {
         n++;
+        if ((unsigned char)text[0] == 0xe2 && (unsigned char)text[1] == 0x80 && (unsigned char)text[2] == 0x8b) { text += 2; continue; }
         width += *text == 'i' ? px / 2 : *text == 'W' ? px + px / 2 : px;
     }
     measured_codepoints += (size_t)n;
@@ -42,6 +46,9 @@ int ttf_text_width_px(int px, const char* text) {
     return width;
 }
 int ttf_ascender_px(int px) { return px; }
+static int s_stub_stroke;
+int ttf_get_stroke(void) { return s_stub_stroke; }
+void ttf_set_stroke(int steps) { s_stub_stroke = steps; }
 void ttf_draw_text_px(uint8_t* fb, int x, int y, int px, const char* text,
                       enum EpdFontFlags align, uint8_t fg, uint8_t bg) {
     (void)fb; (void)x; (void)y; (void)px; (void)align;
@@ -52,7 +59,51 @@ void ttf_draw_text_px(uint8_t* fb, int x, int y, int px, const char* text,
     assert(strlen(drawn) + strlen(text) < sizeof(drawn));
     strcat(drawn, text);
 }
+// 分行续绘须与一次绘制相同，重建必须拒绝旧游标；大章只按行而非章分配。
+// Sliced drawing matches a full draw, rebuild rejects old cursors, and large chapters allocate by row.
+static void check_slices_and_memory(void) {
+    book_layout_set_indent(false); book_layout_set_guide(0); book_layout_set_night(false);
+    EpdRect r = {0, 0, 80, 90}; uint8_t fb = 0;
+    const char* text = "甲乙丙丁戊己庚辛壬癸，天地玄黄。\nABC iW!";
+    for (int align = 0; align < 3; ++align) {
+        book_layout_set_align(align);
+        assert(book_layout_build(text, strlen(text), r, 10));
+        for (size_t page = 0; page < book_layout_page_count(); ++page) {
+            drawn[0] = 0; book_layout_draw_page(&fb, page, r, 10);
+            char full[sizeof(drawn)]; strcpy(full, drawn); drawn[0] = 0;
+            book_layout_cursor_t cursor = {0}; int state, rows = 0;
+            do {
+                size_t before = cursor.offset;
+                state = book_layout_draw_slice(&fb, page, r, 10, &cursor);
+                assert(state >= 0 && cursor.offset >= before); assert(++rows <= 6);
+            } while (!state);
+            assert(!strcmp(full, drawn));
+            size_t len = strlen(drawn);
+            assert(book_layout_draw_slice(&fb, page, r, 10, &cursor) == 1 && strlen(drawn) == len);
+            if (page + 1 < book_layout_page_count()) assert(book_layout_draw_slice(&fb, page + 1, r, 10, &cursor) == -1);
+        }
+    }
+    book_layout_cursor_t old = {0};
+    assert(book_layout_draw_slice(&fb, 0, r, 10, &old) >= 0);
+    assert(book_layout_build("new", 3, r, 10));
+    assert(book_layout_draw_slice(&fb, 0, r, 10, &old) == -1);
+    char* chapter = malloc(100000); assert(chapter); memset(chapter, 'a', 100000);
+    host_layout_max_request = 0;
+    assert(book_layout_build(chapter, 100000, (EpdRect){0,0,100,1000}, 10));
+    assert(host_layout_max_request < 8192);
+    free(chapter); book_layout_free();
+    size_t n = 8192 * 3; char* zero = malloc(n + 1); assert(zero);
+    for (size_t i = 0; i < n; i += 3) memcpy(zero + i, "\xe2\x80\x8b", 3);
+    zero[n] = 'a';
+    assert(book_layout_build(zero, n + 1, r, 10));
+    host_layout_fail_above = 256;
+    assert(!book_layout_build(zero, n + 1, r, 10));
+    assert(!book_layout_page_count()); host_layout_fail_above = 0;
+    assert(book_layout_build("ok", 2, r, 10)); free(zero); book_layout_free();
+    book_layout_set_align(0); drawn[0] = 0;
+}
 int main(void) {
+    check_slices_and_memory();
     // 小尺寸几何夹具关闭段首缩进，避免两字符缩进占满整行。/ Disable paragraph indent in tiny geometry fixtures so two ems do not consume the whole row.
     book_layout_set_indent(false);
     EpdRect r = {0, 0, 20, 30};
@@ -69,10 +120,28 @@ int main(void) {
         book_layout_draw_page(&fb, i, r, 10);
     }
     assert(strcmp(drawn, text) == 0);
+    // 短预览借用当前分页：UTF-8锚点、边界和连续分页游标均保持原样。
+    // Short previews borrow pagination: UTF-8 anchors, bounds and incremental scan cursors stay intact.
+    size_t preview_pages = book_layout_page_count(), preview_second = book_layout_page_start_offset(1);
+    drawn[0] = 0;
+    assert(book_layout_draw_preview(&fb, 3, (EpdRect){40, 100, 20, 15}, 10));
+    assert(!strcmp(drawn, "乙丙") && first_draw_y == 110);
+    assert(book_layout_page_count() == preview_pages && book_layout_page_start_offset(1) == preview_second);
+    drawn[0] = 0;
+    assert(!book_layout_draw_preview(&fb, 1, (EpdRect){40,100,20,15},10));
+    assert(!book_layout_draw_preview(&fb, 3, (EpdRect){40,100,19,15},10));
+    assert(!book_layout_draw_preview(&fb, 3, (EpdRect){40,100,20,31},10));
+    assert(!book_layout_draw_preview(&fb, strlen(text), (EpdRect){40,100,20,15},10));
+    assert(!drawn[0]);
+    book_layout_draw_page(&fb, 1, r, 10);
+    assert(!strcmp(drawn, "戊己庚辛"));
     const char mixed[] = "Wi甲iiW";
     assert(book_layout_build(mixed, strlen(mixed), r, 10));
     assert(book_layout_page_count() == 2);
-    assert(book_layout_page_start_offset(1) == 7);
+    // 边界 1/4 em 加宽行内，且 "iW" 整词下移：第 2 页从第二个 i 起。
+    // The quarter-em spacing widens lines and "iW" now wraps whole, so page 2
+    // starts at the second i.
+    assert(book_layout_page_start_offset(1) == 5);
     drawn[0] = 0;
     book_layout_draw_page(&fb, 0, r, 10);
     book_layout_draw_page(&fb, 1, r, 10);
@@ -169,6 +238,11 @@ int main(void) {
     drawn[0] = 0;
     book_layout_draw_page(&fb, 0, r, 10);
     assert(strlen(drawn) == 8);
+    // 绘制短预览后继续增量分页，最终页表应与一次分页逐项相等。
+    // Continue incremental pagination after a short preview; its final table must match the eager table entry by entry.
+    drawn[0] = 0;
+    assert(book_layout_draw_preview(&fb, 4, (EpdRect){40,100,r.width,15},10));
+    assert(strlen(drawn)==4 && !book_layout_complete() && book_layout_page_count()==2);
     while (!book_layout_complete()) {
         size_t before = book_layout_page_count();
         assert(book_layout_extend(2));
@@ -188,6 +262,13 @@ int main(void) {
     drawn[0] = 0; image_pixels = 0;
     for (size_t i=0; i<3; ++i) book_layout_draw_page(&fb,i,r,10);
     assert(!strcmp(drawn,"ab") && image_pixels == 500);
+    // 预览跳过插图，不解码也不污染正文绘制与图像命中。
+    // Preview skips illustrations without decoding or corrupting body rendering and image hits.
+    drawn[0] = 0; image_pixels = 0;
+    size_t illustrated_pages = book_layout_page_count();
+    assert(book_layout_draw_preview(&fb, 2, (EpdRect){40,24,r.width,15},10));
+    assert(!strcmp(drawn,"b") && !image_pixels && book_layout_page_count() == illustrated_pages);
+
     // 占位命中与绘图边界一致，不读取像素；重复提示不改变文本偏移。
     // Placeholder hits match drawing bounds without loading pixels; repeat hints preserve text offsets.
     illustrated[1].image = NULL; illustrated[1].image_src = "cover.jpg";
@@ -225,7 +306,10 @@ int main(void) {
     assert(book_layout_text_at(0,r,55,25)==0 && book_layout_text_at(0,r,44,25)==SIZE_MAX);
     book_layout_set_align(2);r.width=85;
     assert(book_layout_build("WiWiWiWiWiWi",12,r,10));
-    assert(book_layout_text_at(0,r,55,25)==SIZE_MAX && book_layout_text_at(0,r,56,25)==1);
+    // 长词行首断词补连字符后两端对齐：字隙 +3，i 自 58 起。/ The line-initial long
+    // word hyphenates with a painted hyphen; justification then spreads +3 per gap
+    // and i starts at 58.
+    assert(book_layout_text_at(0,r,57,25)==SIZE_MAX && book_layout_text_at(0,r,58,25)==1);
     assert(book_layout_text_at(0,(EpdRect){INT_MAX,24,85,100},INT_MAX,25)==SIZE_MAX);
     // 辅助线开关改变分页；稳定网格的段距、标题与命中共用相同位置。
     // Guide activation repaginates; grid paragraph gaps, headings and hits share positions.
@@ -241,7 +325,7 @@ int main(void) {
     assert(book_layout_page_count()==1 && book_layout_page_for_offset(6)==0);
     drawn[0]=0; fill_count=0; book_layout_draw_page(&fb,0,r,36);
     assert(first_draw_y==60 && last_draw_y==222 && fill_count==4);
-    for(size_t i=0;i<4;++i) assert(filled[i].y==75+(int)i*54 && filled[i].height==2 && fill_colors[i]==0xB0);
+    for(size_t i=0;i<4;++i) assert(filled[i].y==63+(int)i*54 && filled[i].height==2 && fill_colors[i]==0xB0);
     assert(book_layout_text_at(0,r,44,25)==0 && book_layout_text_at(0,r,44,79)==2);
     assert(book_layout_text_at(0,r,44,75)==SIZE_MAX);
     book_layout_set_paragraph(1);
@@ -255,13 +339,13 @@ int main(void) {
     assert(book_layout_build_blocks(title,strlen(title),titled,2,r,36));
     drawn[0]=0; fill_count=0; book_layout_draw_page(&fb,0,r,36);
     assert(first_draw_px==44 && first_draw_y==68 && last_draw_y==168);
-    assert(filled[0].y==75 && filled[1].y==183);
+    assert(filled[0].y==69 && filled[1].y==171);
     // 缺字提示提高正文顶部，但保留24px原点，跨章规则相位一致。
     // A font notice raises the body top while the 24px origin retains cross-chapter rule phase.
     r=(EpdRect){40,88,200,176};
     assert(book_layout_build(rows,strlen(rows),r,36));
     drawn[0]=0; fill_count=0; book_layout_draw_page(&fb,0,r,36);
-    assert(first_draw_y==168 && last_draw_y==222 && filled[0].y==183 && filled[1].y==237);
+    assert(first_draw_y==168 && last_draw_y==222 && filled[0].y==171 && filled[1].y==225);
     assert(book_layout_text_at(0,r,44,100)==SIZE_MAX && book_layout_text_at(0,r,44,133)==0);
     assert(book_layout_text_at(0,r,44,187)==2 && book_layout_text_at(0,r,44,183)==SIZE_MAX);
     assert(book_layout_page_for_offset(6)==1 && book_layout_page_start_offset(1)==4);
@@ -269,7 +353,7 @@ int main(void) {
     book_layout_set_guide(2); book_layout_set_guide_contrast(true);
     drawn[0]=0; fill_count=0; book_layout_draw_page(&fb,0,r,36);
     assert(book_layout_page_count()==grid_pages && book_layout_page_start_offset(1)==grid_offset);
-    assert(fill_count && fill_colors[0]==0 && filled[0].y==183);
+    assert(fill_count && fill_colors[0]==0 && filled[0].y==171);
     book_layout_set_night(true); drawn[0]=0; fill_count=0; book_layout_draw_page(&fb,1,r,36);
     assert(fill_count>1 && fill_colors[0]==0 && filled[0].height==r.height);
     for(size_t i=1;i<fill_count;++i) assert(fill_colors[i]==0xF0 && filled[i].height==2);
@@ -287,11 +371,55 @@ int main(void) {
     book_layout_set_guide(1);
     assert(book_layout_build_blocks("a\nimg\nb",7,illustrated,3,r,36));
     drawn[0]=0; fill_count=0; book_layout_draw_page(&fb,0,r,36);
-    assert(last_draw_y==image_last && filled[0].y==68);
+    assert(last_draw_y==image_last && filled[0].y==63);
     assert(!book_layout_build("a",1,(EpdRect){40,88,200,54},36));
     // 上一夹具含图，纯文字网格不可放进不足一槽的顶部余量。
     // The previous fixture had images; a text grid cannot fit an incomplete slot after top padding.
     book_layout_set_guide(0);
+    // 禁则断行：右标点悬挂或整串下移，左标点不留行尾；窄行回退不清空行，也不把标点留到下一行行首。
+    // Kinsoku wrapping: closers hang or move as a run and openers never end a line; narrow-line rollbacks neither empty lines nor start the next one with a mark.
+    book_layout_set_indent(false); book_layout_set_leading(0); book_layout_set_align(0);
+    r = (EpdRect){40, 24, 50, 200};
+    assert(book_layout_build("甲甲甲甲甲。", 18, r, 10));
+    drawn[0] = 0; book_layout_draw_page(&fb, 0, r, 10);
+    assert(strcmp(drawn, "甲甲甲甲甲。") == 0);
+    // 句号悬挂在第一行：压缩后字隙 8px，命中不越过正文左缘。/ The period hangs on line one: 8px squeezed gaps keep hits inside the column.
+    assert(book_layout_text_at(0, r, 44, 25) == 0 && book_layout_text_at(0, r, 85, 25) == 15);
+    assert(book_layout_text_at(0, r, 44, 39) == SIZE_MAX);
+    // 组合标点「。」一起压半宽留在行尾。/ The mark pair 」。 stays at line end, halved.
+    assert(book_layout_build("甲甲甲甲。」", 18, r, 10));
+    drawn[0] = 0; book_layout_draw_page(&fb, 0, r, 10);
+    assert(strcmp(drawn, "甲甲甲甲。」") == 0);
+    assert(book_layout_text_at(0, r, 44, 25) == 0 && book_layout_text_at(0, r, 82, 25) == 12 && book_layout_text_at(0, r, 88, 25) == 15);
+    // 压半宽让「。」留在窄行内，不再提前折行。/ Halving keeps the 」。 pair inside the narrow line instead of wrapping early.
+    r = (EpdRect){40, 24, 25, 200};
+    assert(book_layout_build("i甲。」", 10, r, 10));
+    drawn[0] = 0; book_layout_draw_page(&fb, 0, r, 10);
+    assert(strcmp(drawn, "i甲。」") == 0);
+    // 边界间隙+悬挂压缩后 i 的命中槽为 [40,44)。/ With boundary spacing and the hung
+    // squeeze, i's hit slot becomes [40,44).
+    assert(book_layout_text_at(0, r, 42, 25) == 0);
+    assert(book_layout_text_at(0, r, 48, 25) == 1 && book_layout_text_at(0, r, 60, 25) == 7 && book_layout_text_at(0, r, 44, 39) == SIZE_MAX);
+    // 行首即标点串时成组越界，不清空行。/ A line-initial mark run overhangs as a group instead of emptying the line.
+    r = (EpdRect){40, 24, 20, 200};
+    assert(book_layout_build("「乙」", 9, r, 10));
+    drawn[0] = 0; book_layout_draw_page(&fb, 0, r, 10);
+    assert(strcmp(drawn, "「乙」") == 0);
+    assert(book_layout_text_at(0, r, 44, 25) == 0 && book_layout_text_at(0, r, 56, 25) == 6);
+    assert(book_layout_text_at(0, r, 44, 39) == SIZE_MAX);
+    // 左标点串整体移到下一行，行尾不留开括号。/ The opener run moves down whole; no opener stays at the line end.
+    assert(book_layout_build("甲「乙」", 12, r, 10));
+    drawn[0] = 0; book_layout_draw_page(&fb, 0, r, 10);
+    assert(strcmp(drawn, "甲「乙」") == 0);
+    assert(book_layout_text_at(0, r, 44, 25) == 0);
+    assert(book_layout_text_at(0, r, 44, 39) == 3 && book_layout_text_at(0, r, 56, 39) == 9);
+    // 预算内句号后的溢出右标点走回退：上一行退一字，下一行以正文字开头。/ A closer overflowing after an in-budget period rolls back: the line drops one glyph and the next starts with body text.
+    r = (EpdRect){40, 24, 30, 200};
+    assert(book_layout_build("甲甲甲。」", 15, r, 10));
+    drawn[0] = 0; book_layout_draw_page(&fb, 0, r, 10);
+    assert(strcmp(drawn, "甲甲甲。」") == 0);
+    assert(book_layout_text_at(0, r, 44, 25) == 0 && book_layout_text_at(0, r, 55, 25) == 3);
+    assert(book_layout_text_at(0, r, 44, 39) == 6 && book_layout_text_at(0, r, 65, 39) == 12);
     book_layout_free();
     puts("book_layout_host_test: PASS");
 }

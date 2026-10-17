@@ -72,8 +72,18 @@ int main(void){
     assert(!book_progress_load(sd,p.file_size+1,&q)&&q.file_size==p.file_size);
     p.last_open_s=0;assert(book_progress_save(sd,&p)==ESP_OK);
     assert(book_progress_load(sd,p.file_size,&q)&&q.last_open_s==2);
-    latest->data[3]=1;assert(book_progress_load(sd,p.file_size,&q)&&q.last_open_s==0&&q.byte_off==p.byte_off);
-    latest->data[3]=3;assert(!book_progress_load(sd,p.file_size,&q));assert(book_progress_save(sd,&p)==ESP_ERR_INVALID_STATE);
+    // 手工把 v3 记录压回 v1 形状（路径前移到 24 字节头后）再降版本，旧记录仍可恢复。
+    // Compress the v3 record back into a v1 shape (path moved before the 24-byte
+    // header end) to confirm legacy records still restore.
+    { unsigned path_len=(unsigned)(latest->len-32);
+      memmove(latest->data+24,latest->data+32,path_len);
+      latest->len=24+path_len; latest->data[3]=1;
+      latest->data[22]=(unsigned char)path_len; latest->data[23]=(unsigned char)(path_len>>8); }
+    assert(book_progress_load(sd,p.file_size,&q)&&q.last_open_s==0&&q.byte_off==p.byte_off);
+    // 未知版本 4 拒绝且不让保存；碰撞用路径首字节破坏（v2 路径在 24 字节头后）。
+    // Unknown version 4 rejects without allowing saves; collisions corrupt the path's
+    // first byte (the v2 path sits past the 24-byte header).
+    latest->data[3]=4;assert(!book_progress_load(sd,p.file_size,&q));assert(book_progress_save(sd,&p)==ESP_ERR_INVALID_STATE);
     latest->data[3]=2;assert(book_progress_set_last_path(sd)==ESP_OK);latest->data[24]='!';
     assert(book_progress_forget(sd)==ESP_ERR_INVALID_STATE&&!strcmp(last,sd));assert(book_progress_clear(sd)==ESP_ERR_INVALID_STATE);latest->data[24]='/';
     seq_failure=ESP_ERR_NVS_NOT_ENOUGH_SPACE;assert(book_progress_save(sd,&p)==seq_failure&&sequence==2);
@@ -82,6 +92,10 @@ int main(void){
     assert(book_progress_save(sd,&p)==ESP_OK);assert(book_progress_load(sd,p.file_size,&q)&&q.last_open_s==4);
     commit_failure=ESP_FAIL;assert(book_progress_save(sd,&p)==ESP_FAIL);
     assert(book_progress_load(sd,p.file_size,&q)&&q.last_open_s==4);commit_failure=0;
+    p.read_ms=123456;p.pages=78;assert(book_progress_save(sd,&p)==ESP_OK);
+    assert(book_progress_load(sd,p.file_size,&q)&&q.read_ms==123456&&q.pages==78);
+    p.read_ms=0;p.pages=0;assert(book_progress_save(sd,&p)==ESP_OK);
+    assert(book_progress_load(sd,p.file_size,&q)&&q.read_ms==0&&q.pages==0);
     assert(book_progress_save(flash,&p)==ESP_OK);assert(book_progress_set_last_path(flash)==ESP_OK);
     assert(book_progress_forget(sd)==ESP_OK);assert(!book_progress_load(sd,p.file_size,&q));
     assert(book_progress_load(flash,p.file_size,&q)&&!strcmp(last,flash));
@@ -103,5 +117,12 @@ int main(void){
     p.px=37;assert(book_progress_save(sd,&p)==ESP_ERR_INVALID_ARG);p.px=48;p.pct=101;assert(book_progress_save(sd,&p)==ESP_ERR_INVALID_ARG);
     p.pct=83;sequence=UINT32_MAX;int before=commits;
     assert(book_progress_save(sd,&p)==ESP_ERR_INVALID_STATE&&commits==before&&sequence==UINT32_MAX);
-    puts("book progress: v1/v2, sequence, collision, two roots, NVS-full, partial forget and retry passed");
+    // 顶部两档 76/80 必须可存取，84 越界拒绝；范围与阅读器 BOOK_PX_MAX 保持一致。
+    // Top tiers 76/80 must round-trip while 84 stays rejected; the range matches the reader BOOK_PX_MAX.
+    sequence=2;p.px=76;assert(book_progress_save(sd,&p)==ESP_OK);
+    assert(book_progress_load(sd,p.file_size,&q)&&q.px==76);
+    p.px=80;assert(book_progress_save(sd,&p)==ESP_OK);
+    assert(book_progress_load(sd,p.file_size,&q)&&q.px==80);
+    p.px=84;assert(book_progress_save(sd,&p)==ESP_ERR_INVALID_ARG);p.px=48;
+    puts("book progress: v1/v2, sequence, collision, two roots, NVS-full, partial forget, retry and px tiers passed");
 }

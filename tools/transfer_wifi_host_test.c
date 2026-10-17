@@ -158,5 +158,13 @@ int main(void) {
     connection_lost(&net, 100000);
     assert(connection_poll(&net, 100999) == 0);
     assert(connection_poll(&net, 101000) == 1 && net.attempts == 1);
+    // 反复连上又掉线：四次掉线即终止本轮，不再无限重置看门狗。/ Flapping connect-drop
+    // cycles terminate after four drops instead of resetting the watchdog forever.
+    connection_begin(&net, 0);
+    for (int i = 0; i < 4; ++i) {
+        net.online = true;
+        connection_lost(&net, i * 1000);
+    }
+    assert(net.drops == 4 && connection_poll(&net, 3500) == -1 && net.failed);
     puts("transfer WiFi policy tests passed");
 }

@@ -19,6 +19,8 @@ void* xSemaphoreCreateMutex(void);
 int xSemaphoreTake(void*, unsigned);
 int xSemaphoreGive(void*);
 int xTaskCreatePinnedToCore(void (*)(void*),const char*,unsigned,void*,unsigned,void**,int);
+#define pdTRUE 1
+unsigned long ulTaskNotifyTake(int clear, unsigned ticks);
 '''
     for name in ("FreeRTOS.h","semphr.h","task.h"):
         (out/"freertos"/name).write_text(header)

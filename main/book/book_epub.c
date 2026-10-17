@@ -13,6 +13,7 @@
  * Images before opening headings and references to the same resources use a title-image label; other images retain their earliest visited location.
  */
 #include "book_epub.h"
+#include "book_cache.h"
 #include "zip_reader.h"
 #include "book_image.h"
 #include "book_xpointer.h"
@@ -22,6 +23,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <ctype.h>
+#include <strings.h>
 
 #define EPUB_ITEMS_MAX ZIP_ENTRY_MAX
 #define EPUB_XML_DEPTH 64
@@ -45,6 +47,8 @@ struct book_epub {
     uint8_t *title_images; ///< 标题图 ZIP 索引位图，避免重新读取图片比较 / Bitmap of title-image ZIP indices without rereading pixels for comparison
     size_t count; ///< 章节数 / Chapter count
     uint32_t total; ///< 原始 HTML 字节总量 / Total source HTML bytes
+    bool toc_scanned; ///< 正文题头补目已执行 / Body-heading TOC fallback already ran
+    char *path; ///< 源路径副本，补目后回写结构缓存 / Source path copy for the post-TOC cache rewrite
 };
 typedef struct {
     char *id; ///< manifest 标识 / Manifest identifier
@@ -515,6 +519,287 @@ static esp_err_t navigation_parse(book_epub_t *book, const char *path, bool ncx)
     free(nodes); free(text); return err;
 }
 
+/* ---- 正文题头补目 / Body-heading TOC fallback ---- */
+
+// 前置件标题按前缀识别；正文段落出现这些词不阻断确认（仅标题级使用）。
+// Front-matter titles match by prefix; these words in body prose never block confirmation (title-level use only).
+static bool front_matter_title(const char *title) {
+    static const char *const chinese[] = {
+        "封面", "扉页", "书名页", "版权", "出版信息", "出版社", "作者信息",
+        "作者简介", "关于作者", "图书信息", "书籍信息", "制作信息", NULL
+    };
+    static const char *const english[] = {
+        "cover", "title page", "copyright", "publisher", "publication information",
+        "about the author", "author information", "imprint", "colophon", NULL
+    };
+    while (*title == ' ' || *title == '\t') ++title;
+    if (!strcmp(title, "目录") || !strcmp(title, "目次") || !strcmp(title, "简介") ||
+        !strcmp(title, "内容简介") || !strcasecmp(title, "contents") ||
+        !strcasecmp(title, "table of contents")) return true;
+    if (!strcmp(title, "作者") || !strcmp(title, "出版") || !strcmp(title, "出版者")) return true;
+    for (int i = 0; chinese[i]; ++i)
+        if (!strncmp(title, chinese[i], strlen(chinese[i]))) return true;
+    for (int i = 0; english[i]; ++i)
+        if (!strncasecmp(title, english[i], strlen(english[i]))) return true;
+    return false;
+}
+static bool front_matter_path(const char *path) {
+    const char *name = strrchr(path, '/');
+    name = name ? name + 1 : path;
+    static const char *const names[] = {
+        "cover", "front", "titlepage", "copyright", "publisher", "imprint",
+        "colophon", "bookinfo", "authorinfo", "metadata", "toc.", "nav.", "contents.", NULL
+    };
+    for (int i = 0; names[i]; ++i)
+        if (!strncasecmp(name, names[i], strlen(names[i]))) return true;
+    return false;
+}
+static bool chinese_number(uint32_t cp) {
+    if ((cp >= '0' && cp <= '9') || (cp >= 0xff10 && cp <= 0xff19)) return true;
+    switch (cp) {
+        case 0x3007: case 0x96f6: case 0x4e00: case 0x4e8c: case 0x4e09:
+        case 0x56db: case 0x4e94: case 0x516d: case 0x4e03: case 0x516b:
+        case 0x4e5d: case 0x5341: case 0x767e: case 0x5343: case 0x4e07:
+        case 0x4e24: case 0x58f9: case 0x8d30: case 0x53c1: case 0x8086:
+        case 0x4f0d: case 0x9646: case 0x67d2: case 0x634c: case 0x7396:
+        case 0x62fe: case 0x4f70: case 0x4edf: return true;
+        default: return false;
+    }
+}
+// 中文编号题头：第+中文/阿拉伯数字+计量单位；普通段落还要求独立收尾。
+// Chinese numbered heading: 第 + Chinese/Arabic digits + a unit; plain paragraphs also need a standalone ending.
+static bool explicit_chapter_title(const char *title, bool heading_tag) {
+    const char *p = title;
+    while (*p == ' ' || *p == '\t' || !strncmp(p, "　", 3))
+        p += *p == ' ' || *p == '\t' ? 1 : 3;
+    if (strncmp(p, "第", 3)) return false;
+    p += 3;
+    while (*p == ' ' || *p == '\t' || !strncmp(p, "　", 3))
+        p += *p == ' ' || *p == '\t' ? 1 : 3;
+    unsigned digits = 0;
+    while (*p && digits < 12) {
+        uint32_t cp; size_t n = utf8_read(p, strlen(p), &cp);
+        if (!n || !chinese_number(cp)) break;
+        p += n; ++digits;
+    }
+    if (!digits) return false;
+    while (*p == ' ' || *p == '\t' || !strncmp(p, "　", 3))
+        p += *p == ' ' || *p == '\t' ? 1 : 3;
+    uint32_t unit; size_t n = utf8_read(p, strlen(p), &unit);
+    if (!n || (unit != 0x7ae0 && unit != 0x8282 && unit != 0x5377 &&
+               unit != 0x56de && unit != 0x7bc7 && unit != 0x90e8 && unit != 0x96c6)) return false;
+    p += n;
+    if (strlen(title) > (heading_tag ? EPUB_TITLE_CAP - 1 : 96)) return false;
+    // 普通段落必须像独立标题，防止“第一章说到……”被误作目录。
+    // Plain paragraphs need a heading separator or a standalone chapter number.
+    return heading_tag || !*p || *p == ' ' || *p == '\t' || *p == ':' ||
+           !strncmp(p, "　", 3) || !strncmp(p, "：", 3) ||
+           !strncmp(p, "、", 3) || *p == '-';
+}
+static bool numbered_heading_title(const char *title, bool heading_tag) {
+    if (explicit_chapter_title(title, heading_tag)) return true;
+    const char *p = title;
+    while (*p == ' ' || *p == '\t') ++p;
+    if (!strncasecmp(p, "chapter", 7) && (p[7] == ' ' || p[7] == '\t')) {
+        p += 7;
+        while (*p == ' ' || *p == '\t') ++p;
+        unsigned digits = 0;
+        while (*p && ((*p >= '0' && *p <= '9') || strchr("IVXLCDMivxlcdm", *p))) {
+            if (++digits > 12) break;
+            ++p;
+        }
+        return digits && digits <= 12 && strlen(title) < (heading_tag ? EPUB_TITLE_CAP : 97) &&
+            (!*p || *p == ' ' || *p == '\t' || *p == ':' || *p == '-' || *p == '.');
+    }
+    return false;
+}
+static bool chapter_set_title(book_epub_t *book, size_t i, const char *title) {
+    size_t n = strlen(title);
+    if (n + 1 > 1024U * 1024U - book->title_bytes) return false;
+    char *copy = psram(n + 1);
+    if (!copy) return false;
+    memcpy(copy, title, n + 1);
+    book->chapters[i].title = copy; book->title_bytes += n + 1;
+    return true;
+}
+static void epub_cache_save(const book_epub_t *book, const char *path);  // 定义在解析结构缓存段 / defined in the structure-cache section
+
+// 章内扫描：编号题头先挂起，等随后出现普通正文才收录；连续编号目录项互相不作证。
+// In-chapter scan: a numbered heading waits until ordinary prose follows; consecutive numbered TOC labels cannot validate each other.
+static void chapter_heading_scan(book_epub_t *book, size_t chapter) {
+    char *html = NULL; size_t len = 0;
+    if (load_entry(book, book->chapters[chapter].zip_index, &html, &len) != ESP_OK) return;
+    html_text_t text; esp_err_t err = html_to_blocks(html, len, &text);
+    free(html);
+    if (err != ESP_OK) return;
+    char pending[EPUB_TITLE_CAP] = "";
+    for (size_t i = 0; i < text.count && !book->chapters[chapter].title; ++i) {
+        const blk_t *block = &text.blocks[i];
+        if (block->image_src || !block->len) continue;
+        size_t take = block->len < sizeof(pending) - 1 ? block->len : sizeof(pending) - 1;
+        char probe[sizeof(pending)];
+        memcpy(probe, text.utf8 + block->offset, take); probe[take] = 0;
+        size_t n = strlen(probe); while (n && probe[n - 1] == ' ') probe[--n] = 0;
+        if (front_matter_title(probe)) { pending[0] = 0; continue; }
+        if (numbered_heading_title(probe, block->heading)) { strcpy(pending, probe); continue; }
+        if (pending[0] && !block->heading) {
+            bool prose = false;
+            for (size_t j = 0; j < strlen(probe); ++j) if (!space(probe[j])) { prose = true; break; }
+            if (prose) chapter_set_title(book, chapter, pending);
+            pending[0] = 0;
+        }
+    }
+    html_text_free(&text);
+}
+void book_epub_prepare_toc(book_epub_t *book) {
+    if (!book || book->toc_scanned) return;
+    book->toc_scanned = true;
+    size_t untitled = 0;
+    for (size_t i = 0; i < book->count; ++i) if (!book->chapters[i].title) ++untitled;
+    if (!untitled) return;
+    // 补目扫完可能填出新标题：回写结构缓存，下次开书（含断电重启）不再重复正文扫描。
+    // The fallback scan may fill titles: rewrite the structure cache so the next
+    // open (including after a power cut) skips the body scan.
+    size_t filled = untitled;
+    // 大书已有部分正式标题时不在目录打开前解压数百章；无任何标题的书仍补扫。
+    // Skip inflating hundreds of chapters before the TOC opens when authored titles exist; fully untitled books still scan.
+    if (book->count > 256 && untitled < book->count) return;
+    for (size_t i = 0; i < book->count; ++i) {
+        if (book->chapters[i].title) continue;
+        const char *path = zip_entry_name(book->zip, book->chapters[i].zip_index);
+        if (!path) continue;
+        const char *name = strrchr(path, '/');
+        name = name ? name + 1 : path;
+        if (front_matter_path(name)) continue;
+        chapter_heading_scan(book, i);
+    }
+    size_t remaining = 0;
+    for (size_t i = 0; i < book->count; ++i) if (!book->chapters[i].title) ++remaining;
+    if (remaining < filled && book->path) epub_cache_save(book, book->path);
+}
+
+/* ---- 解析结构缓存 / Parsed-structure cache ---- */
+// 开书重复解析 container/OPF/NCX/NAV 花 0.3–2 秒；章节表（zip 索引/累计偏移/标题）
+// 由 ZIP 中央目录身份钉死后可整段复用。与封面缓存同一身份源，坏文件/换书自动 miss。
+// Reopening reparsed container/OPF/NCX/NAV for 0.3-2 seconds; the chapter table
+// (zip indices/cumulative offsets/titles) is pinned by the ZIP central-directory
+// identity and reuses wholesale. Same identity source as the cover cache, so
+// corrupt files and replaced books miss automatically.
+#define EPUB_CACHE_VERSION 1u
+// 与 book_cache 的单条上限一致：万章书可缓存，数万章带标题的压力书超限即跳过。
+// Matches book_cache's per-entry cap: ten-thousand-chapter books cache while
+// tens-of-thousands with titles skip by design.
+#define EPUB_CACHE_MAX (512u * 1024u)
+
+// 命中计数仅供宿主测试断言；真机不读。/ Hit counter for host-test assertions only.
+int book_epub_cache_hits;
+
+static void epub_put16(uint8_t *p, uint16_t v) { p[0] = v; p[1] = v >> 8; }
+static void epub_put32(uint8_t *p, uint32_t v) { p[0] = v; p[1] = v >> 8; p[2] = v >> 16; p[3] = v >> 24; }
+static uint16_t epub_get16(const uint8_t *p) { return (uint16_t)(p[0] | (uint16_t)p[1] << 8); }
+static uint32_t epub_get32(const uint8_t *p) { return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24; }
+
+static bool epub_cache_identity(const book_epub_t *book, const char *path, book_cache_identity_t *id) {
+    (void)path;
+    uint32_t source_bytes, directory_bytes, directory_crc;
+    if (!zip_directory_identity(book->zip, &source_bytes, &directory_bytes, &directory_crc)) return false;
+    *id = (book_cache_identity_t){.bytes = source_bytes, .digest = directory_bytes,
+        .crc = directory_crc, .variant = EPUB_CACHE_VERSION};
+    return true;
+}
+
+// 载荷：count/total/toc_scanned 后每章 zip_index、offset、标题（0 长 = 无标题）。
+// Payload: count/total/toc_scanned, then per chapter zip_index, offset and a
+// title (zero length = none).
+static bool epub_cache_load(book_epub_t *book, const char *path) {
+    book_cache_identity_t id;
+    if (!epub_cache_identity(book, path, &id)) return false;
+    void *payload = NULL; size_t size = 0;
+    if (!book_cache_load(path, BOOK_CACHE_EPUB, &id, EPUB_CACHE_MAX, &payload, &size)) return false;
+    const uint8_t *p = payload, *end = p + size;
+    bool ok = size >= 9;
+    uint32_t count = ok ? epub_get32(p) : 0, total = ok ? epub_get32(p + 4) : 0;
+    if (ok && (!count || count > EPUB_ITEMS_MAX)) ok = false;
+    if (ok && (size - 9) / 10 < count) ok = false;  // 每章至少 10 字节 / at least 10 bytes per chapter
+    if (ok) {
+        book->chapters = psram(count * sizeof(*book->chapters));
+        if (!book->chapters) ok = false;
+        else memset(book->chapters, 0, count * sizeof(*book->chapters));
+    }
+    if (ok) {
+        const uint8_t *at = p + 9;
+        uint32_t offset = 0;
+        int entries = zip_entry_count(book->zip);
+        for (uint32_t i = 0; i < count && ok; ++i) {
+            if (end - at < 10) { ok = false; break; }
+            int32_t zip_index = (int32_t)epub_get32(at);
+            uint32_t chapter_offset = epub_get32(at + 4);
+            uint16_t title_n = epub_get16(at + 8);
+            at += 10;
+            if (zip_index < 0 || zip_index >= entries || chapter_offset < offset || (uint64_t)chapter_offset + zip_entry_size(book->zip, zip_index) > total) { ok = false; break; }
+            offset = chapter_offset;
+            chapter_t *chapter = &book->chapters[i];
+            chapter->zip_index = zip_index; chapter->offset = chapter_offset; chapter->next = -1;
+            if (title_n) {
+                if ((size_t)(end - at) < title_n) { ok = false; break; }
+                if (title_n + 1 > 1024u * 1024u - book->title_bytes) { ok = false; break; }
+                char *copy = psram(title_n + 1);
+                if (!copy) { ok = false; break; }
+                memcpy(copy, at, title_n); copy[title_n] = 0;
+                // 缓存里的标题按 NUL 结尾存储且不含内嵌 NUL，坏数据按 miss 处理。
+                // Cached titles store NUL-terminated without embedded NULs; bad
+                // data counts as a miss.
+                if (memchr(copy, 0, title_n)) { free(copy); ok = false; break; }
+                chapter->title = copy; book->title_bytes += title_n + 1;
+                at += title_n;
+            }
+        }
+        if (ok && at != end) ok = false;  // 尾部多余字节 = 不匹配 / trailing bytes = mismatch
+        if (ok && count && book->chapters[count - 1].offset + zip_entry_size(book->zip, book->chapters[count - 1].zip_index) != total) ok = false;
+    }
+    if (ok) {
+        book->count = count; book->total = total; book->toc_scanned = p[8] != 0;
+        ++book_epub_cache_hits;
+    } else {
+        // 坏缓存按 miss 处理：只回收部件（壳与 zip 由 open 持有），继续走解析路径。
+        // A bad cache counts as a miss: reclaim the parts only (the shell and zip
+        // stay with open) and fall through to parsing.
+        if (book->chapters) for (uint32_t i = 0; i < count; ++i) free(book->chapters[i].title);
+        free(book->chapters);
+        book->chapters = NULL; book->title_bytes = 0;
+    }
+    free(payload);
+    return ok;
+}
+
+static void epub_cache_save(const book_epub_t *book, const char *path) {
+    book_cache_identity_t id;
+    if (!book->chapters || !book->count || !epub_cache_identity(book, path, &id)) return;
+    size_t titles = 0;
+    for (size_t i = 0; i < book->count; ++i)
+        if (book->chapters[i].title) {
+            size_t n = strlen(book->chapters[i].title);
+            if (n > 65535) return;
+            titles += n;
+        }
+    size_t size = 9 + book->count * 10 + titles;  // 每章 10 字节头已含 2 字节标题长度 / the 10-byte header already carries the 2-byte length
+    if (size > EPUB_CACHE_MAX) return;
+    uint8_t *payload = psram(size);
+    if (!payload) return;
+    uint8_t *at = payload;
+    epub_put32(at, (uint32_t)book->count); epub_put32(at + 4, book->total);
+    at[8] = book->toc_scanned ? 1 : 0; at += 9;
+    for (size_t i = 0; i < book->count; ++i) {
+        const chapter_t *chapter = &book->chapters[i];
+        epub_put32(at, (uint32_t)chapter->zip_index); epub_put32(at + 4, chapter->offset);
+        size_t n = chapter->title ? strlen(chapter->title) : 0;
+        epub_put16(at + 8, (uint16_t)n); at += 10;
+        if (n) { memcpy(at, chapter->title, n); at += n; }
+    }
+    (void)book_cache_save(path, BOOK_CACHE_EPUB, &id, payload, size);
+    free(payload);
+}
+
 /* ---- 后端公共接口 / Backend public interface ---- */
 
 esp_err_t book_epub_open(const char *path, book_epub_t **out) {
@@ -527,33 +812,44 @@ esp_err_t book_epub_open(const char *path, book_epub_t **out) {
     memset(paths, 0, 3 * EPUB_PATH_CAP);
     char *opf = paths[0], *ncx = paths[1], *nav = paths[2];
     esp_err_t err = zip_open(path, &book->zip);
-    if (err == ESP_OK) err = container_path(book, opf);
-    if (err == ESP_OK) err = package_parse(book, opf, ncx, nav);
-    if (err == ESP_OK) {
-        book->heads = psram(ZIP_ENTRY_MAX * sizeof(*book->heads));
-        if (!book->heads) err = ESP_ERR_NO_MEM;
-        else {
-            for (size_t i = 0; i < ZIP_ENTRY_MAX; ++i) book->heads[i] = -1;
-            for (size_t i = 0; i < book->count; ++i) {
-                chapter_t *chapter = &book->chapters[i];
-                chapter->next = book->heads[chapter->zip_index]; book->heads[chapter->zip_index] = (int)i;
+    // 结构缓存命中则整段跳过 container/OPF/NCX/NAV 解析（含 heads 链——它只服务导航解析）。
+    // A structure-cache hit skips the whole container/OPF/NCX/NAV parse (and the
+    // heads chain — it only serves navigation parsing).
+    const bool cached = err == ESP_OK && epub_cache_load(book, path);
+    if (err == ESP_OK && !cached) {
+        err = container_path(book, opf);
+        if (err == ESP_OK) err = package_parse(book, opf, ncx, nav);
+        if (err == ESP_OK) {
+            book->heads = psram(ZIP_ENTRY_MAX * sizeof(*book->heads));
+            if (!book->heads) err = ESP_ERR_NO_MEM;
+            else {
+                for (size_t i = 0; i < ZIP_ENTRY_MAX; ++i) book->heads[i] = -1;
+                for (size_t i = 0; i < book->count; ++i) {
+                    chapter_t *chapter = &book->chapters[i];
+                    chapter->next = book->heads[chapter->zip_index]; book->heads[chapter->zip_index] = (int)i;
+                }
             }
         }
+        if (err == ESP_OK) {
+            // 导航损坏不阻止阅读；NAV 补全 NCX 未命中的章节。/ Broken navigation never blocks reading; NAV fills chapters not named by NCX.
+            if (ncx[0]) (void)navigation_parse(book, ncx, true);
+            if (nav[0]) (void)navigation_parse(book, nav, false);
+        }
+        free(book->heads); book->heads = NULL;
+        if (err == ESP_OK) epub_cache_save(book, path);
     }
-    if (err == ESP_OK) {
-        // 导航损坏不阻止阅读；NAV 补全 NCX 未命中的章节。/ Broken navigation never blocks reading; NAV fills chapters not named by NCX.
-        if (ncx[0]) (void)navigation_parse(book, ncx, true);
-        if (nav[0]) (void)navigation_parse(book, nav, false);
-    }
-    free(book->heads); book->heads = NULL;
     free(paths);
     if (err != ESP_OK) { book_epub_close(book); return err; }
+    if (!book->path) {
+        book->path = psram(strlen(path) + 1);
+        if (book->path) strcpy(book->path, path);
+    }
     *out = book; return ESP_OK;
 }
 void book_epub_close(book_epub_t *book) {
     if (!book) return;
     if (book->chapters) for (size_t i = 0; i < book->count; ++i) free(book->chapters[i].title);
-    zip_close(book->zip); free(book->heads); free(book->chapters); free(book->image_first); free(book->title_images); free(book);
+    zip_close(book->zip); free(book->heads); free(book->chapters); free(book->image_first); free(book->title_images); free(book->path); free(book);
 }
 size_t book_epub_chapter_count(const book_epub_t *book) { return book ? book->count : 0; }
 esp_err_t book_epub_chapter_title(const book_epub_t *book, size_t i, char *buf, size_t cap) {

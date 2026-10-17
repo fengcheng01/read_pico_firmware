@@ -52,7 +52,7 @@ unit = r'''
 #define ESP_LOGI(...) ((void)0)
 typedef int esp_err_t;
 typedef struct {int leaf;bool request_menu;} app_ctx_t;
-typedef enum {APP_REDRAW_PAGE,APP_REDRAW_AREA,APP_REDRAW_NONE,APP_REDRAW_FULL} app_redraw_t;
+typedef enum {APP_REDRAW_PAGE,APP_REDRAW_AREA,APP_REDRAW_NONE,APP_REDRAW_FULL,APP_REDRAW_DONE} app_redraw_t;
 typedef struct {int x,y,width,height;} EpdRect;
 static EpdRect ui_bar_rect(int i,int count){int width=(508-(count-1)*12)/count;return(EpdRect){40+i*(width+12),1096,width,96};}
 static bool ui_rect_hit(EpdRect r,int x,int y){return x>=r.x&&x<r.x+r.width&&y>=r.y&&y<r.y+r.height;}
@@ -64,13 +64,15 @@ static EpdRect ui_row_rect(int i,int count,int y,int height){EpdRect r=ui_bar_re
 static char s_query[65],s_search_draft[65],s_batch_message[128];
 static bool s_batch_confirm,s_batch_delete;
 static int s_mark_delete = -1;
-static bool s_mark_manage, s_toolbar_sizes, s_layout_group;
+static bool s_mark_manage, s_toolbar_sizes;
+static uint8_t s_layout_group;
+static int s_choice_row = -1;
 static bool read_pico_search_match(const char* name,const char* query){return !*query||strstr(name,query)!=NULL;}
 static int book_chapter_count(void){return 1;}
 #define BOOK_TOC_ROWS 10
 #define BOOK_PCT_ROWS 10
 static int s_filter;
-static bool s_recent_sort;
+static bool s_recent_sort,s_shelf_grid;
 static shelf_entry_t* s_shelf;
 static size_t s_shelf_capacity;
 static int s_count,s_visible_count;
@@ -78,13 +80,15 @@ static char s_message[128],s_shelf_warning[128],s_storage[128];
 static bool s_pending_invalidated,test_oom,test_degraded;
 static unsigned s_store_revision, s_catalog_revision;
 static int s_shelf_leaf;
+static int s_layout_leaf = -1,s_layout_anchor;
+static bool s_layout_grid;
 static char s_sync_note[128], s_resume_name[256];
 static void os_sync_job_cancel(void) {}
 static void apply_entry(app_ctx_t* ctx);
 static bool s_catalog_valid;
 #include "book_store.h"
 // 根结构用真实头文件，避免与 book_entry 的 ABI 分叉。/ Real header for the root struct; no ABI fork with book_entry.
-typedef struct {uint32_t file_size;uint16_t chapter;uint32_t byte_off;uint8_t px,pct;uint32_t last_open_s;} book_progress_t;
+typedef struct {uint32_t file_size;uint16_t chapter;uint32_t byte_off;uint8_t px,pct;uint32_t last_open_s;uint32_t read_ms,pages;} book_progress_t;
 typedef struct book_progress_watch {char path[288];atomic_bool invalidated;struct book_progress_watch* next;} book_progress_watch_t;
 static book_progress_watch_t* test_watches;
 static book_progress_watch_t* book_progress_watch_create(const char* path){book_progress_watch_t* w=calloc(1,sizeof(*w));assert(w);strcpy(w->path,path);atomic_init(&w->invalidated,false);w->next=test_watches;test_watches=w;return w;}
@@ -146,6 +150,9 @@ static bool s_delete_confirm,s_file_removed,s_clear_confirm;
 static char s_manage_message[128];
 typedef enum {SHELF,READING,TOC,LAYOUT,TAP_ZONES,MANAGE,BULK,SEARCH} book_view_t;
 static book_view_t s_view,s_search_parent;
+static size_t s_panel_anchor;
+typedef struct { bool active,sizes; char path[BOOK_STORE_PATH_MAX]; uint16_t chapter; uint32_t offset; book_view_t view; uint8_t group; } font_return_t;
+static font_return_t s_font_return;
 static bool s_presented_valid,s_text_turn;
 static bool s_search_dirty,s_search_fast;
 static bool s_reader_target_night,s_reader_target_binary,s_presented_reading_overlay;
@@ -155,11 +162,19 @@ static bool s_reader_target_night,s_reader_target_binary,s_presented_reading_ove
 static int s_pressed_control;
 static bool s_scan_pending,s_toolbar;
 static bool s_resume_pending,s_full,s_shake_enabled;
+static bool s_boot_resume;
 static int s_du_count;
 static int64_t s_size_settle_ms,s_poll_ms;
 static void* s_prep_task,*s_prep_done,*s_draw_lock,*s_next_fb;
 static void ensure_prep(void){}
+// 断电续读标记替身：不触 NVS，按测试需要读端恒为关。/ Power-cut reading-marker
+// stand-in: no NVS; the read side always reports off unless a test arms it.
+static bool test_lock_reading_armed;
+__attribute__((unused)) static void app_settings_set_lock_reading(bool on){(void)on;}
+static bool app_settings_take_lock_reading(void){bool r=test_lock_reading_armed;test_lock_reading_armed=false;return r;}
 static int app_settings_book_px(void){return 48;}
+static bool app_settings_shelf_grid(void){return s_shelf_grid;}
+static void app_settings_set_shelf_grid(bool grid){s_shelf_grid=grid;}
 static bool app_settings_book_shake(void){return false;}
 static void read_pico_sd_start_probe(void){}
 static void sensor_set(app_ctx_t* ctx,bool on){(void)ctx;(void)on;}
@@ -167,7 +182,7 @@ static void vTaskDelete(void* p){(void)p;}
 static void vSemaphoreDelete(void* p){(void)p;}
 static unsigned test_turns;
 static app_redraw_t turn_page(app_ctx_t* ctx,int dir){(void)ctx;(void)dir;++test_turns;return APP_REDRAW_NONE;}
-typedef enum {UI_GESTURE_PRESS,UI_GESTURE_TAP,UI_GESTURE_LONG_PRESS,UI_GESTURE_SWIPE_L,UI_GESTURE_SWIPE_R,UI_GESTURE_SWIPE_U,UI_GESTURE_SWIPE_D,UI_GESTURE_CANCEL} ui_gesture_type_t;
+typedef enum {UI_GESTURE_PRESS,UI_GESTURE_TAP,UI_GESTURE_LONG_PRESS,UI_GESTURE_SWIPE_L,UI_GESTURE_SWIPE_R,UI_GESTURE_SWIPE_U,UI_GESTURE_SWIPE_D,UI_GESTURE_CANCEL,UI_GESTURE_DRAG} ui_gesture_type_t;
 typedef struct {ui_gesture_type_t type;uint16_t x0,y0,x,y;} ui_gesture_event_t;
 static EpdRect body_rect(void){return(EpdRect){40,24,604,1000};}
 static int control_at(app_ctx_t* ctx,uint16_t x,uint16_t y,EpdRect* rect){(void)ctx;*rect=(EpdRect){48,100,588,88};return ui_rect_hit(*rect,x,y)?1000:-1;}
@@ -192,7 +207,7 @@ static void ui_text(uint8_t* fb,int x,int y,int px,const char* text,int align,bo
 static bool s_ended;
 static unsigned s_mark_count;
 static bool s_ended;
-__attribute__((unused)) static void covers_reset(void){}
+static void covers_reset(void);
 __attribute__((unused)) static int book_marks_next(const char* path, unsigned long cap){(void)path;(void)cap;return -1;}
 __attribute__((unused)) static void marks_reload(void){ s_mark_count = 0; }
 static uint8_t s_toc_tab;
@@ -209,18 +224,28 @@ __attribute__((unused)) static int book_marks_forget(void* p0){(void)p0;return 0
 __attribute__((unused)) static int app_settings_gc_every(void){return 0;}
 __attribute__((unused)) static void app_settings_set_gc_every(unsigned e){(void)e;}
 static bool book_sleep_prepare(void){return true;}
+static void os_page_turner_enter(void){}
+static void os_page_turner_leave(void){}
 static bool app_sleep_prepare_register(bool (*fn)(void)){(void)fn;return true;}
 static void app_sleep_prepare_unregister(bool (*fn)(void)){(void)fn;}
 static void book_stats_flush(void){}
+__attribute__((unused)) static void ttf_font_reclaim(void){}
+__attribute__((unused)) static int64_t esp_timer_get_time(void){return 0;}
 '''
 unit += (source.parents[1] / "book/book_entry.h").read_text().replace('#include "book_store.h"', '').replace('#pragma once', '')
 unit += 'static book_entry_request_t s_entry;\nstatic bool s_entry_active;\nstatic bool s_quote_selecting;\nstatic EpdRect quote_button(int i){return (EpdRect){40+i*310,944,294,70};}\nstatic bool choose_quote(int x,int y){(void)x;(void)y;return false;}\nstatic app_redraw_t quote_action(bool save){(void)save;s_quote_selecting=false;return APP_REDRAW_PAGE;}\n'
+unit += 'static unsigned s_read_ms, s_pages;\nstatic bool s_full_settle;\nstatic bool s_scrub;\nstatic bool scrub_ready(void){return false;}\nstatic void scrub_begin(app_ctx_t* ctx,int x){(void)ctx;(void)x;}\nstatic void scrub_move(app_ctx_t* ctx,int x){(void)ctx;(void)x;}\nstatic app_redraw_t scrub_commit(app_ctx_t* ctx,int x){(void)ctx;(void)x;return APP_REDRAW_PAGE;}\nstatic void scrub_restore(app_ctx_t* ctx){(void)ctx;}\n'
 unit += source.read_text()[source.read_text().index('static book_store_root_t s_scan_roots'):source.read_text().index('static void scan_close')]
 unit += 'static void book_cover_join(void) {}\nstatic unsigned book_progress_revision(void) { return 0; }\n'
+unit += '// 开书事务只影响自动续读询问；替身保持允许，让 UI 行为与未接入时一致。/ The open transaction only gates automatic prompts; the stub stays permissive so UI behavior is unchanged.\n'
+unit += 'static bool pico_boot_asset_allowed(const char* path){(void)path;return true;}\n'
 unit += '#include "os_catalog.h"\nstatic os_app_id_t ui_product_root_hit(int x,int y) {(void)x;(void)y;return OS_APP_NONE;}\nstatic bool ui_product_navigate(app_ctx_t* ctx,os_app_id_t id){(void)ctx;(void)id;return true;}\n'
 unit += 'static bool ui_product_root_press(app_ctx_t* ctx,const ui_gesture_event_t* ev){(void)ctx;(void)ev;return false;}\n'
 for name in ("copy_text", "shelf_matches", "compare_books", "sort_shelf", "shelf_reserve", "delete_retry_find", "delete_retry_reserve", "delete_retry_discard", "scan_close", "scan_shelf", "scan_shelf_step",
-             "pending_find", "pending_reserve", "pending_restore", "pending_discard", "pending_mark_latest", "pending_drop_invalidated", "pending_flush", "save_progress", "retry_progress", "layout_name", "manage_panel", "manage_rect", "batch_rect", "view_rows", "leaves", "selected_count", "clear_selection", "toggle_selection", "select_page", "search_keys", "search_begin", "refresh_search_matches", "search_finish", "search_action", "refresh_capacity", "manage_apply", "manage_action", "batch_apply", "batch_action", "resume_choice", "free_image", "close_image", "open_image", "gesture_event", "on_key", "draw_wrapped_name", "on_enter", "book_on_exit"):
+             "pending_find", "pending_reserve", "pending_restore", "pending_discard", "pending_mark_latest", "pending_drop_invalidated", "pending_flush", "save_progress", "retry_progress", "layout_name", "manage_panel", "manage_rect", "batch_rect", "shelf_rows", "change_shelf_layout", "view_rows", "leaves", "selected_count", "clear_selection", "toggle_selection", "select_page", "search_keys", "search_begin", "refresh_search_matches", "search_finish", "search_action", "refresh_capacity", "manage_apply", "manage_action", "batch_apply", "batch_action", "resume_choice", "free_image", "close_image", "open_image", "gesture_event", "on_key", "draw_wrapped_name", "on_enter", "book_on_exit"):
+    unit += function(name) + "\n"
+unit += 'typedef struct { char path[BOOK_STORE_PATH_MAX]; uint8_t* gray; bool failed; int64_t retry_ms; } cover_slot_t;\nstatic cover_slot_t s_cover_slots[6];\nstatic bool s_covers_dirty; static int s_cover_batch_leaf;\n'
+for name in ("covers_reset","cover_for","cover_tried","cover_visible","cover_store"):
     unit += function(name) + "\n"
 unit += function("apply_entry") + "\n"
 unit += "static void scan_all(app_ctx_t* ctx) { scan_shelf(ctx); unsigned ticks=0; while(!scan_shelf_step(ctx)) assert(++ticks<10000); }\n"
@@ -387,6 +412,27 @@ int main(void) {
     for(int i=0;i<s_count;i++)if(s_shelf[i].removed){s_shelf[i].selected=true;++retry_count;}
     assert(retry_count==2);calls=test_delete_calls;batch_apply(&ctx);
     assert(!s_delete_retries&&test_delete_calls==calls&&!selected_count());
+    // 字体选择返回恢复原面板和锚点，明确书架请求优先并消费过期返回票据。
+    // Font return restores the source panel/anchor; an explicit Library request wins and consumes a stale ticket.
+    s_font_return = (font_return_t){.active=true,.sizes=true,.chapter=0,.offset=123,.view=READING,.group=0};
+    snprintf(s_font_return.path,sizeof(s_font_return.path),"%s/book001.txt",test_roots[0].path);on_enter(&ctx);
+    assert(s_view==READING && s_toolbar && s_toolbar_sizes && s_panel_anchor==123 && !s_font_return.active);
+    assert(s_entry.has_position && s_entry.byte_off==123 && book_entry_status()==BOOK_ENTRY_OPENED);
+    s_font_return = (font_return_t){.active=true,.offset=123,.view=LAYOUT,.group=0};
+    snprintf(s_font_return.path,sizeof(s_font_return.path),"%s/book001.txt",test_roots[0].path);on_enter(&ctx);
+    assert(s_view==LAYOUT && !s_toolbar && s_panel_anchor==123);
+    s_font_return.active=true;assert(book_entry_request(BOOK_ENTRY_SHELF,NULL));on_enter(&ctx);
+    assert(s_view==SHELF && !s_font_return.active && book_entry_status()==BOOK_ENTRY_SHELF_READY);
+    // 六封面往返保持首本书；六个槽含失败记录，无封面/低内存不重复排队。
+    // Six-cover roundtrips keep the leading book; six slots retain failures without requeueing absent/low-memory covers.
+    s_view=SHELF;s_shelf_grid=false;s_layout_leaf=-1;ctx.leaf=1;
+    change_shelf_layout(&ctx);assert(s_shelf_grid&&ctx.leaf==0&&s_layout_anchor==3);
+    change_shelf_layout(&ctx);assert(!s_shelf_grid&&ctx.leaf==1);
+    s_shelf_grid=true;ctx.leaf=0;s_visible_count=6;
+    for(int i=0;i<6;++i){snprintf(s_shelf[i].path,sizeof(s_shelf[i].path),"/sdcard/books/cover%d.txt",i);uint8_t* gray=i==5?NULL:malloc(1);cover_store(s_shelf[i].path,gray,0);}
+    for(int i=0;i<6;++i){assert(cover_tried(s_shelf[i].path));assert(cover_visible(s_shelf[i].path,0));assert((cover_for(s_shelf[i].path)==NULL)==(i==5));}
+    assert(!cover_visible(s_shelf[0].path,1));
+    covers_reset();assert(!cover_tried(s_shelf[5].path));
     free(s_shelf);
     while(s_pending)pending_discard(s_pending->path);
     for(int i=0;i<65;i++){char path[340];snprintf(path,sizeof(path),"%s/book%03d.txt",test_roots[0].path,i);unlink(path);}rmdir(test_roots[0].path);

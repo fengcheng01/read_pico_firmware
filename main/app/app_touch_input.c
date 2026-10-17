@@ -5,6 +5,11 @@
  * English: A bounded touch queue independent of display scans preserves press/move/release sampling order.
  * 冻结：不解释点击，不在采样任务绘制；读错/溢出丢弃旧队列并取消手势。
  * Frozen: Never interpret taps or draw from the sampler; errors/overflow discard stale queued input and cancel gestures.
+ * 实机功耗审查：静止时 125Hz 盲轮询是持续的 I2C 与 CPU 唤醒压力；改为触摸中全速、松开转
+ * 低速轮询，设备端用 CST836U INT 沿即时唤回（中断不工作时由低速超时兜底，行为不变慢于旧值）。
+ * Power review: the idle 125Hz blind poll kept both I2C and the CPU busy; the sampler now runs
+ * full speed only while touching, drops to a slow poll after release, and on device the CST836U
+ * INT edge wakes it instantly (a dead INT falls back to the slow timeout, never slower than before).
  */
 #include "app_touch_input.h"
 #include "esp_timer.h"
@@ -14,7 +19,8 @@
 #include <string.h>
 
 #define INPUT_CAPACITY 128
-#define INPUT_POLL_MS 8
+#define INPUT_ACTIVE_POLL_MS 8
+#define INPUT_IDLE_POLL_MS 20
 
 typedef struct {
     cst836u_touch_t touch;
@@ -39,6 +45,7 @@ static bool same_contact(const cst836u_touch_t* a, const cst836u_touch_t* b) {
 static void sampler(void* unused) {
     (void)unused;
     for (;;) {
+        bool touching = false;
         xSemaphoreTake(s_mutex, portMAX_DELAY);
         if (s_enabled) {
             cst836u_touch_t touch = {0};
@@ -69,11 +76,44 @@ static void sampler(void* unused) {
                     }
                 }
             }
+            touching = s_latest.touched;
         }
         xSemaphoreGive(s_mutex);
-        vTaskDelay(pdMS_TO_TICKS(INPUT_POLL_MS));
+        if (!s_enabled) {
+            vTaskDelay(pdMS_TO_TICKS(INPUT_ACTIVE_POLL_MS));
+            continue;
+        }
+        if (touching) {
+            // 触摸进行中保持全速；清掉挂起的沿避免下一轮误醒。
+            // Full speed while touching; drain a pending edge so the next round wakes on a real one.
+            ulTaskNotifyTake(pdTRUE, 0);
+            vTaskDelay(pdMS_TO_TICKS(INPUT_ACTIVE_POLL_MS));
+        } else {
+            // 静止：等中断沿或低速超时，空闲 I2C 从 125Hz 降到 50Hz 兜底。
+            // Idle: wait for an INT edge or the slow timeout; idle I2C drops from 125Hz to a 50Hz fallback.
+            ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(INPUT_IDLE_POLL_MS));
+        }
     }
 }
+#ifdef ESP_PLATFORM
+#include "driver/gpio.h"
+// CST836U INT 沿唤醒采样任务：芯片按下拉低 INT，读取本身兼作应答。INT 失灵由低速轮询兜底。
+// The CST836U INT edge wakes the sampler: the chip pulls INT low on touch-down and the
+// read itself acknowledges it. A dead INT falls back to the slow poll.
+static void IRAM_ATTR touch_int_isr(void* arg) {
+    BaseType_t woken = pdFALSE;
+    vTaskNotifyGiveFromISR((TaskHandle_t)arg, &woken);
+    portYIELD_FROM_ISR(woken);
+}
+static void wire_touch_interrupt(void) {
+    gpio_num_t pin = cst836u_int_gpio(s_tp);
+    if (pin < 0) return;
+    esp_err_t service = gpio_install_isr_service(ESP_INTR_FLAG_IRAM);
+    if (service != ESP_OK && service != ESP_ERR_INVALID_STATE) return;
+    if (gpio_set_intr_type(pin, GPIO_INTR_ANYEDGE) != ESP_OK) return;
+    (void)gpio_isr_handler_add(pin, touch_int_isr, s_task);
+}
+#endif
 void app_touch_input_init(cst836u_handle_t tp) {
     if (s_task || !tp) return;
     if (!s_mutex) s_mutex = xSemaphoreCreateMutex();
@@ -81,6 +121,9 @@ void app_touch_input_init(cst836u_handle_t tp) {
     s_tp = tp;
     if (xTaskCreatePinnedToCore(sampler, "touch_input", 3072, NULL, 5, &s_task, 1) != pdPASS)
         s_task = NULL;
+#ifdef ESP_PLATFORM
+    if (s_task) wire_touch_interrupt();
+#endif
 }
 void app_touch_input_enable(bool enabled) {
     if (!s_task) return;

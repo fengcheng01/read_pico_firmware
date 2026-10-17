@@ -7,17 +7,21 @@
  *
  * Boot wiring only: board init, settings, VCOM, splash, fonts. If VCOM
  * is unset, the factory page blocks first. Then control goes to app_loop.
+ * 用户修订：独立 PageRest 插画以两帧短淡入替换原开机图，不加等待或伪进度。
+ * User revision: Replace the original splash with PageRest artwork and a two-frame fade, without waits or fake progress.
  */
 
 #include <stdint.h>
 
 #include "app_loop.h"
 #include "app_registry.h"
+#include "boot_state.h"
 #include "display.h"
 #include "firmware_version.h"
 #include "epd_highlevel.h"
 #include "epdiy.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "esp_timer.h"
 #include "os_crash.h"
 #include "os_time.h"
@@ -30,6 +34,9 @@
 #include "read_pico_pmu.h"
 #include "settings.h"
 #include "ttf_font.h"
+#include "book_cover.h"
+#include "os_page_turner.h"
+#include "ui_image_cache.h"
 #include "ui_kit.h"
 #include "asset_pack.h"
 #include "sleep.h"
@@ -73,8 +80,17 @@ static bool images_match_panel(void) {
     return false;
 }
 
+// 蓝牙启动内存不足时释放可重建缓存：插图成品、封面复用与字形缓存，随后按需重建。
+// Reclaim rebuildable caches when BLE start headroom runs short: decoded images, cover reuse slots and glyph caches, rebuilt on demand.
+static void radio_reclaim(void) {
+    ui_image_cache_clear();
+    book_cover_join();
+    ttf_font_reclaim();
+}
+
 void app_main(void) {
     app_settings_init();
+    os_page_turner_set_reclaimer(radio_reclaim);
     const bool usb_requested = os_usb_disk_take_request();
     if (!usb_requested) usb_disk_restore_serial();
     read_pico_handle_t hw;
@@ -84,6 +100,9 @@ void app_main(void) {
     // 先记上次复位原因；异常复位在锁屏挑战前写入内置存储日志。
     // Record the last reset reason first; abnormal ones reach the internal log before the lock challenge.
     os_crash_boot_check();
+    // 启动事务在硬件初始化前落 NVS：开书中断与半途启动下次开机可查。
+    // The startup transaction hits NVS before hardware: interrupted opens and half-finished boots are visible next power-up.
+    pico_boot_init(os_crash_boot_abnormal());
     const bool vcom_ok = resolve_vcom_at_boot();
     pmu_selftest_bind(hw.sensor);
     const bool st_resume = pmu_selftest_boot_resume();
@@ -110,14 +129,20 @@ void app_main(void) {
     guard_draw_result(&hl, display_boot_white(&hl));
     // 开机图无条件展示（含设密码用户）：锁屏挑战前就能核对固件版本。
     // Always show the splash (PIN users too): the version is checkable before the lock challenge.
-    ui_draw_packed_full_image(framebuffer, loading_4bpp_pack_start,
-                             (size_t)(loading_4bpp_pack_end - loading_4bpp_pack_start));
-    ui_clear_rect_fast(framebuffer, (EpdRect){0, 1080, UI_LOCK_WIDTH, 80});
-    ui_text(framebuffer, UI_LOCK_WIDTH / 2, 1100, 28, firmware_version(), EPD_DRAW_ALIGN_CENTER, false);
+    size_t splash_bytes = (size_t)epd_width() * epd_height() / 2;
+    uint8_t* splash = heap_caps_malloc(splash_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    bool splash_ok = splash && asset_pack_unpack(loading_4bpp_pack_start,
+        (size_t)(loading_4bpp_pack_end - loading_4bpp_pack_start), splash, splash_bytes);
+    ui_draw_boot_splash(framebuffer, splash_ok ? splash : NULL, firmware_version(), false);
     // 开机图必须绝对刷：异常状态后的首帧差分盖不住旧墨（跨面板通用结论）。
     // The splash must be absolute: a first differential frame cannot clear old
     // ink after an abnormal state (cross-panel rule).
     guard_draw_result(&hl, update_display_full(&hl));
+    if (splash_ok) {
+        ui_draw_boot_splash(framebuffer, splash, firmware_version(), true);
+        guard_draw_result(&hl, update_display_mode(&hl, MODE_GL16));
+    }
+    heap_caps_free(splash);
 
     if (!hw.touch_ready) {
         ESP_LOGE(TAG, "No touch controller, UI cannot run");
@@ -133,21 +158,31 @@ void app_main(void) {
 
     // 设有锁屏密码时先阻塞校验；主循环、菜单与页面在通过前都不可达。
     // With a lock PIN armed, block here first; the loop, menus and pages stay unreachable until it passes.
-    app_lock_pin_challenge(&hl, hw.touch);
+    // 密码页按电源键＝不开了，转软睡（短按再开机）。
+    // A power key on the boot PIN page means "not now": drop into soft sleep (short press re-powers).
+    if (!app_lock_pin_challenge(&hl, hw.touch)) app_enter_host_sleep(APP_SLEEP_DEEP);
 
     // 用户请求 USB 独占卡盘：通过工厂/PIN 检查后，不启动普通页面或后台消费者。
     // User-requested exclusive USB disk: after factory/PIN gates, never start normal pages or background consumers.
     if (usb_requested && !st_resume) usb_disk_run(&hl, framebuffer, hw.touch);
     if (usb_requested) read_pico_sd_start_probe();
 
+    // 自检跑到一半断电的话，重新上电直接回自检页接着跑；其余断电唤醒按锁屏来源
+    // 直达锁屏那一刻的页面（阅读页配合续读标记自动开书回到进度）。
+    // Resume the self-test page if a power-cut interrupted it; otherwise a power-cut
+    // wake returns to the page showing at lock time (the reader pairs with the reading
+    // marker to reopen at the saved position).
+    const app_desc_t* boot_page = app_home_page();
+    if (!st_resume) {
+        const app_desc_t* origin = app_by_id((os_app_id_t)app_settings_take_lock_origin());
+        if (origin) boot_page = origin;
+    }
     app_loop_run(&(app_loop_config_t){
         .hl = &hl,
         .fb = framebuffer,
         .acc = hw.sensor,
         .tp = hw.touch,
         .sensor_ready = hw.sensor_ready,
-        // 自检跑到一半断电的话，重新上电直接回自检页接着跑。
-        // Resume the self-test page if a power-cut interrupted it.
-        .first_app = st_resume ? app_selftest_page() : app_home_page(),
+        .first_app = st_resume ? app_selftest_page() : boot_page,
     });
 }
