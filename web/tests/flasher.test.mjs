@@ -42,10 +42,11 @@ Object.defineProperty(globalThis,'navigator',{configurable:true,value:{serial:{a
 }}}});
 for(const fail of ['choose','connect','write','reset','none']){
  globalThis.serialTest={fail,choices:0,transports:0,disconnects:0,writes:0};
- const states=[],logs=[];
- const f=new PicoFlasher({onProgress:p=>states.push(p),onLog:l=>logs.push(l)});
+ const states=[],logs=[];let selected=0;
+ const f=new PicoFlasher({onProgress:p=>states.push(p),onLog:l=>logs.push(l),onPortSelected:()=>selected++});
  const success=await f.flashFiles([{data:new Uint8Array(100),address:0x10000,name:'incremental.bin'}]);
  assert.equal(serialTest.choices,1,'Cancellation must not reopen the serial chooser');
+ assert.equal(selected,fail==='choose'?0:1,'The selected-port callback fires once and never on chooser cancellation');
  assert.equal(success,fail==='reset'||fail==='none');
  const last=states.at(-1);
  if(fail==='choose')assert.match(last.error,/选择串口.*NotFoundError/);
