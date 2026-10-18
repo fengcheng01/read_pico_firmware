@@ -76,3 +76,16 @@ export function planFirmware(data: Uint8Array, name: string, eraseAll = false) {
   if (image.kind === 'app' && eraseAll) throw new Error('增量升级不能全片擦除，请使用完整 full.bin 进行重装。');
   return { image, eraseAll, file: { name, address: image.kind === 'full' ? 0 : APP_OFFSET, data } };
 }
+
+/// 中文：识别设备端 0x10000 应用描述是否本固件；返回设备版本号，非本固件返回 null。
+/// 供烧录器连接后探测：完整包在已运行本固件的设备上自动改为增量升级。
+/// English: Identify the on-device app description at 0x10000 as this firmware;
+/// returns the device version, or null otherwise. Used by the flasher after connect:
+/// full images switch to an app-only upgrade on devices already running this firmware.
+export function identifyPicoApp(head: Uint8Array): string | null {
+  if (head.length < 0x100 || head[0] !== 0xe9 || u32(head, 32) !== 0xabcd5432) return null;
+  const field = (offset: number) =>
+    new TextDecoder().decode(head.subarray(32 + offset, 32 + offset + 32)).split('\0')[0].trim();
+  if (!/read[ _-]?pico/i.test(field(48))) return null;
+  return field(16) || field(48);
+}

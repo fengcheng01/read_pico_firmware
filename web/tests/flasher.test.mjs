@@ -23,13 +23,15 @@ const mock = `export class Transport {
 }
 export class ESPLoader {
  async main(){if(globalThis.serialTest.fail==='connect')throw new DOMException('An unknown system error has occurred.','NetworkError');return 'ESP32-S3';}
- async writeFlash(options){globalThis.serialTest.writes++;options.reportProgress(0,50,100);if(globalThis.serialTest.fail==='write')throw new Error('write failed');}
+ async readFlash(){return globalThis.serialTest.deviceHead||new Uint8Array(256);}
+ async writeFlash(options){globalThis.serialTest.writes++;globalThis.serialTest.plan=options.fileArray.map(f=>({address:f.address,size:f.data.length}));options.reportProgress(0,50,100);if(globalThis.serialTest.fail==='write')throw new Error('write failed');}
  async flashBegin(){if(globalThis.serialTest.fail==='reset')throw new Error('USB gone');}
  async flashFinish(){}
 }`;
 registerHooks({resolve(specifier, context, next){
  if(specifier==='esptool-js')return {url:'data:text/javascript,'+encodeURIComponent(mock),shortCircuit:true};
  if(specifier==='./reset'&&context.parentURL.endsWith('/flasher.ts'))return {url:new URL('../src/utils/reset.ts',import.meta.url).href,shortCircuit:true};
+ if(specifier==='./firmware'&&context.parentURL.endsWith('/flasher.ts'))return {url:new URL('../src/utils/firmware.ts',import.meta.url).href,shortCircuit:true};
  return next(specifier,context);
 }});
 const { PicoFlasher } = await import('../src/utils/flasher.ts');
@@ -52,4 +54,27 @@ for(const fail of ['choose','connect','write','reset','none']){
  if(fail==='reset'){assert.equal(last.state,'done');assert.match(last.message,/未确认复位成功/);assert(!logs.some(line=>line==='软复位命令执行成功'));assert(logs.some(line=>line.includes('复位未确认')));}
  if(fail==='none'){assert.equal(last.state,'done');assert.match(last.message,/已执行硬件复位脉冲/);assert(serialTest.rebooted,'The reboot is modeled by RTS, never by the flash command ACK');}
 }
+
+// 完整包增量回退：识别为本固件→仅 0x10000 应用分区；未识别→整包 0x0。
+// Full-image upgrade fallback: an identified device takes the app-only 0x10000 write; an unidentified one the whole 0x0 image.
+{
+ const head = new Uint8Array(256); head[0] = 0xe9; const dv = new DataView(head.buffer);
+ dv.setUint32(32, 0xabcd5432, true);
+ new TextEncoder().encodeInto('0.6.21\0', head.subarray(32 + 16));
+ new TextEncoder().encodeInto('Read_Pico\0', head.subarray(32 + 48));
+ for(const identified of [true, false]) {
+  globalThis.serialTest = {fail:'none',choices:0,transports:0,disconnects:0,writes:0,deviceHead:identified?head:new Uint8Array(256)};
+  const logs=[];
+  const f = new PicoFlasher({onProgress:()=>{},onLog:l=>logs.push(l)});
+  const fullImage = new Uint8Array(0x11000); fullImage[0] = 0xe9;
+  const app = new Uint8Array(200); app[0] = 0xe9;
+  const ok = await f.flashFiles([{data:fullImage,address:0,name:'full.bin'}], false, {app, name:'full.bin'});
+  assert(ok, 'The fallback path must flash successfully');
+  assert.equal(serialTest.writes, 1);
+  assert.deepEqual(serialTest.plan, [{address:identified?0x10000:0,size:identified?200:fullImage.length}]);
+  assert(logs.some(l=>l.includes(identified?'0x10000':'0x0')), 'The log must state the chosen write target');
+ }
+}
+console.log('Upgrade fallback: identified device takes the app-only write, unidentified keeps the full image PASS');
+
 console.log('Production web flasher: chooser cancellation, handshake/write stage errors, preserved progress, no write retries, reset fallback and completed-write status PASS');
