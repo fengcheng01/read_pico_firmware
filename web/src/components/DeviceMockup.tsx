@@ -5,6 +5,6 @@ export const DeviceMockup: FC<DeviceMockupProps> = ({ imageSrc, altText, classNa
   <div className={`device ${className}`}>
     <div className="device-power" aria-hidden="true" />
     <div className="device-screen"><img src={imageSrc} alt={altText} width="684" height="1216" loading={eager ? 'eager' : 'lazy'} /></div>
-    <div className="device-keys" aria-hidden="true"><span>−</span><span>○</span><span>−</span></div>
+    <div className="device-keys" aria-hidden="true"><span className="key-bar" /><span className="key-round" /><span className="key-bar" /></div>
   </div>
 );

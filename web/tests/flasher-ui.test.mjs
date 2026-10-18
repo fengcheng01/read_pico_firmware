@@ -22,7 +22,6 @@ registerHooks({resolve(id,context,next){
  if(context.parentURL===componentURL){
   if(id.endsWith('/flasher'))return{url:asModule('export class PicoFlasher{constructor(opts){this.opts=opts;}flashFiles(files,erase){return globalThis.flashBoundary(files,erase,this.opts);}}'),shortCircuit:true};
   if(id.endsWith('/firmware'))return{url:new URL('../src/utils/firmware.ts',import.meta.url).href,shortCircuit:true};
-  if(id==='../site')return{url:asModule("export const REPOSITORY='https://example.invalid/source';"),shortCircuit:true};
  }
  return next(id,context);
 },load(url,context,next){if(url===componentURL)return{format:'module',source:compiled.code,shortCircuit:true};return next(url,context);}});
