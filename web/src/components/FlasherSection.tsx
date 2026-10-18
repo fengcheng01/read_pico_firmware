@@ -21,13 +21,13 @@ export const FlasherSection = ({lang}:{lang:Lang}) => {
  const m=modeCopy[lang];
  const [selection,setSelection]=useState<Selection|null>(null),[loading,setLoading]=useState(false),[fileError,setFileError]=useState('');
  const [progress,setProgress]=useState<FlashProgress>(idle),[logs,setLogs]=useState<string[]>([]);
- const [baudRate,setBaudRate]=useState(460800),[erase,setErase]=useState(false),[installMode,setInstallMode]=useState<InstallMode>('upgrade'),[confirm,setConfirm]=useState(false),[supported,setSupported]=useState(false);
- const input=useRef<HTMLInputElement>(null),reader=useRef<FileReader|null>(null),generation=useRef(0),busy=useRef(false),dialog=useRef<HTMLDialogElement>(null),returnFocus=useRef<HTMLButtonElement>(null);
+ const [baudRate,setBaudRate]=useState(460800),[erase,setErase]=useState(false),[installMode,setInstallMode]=useState<InstallMode>('upgrade'),[confirm,setConfirm]=useState(false),[supported,setSupported]=useState(false),[logsOpen,setLogsOpen]=useState(false);
+ const input=useRef<HTMLInputElement>(null),reader=useRef<FileReader|null>(null),generation=useRef(0),busy=useRef(false),dialog=useRef<HTMLDialogElement>(null),returnFocus=useRef<HTMLButtonElement>(null),logsPanel=useRef<HTMLDetailsElement>(null),revealed=useRef(false);
  const isFlashing=['connecting','connected','erasing','writing','resetting'].includes(progress.state);
  useEffect(()=>{setSupported(window.isSecureContext&&'serial' in navigator);return ()=>{++generation.current;reader.current?.abort();};},[]);
  useEffect(()=>{if(confirm&&!dialog.current?.open)dialog.current?.showModal();else if(!confirm&&dialog.current?.open)dialog.current?.close();},[confirm]);
  const appendLog=(line:string)=>setLogs(prev=>[...prev.slice(-299),`[${new Date().toLocaleTimeString()}] ${line}`]);
- const clear=()=>{++generation.current;reader.current?.abort();reader.current=null;setSelection(null);setErase(false);setInstallMode('upgrade');setLoading(false);setFileError('');setProgress(idle);setLogs([]);if(input.current)input.current.value='';};
+ const clear=()=>{++generation.current;reader.current?.abort();reader.current=null;setSelection(null);setErase(false);setInstallMode('upgrade');setLoading(false);setFileError('');setProgress(idle);setLogs([]);setLogsOpen(false);revealed.current=false;if(input.current)input.current.value='';};
  const pick=(files:FileList|null)=>{
   if(busy.current||!files?.length)return;
   const file=files[0];clear();
@@ -44,11 +44,17 @@ export const FlasherSection = ({lang}:{lang:Lang}) => {
   try{r.readAsArrayBuffer(file);}catch(e){setLoading(false);reader.current=null;setFileError(`${t.error} ${e instanceof Error?e.message:''}`);}
  };
  const closeConfirm=()=>{setConfirm(false);returnFocus.current?.focus();};
+ const revealLogs=()=>{
+  if(revealed.current)return;
+  revealed.current=true;setLogsOpen(true);
+  const scroll=()=>logsPanel.current?.scrollIntoView({behavior:window.matchMedia?.('(prefers-reduced-motion: reduce)').matches?'auto':'smooth',block:'center'});
+  window.requestAnimationFrame(scroll);
+ };
  const start=async()=>{
   if(busy.current||!selection||!supported)return;
-  busy.current=true;closeConfirm();setFileError('');
+  busy.current=true;revealed.current=false;closeConfirm();setFileError('');
   try {const isFull=selection.plan.image.kind==='full';const fresh=isFull&&installMode==='fresh';const plan=planFirmware(selection.plan.file.data,selection.file.name,fresh&&erase);
-   const flasher=new PicoFlasher({baudRate,onProgress:setProgress,onLog:appendLog});
+   const flasher=new PicoFlasher({baudRate,onProgress:setProgress,onLog:appendLog,onPortSelected:revealLogs});
    // 通用完整包按用户选择执行；保留数据升级识别失败即停止，绝不自动转为完整写入。
    // The universal image follows the explicit mode; data-preserving updates fail closed instead of falling back to a full write.
    await flasher.flashFiles([plan.file],plan.eraseAll,isFull&&!fresh?{app:plan.image.app,name:selection.file.name,requireMatch:true}:undefined);
@@ -75,7 +81,7 @@ export const FlasherSection = ({lang}:{lang:Lang}) => {
  {!supported&&<p className="browser-notice"><Usb size={18}/>{t.unsupported}</p>}
  <button className="button primary flash-start" ref={returnFocus} disabled={!selection||loading||isFlashing||!supported} onClick={()=>setConfirm(true)}>{isFlashing?<LoaderCircle size={17} className="spinner"/>:<Usb size={17}/>} {isFlashing?t.busy:t.connect}<ArrowRight size={17}/></button><p className="fine-print">{t.local}</p>
  {progress.state!=='idle'&&<div className={`flash-progress ${progress.state}`} role="status"><div>{progress.state==='done'?<CheckCircle2 size={19}/>:progress.state==='error'?<AlertCircle size={19}/>:<LoaderCircle className="spinner" size={19}/>}<span>{progress.message}</span><strong>{progress.percent}%</strong></div><progress max="100" value={progress.percent} aria-label={t.step3}/><small className="mono">{progress.writtenBytes.toLocaleString()} / {progress.totalBytes.toLocaleString()} bytes</small></div>}
- <details className="flash-logs"><summary><Terminal size={15}/>{t.logs}<span>{logs.length}</span></summary><pre aria-label={t.logs}>{logs.length?logs.join('\n'):t.emptyLog}</pre></details>
+ <details ref={logsPanel} className="flash-logs" open={logsOpen} onToggle={e=>setLogsOpen(e.currentTarget.open)}><summary><Terminal size={15}/>{t.logs}<span>{logs.length}</span></summary><pre aria-label={t.logs}>{logs.length?logs.join('\n'):t.emptyLog}</pre></details>
  </div><aside className="flash-aside"><span className="aside-icon"><Usb size={25} strokeWidth={1.4}/></span><h3>{t.notice}</h3><p><Check size={16}/>{t.notice1}</p><p><Check size={16}/>{t.notice2}</p><p className="fine-print">{m.download}</p></aside></div>
  <dialog ref={dialog} className="flash-dialog" onCancel={closeConfirm} onClose={()=>{setConfirm(false);returnFocus.current?.focus();}} aria-labelledby="flash-confirm-title"><button className="dialog-close" onClick={closeConfirm} aria-label={t.cancel}><X size={21}/></button><p className="eyebrow">PAGEREST / {full?(upgrade?m.upgrade:m.fresh):t.app}</p><h3 id="flash-confirm-title">{t.confirm}</h3>{selection&&<p className="confirm-filename">{selection.file.name}</p>}{planRows}<div className={full&&!upgrade?'data-impact warning':'data-impact'}><p>{impact}</p>{upgrade&&<p>{m.upgradeStopped}</p>}{!full&&<p>{t.layout}</p>}{erase&&<p><strong>{t.eraseConfirm}</strong></p>}</div><div className="dialog-actions"><button className="button secondary" onClick={closeConfirm} autoFocus>{t.cancel}</button><button className="button primary" onClick={start}>{t.confirmAction}</button></div></dialog>
  </section>;

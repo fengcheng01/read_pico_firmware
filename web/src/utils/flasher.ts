@@ -31,6 +31,7 @@ export interface FlasherOptions {
   baudRate?: number;
   onProgress?: (progress: FlashProgress) => void;
   onLog?: (line: string) => void;
+  onPortSelected?: () => void;
 }
 
 export interface FlashFileItem {
@@ -45,11 +46,13 @@ export class PicoFlasher {
   private baudRate: number;
   private onProgress?: (progress: FlashProgress) => void;
   private onLog?: (line: string) => void;
+  private onPortSelected?: () => void;
 
   constructor(options: FlasherOptions = {}) {
     this.baudRate = options.baudRate || 460800;
     this.onProgress = options.onProgress;
     this.onLog = options.onLog;
+    this.onPortSelected = options.onPortSelected;
   }
 
   private updateState(state: FlashState, message: string, percent = 0, writtenBytes = 0, totalBytes = 0, error?: string) {
@@ -105,6 +108,7 @@ export class PicoFlasher {
       const device = await navigator.serial.requestPort({
         filters: [{ usbVendorId: 0x303a }],
       });
+      this.onPortSelected?.();
       stage = '串口打开与芯片握手';
 
       this.onLog?.('串口已选定，正在初始化 Transport…');
