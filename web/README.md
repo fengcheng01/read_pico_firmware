@@ -44,9 +44,9 @@ Changing the website host does not require device firmware changes. Keep the exi
 
 ## 固件发布边界 / Firmware release boundary
 
-当前烧录工具让用户选择本地 BIN 文件，不会自动下载 GitHub Release 附件。启用 Pages 只发布网站，不编译或自动发布固件。正式固件可另在 GitHub Release 管理；自动获取版本、镜像清单与下载校验需要单独实现。
+当前官网在“下载固件”区提供公开版本的 raw full / incremental BIN、manifest 与 SHA256SUMS；烧录工具仍让用户选择本地 BIN，不会在浏览器内自动下载或静默更新设备。启用 Pages 只发布网站，不编译固件；版本镜像由同次产品构建生成后放入对应的 `web/public/firmware/<version>/`。自动生成版本、上传镜像与发布清单仍需要单独的 CI 流程。
 
-The current flasher accepts locally selected BIN files and does not automatically download GitHub Release assets. Enabling Pages publishes the website without compiling or publishing firmware. Manage firmware separately in GitHub Releases; automatic version discovery, image manifests and download verification require a separate implementation.
+The website now exposes the selected release's raw full / incremental BIN, manifest and SHA256SUMS under its Download firmware section. The flasher still accepts a locally selected BIN and never silently downloads or updates a device. Pages publishes the website but does not compile firmware; same-build images are placed under `web/public/firmware/<version>/` before deployment. Automatic build, upload and release-manifest generation still require a separate CI flow.
 
 Web Serial 烧录需要支持该 API 的桌面浏览器和 HTTPS（本地开发可用 localhost）。发布后应核对介绍页、截图和烧录区正常显示；写入校验和设备启动验收是独立于网站部署的检查。
 
@@ -94,5 +94,5 @@ Cloudflare Pages项目`read-pico`连接`fengcheng01/read_pico_firmware`的`main`
 Cloudflare Pages project`read-pico` tracks`main` in`fengcheng01/read_pico_firmware`, with root`web`, command`npm run build`, output`dist` and domain`pico.gofree.kdns.fr`. A local commit or feature-branch build does not update production; push website changes to the production branch and verify the Cloudflare deployment. `web/.node-version` pins Node24. Never put firmware source, source.zip, local logs or private files in`dist`.
 
 
-官网发布版本使用`web/firmware-version.txt`，不为发布网页修改设备根目录`version.txt`，避免官网更新误触发固件编译。设备镜像仍以根目录版本为准；发版前运行`npm run test:firmware`核对官网元数据与实际BIN。固件工作流继续检查真实源码、配置、设备版本等改动，不能用禁用检查掩盖缺失依赖。
-Website release identity comes from`web/firmware-version.txt`; do not change device-root`version.txt` just to publish a site. Device images retain the root version. Before release run`npm run test:firmware` to compare website metadata with actual BINs. Firmware CI still checks actual source/config/device-version changes; disabling checks is not a substitute for complete dependencies.
+官网发布版本使用`web/firmware-version.txt`，不为发布网页修改设备根目录`version.txt`，避免官网更新误触发固件编译。设备镜像仍以根目录版本为准；发版前运行`npm run test:firmware`核对官网元数据与公开下载目录中的同次构建 BIN。固件工作流继续检查真实源码、配置、设备版本等改动，不能用禁用检查掩盖缺失依赖。
+Website release identity comes from`web/firmware-version.txt`; do not change device-root`version.txt` just to publish a site. Device images retain the root version. Before release run`npm run test:firmware` to compare website metadata with the same-build BIN pair in the public download directory. Firmware CI still checks actual source/config/device-version changes; disabling checks is not a substitute for complete dependencies.
