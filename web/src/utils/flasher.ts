@@ -84,11 +84,10 @@ export class PicoFlasher {
    * 烧录文件列表
    * @param files 待写入分区数组
    * @param eraseAll 是否全片擦除，仅完整包显式选择。/ Explicit full-image erase only.
-   * @param upgrade 完整包提供的增量回退：连接后识别设备已运行本固件时，只写应用分区保留数据。
-   * Full-image upgrade fallback: after connect, a device already running this firmware
-   * switches the write to the app partition only, preserving data.
+   * @param upgrade 完整包内的应用载荷；可要求设备识别失败时停止，避免误写完整镜像。
+   * App payload carried by a full image; callers may require identification failure to stop instead of writing the full image.
    */
-  public async flashFiles(files: FlashFileItem[], eraseAll = false, upgrade?: { app: Uint8Array; name: string }): Promise<boolean> {
+  public async flashFiles(files: FlashFileItem[], eraseAll = false, upgrade?: { app: Uint8Array; name: string; requireMatch?: boolean }): Promise<boolean> {
     if (!this.isSupported()) {
       throw new Error('当前浏览器不支持 Web Serial API，请使用 Chrome、Edge 或其他 Chromium 内核浏览器。');
     }
@@ -138,6 +137,8 @@ export class PicoFlasher {
         if (deviceVersion) {
           this.onLog?.(`识别到本机固件 Read_Pico ${deviceVersion}：改为保留数据增量升级，仅写 0x10000 应用分区。`);
           effective = [{ address: 0x10000, name: `${upgrade.name}（应用分区）`, data: upgrade.app }];
+        } else if (upgrade.requireMatch) {
+          throw new Error('未识别到已安装的 PageRest，已停止保留数据升级。请返回并选择“全新安装”。');
         } else {
           this.onLog?.('未识别到本机固件（空片/其他固件/读取失败）：按完整安装写入 0x0，设置与阅读记录将重置。');
         }

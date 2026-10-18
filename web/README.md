@@ -44,9 +44,9 @@ Changing the website host does not require device firmware changes. Keep the exi
 
 ## 固件发布边界 / Firmware release boundary
 
-当前官网在“下载固件”区提供公开版本的 raw full / incremental BIN、manifest 与 SHA256SUMS；烧录工具仍让用户选择本地 BIN，不会在浏览器内自动下载或静默更新设备。启用 Pages 只发布网站，不编译固件；版本镜像由同次产品构建生成后放入对应的 `web/public/firmware/<version>/`。自动生成版本、上传镜像与发布清单仍需要单独的 CI 流程。
+当前官网在“下载固件”区只展示一份通用 raw full BIN；用户把同一文件交给烧录工具后，再明确选择“保留数据升级”或“全新安装”。同次构建的 incremental BIN、manifest 与 SHA256SUMS 仍作为原始交付和维护产物保留在 `web/public/firmware/<version>/`，不在主界面展示。烧录工具不会在浏览器内自动下载或静默更新设备。启用 Pages 只发布网站，不编译固件；自动生成版本、上传镜像与发布清单仍需要单独的 CI 流程。
 
-The website now exposes the selected release's raw full / incremental BIN, manifest and SHA256SUMS under its Download firmware section. The flasher still accepts a locally selected BIN and never silently downloads or updates a device. Pages publishes the website but does not compile firmware; same-build images are placed under `web/public/firmware/<version>/` before deployment. Automatic build, upload and release-manifest generation still require a separate CI flow.
+The Download firmware section exposes one universal raw full BIN. After selecting that same file in the flasher, users explicitly choose either Preserve data & update or Fresh installation. The same-build incremental BIN, manifest and SHA256SUMS remain in `web/public/firmware/<version>/` as raw delivery and maintenance artifacts, but are not shown in the primary UI. The flasher never silently downloads or updates a device. Pages publishes the website but does not compile firmware; automatic build, upload and release-manifest generation still require a separate CI flow.
 
 Web Serial 烧录需要支持该 API 的桌面浏览器和 HTTPS（本地开发可用 localhost）。发布后应核对介绍页、截图和烧录区正常显示；写入校验和设备启动验收是独立于网站部署的检查。
 
@@ -57,11 +57,11 @@ Web Serial flashing requires a desktop browser supporting that API and HTTPS (lo
 在网站地址添加 `?tool=flasher#flasher` 可直接进入独立刷机页。
 Append `?tool=flasher#flasher` to the site URL to open only the flasher.
 
-烧录合并成一个本地BIN入口，按内容识别而非文件名：incremental应用写0x10000，full完整镜像原样写0x0。没有A/B切换、full自动提取应用或三件套分支。选择后立即显示镜像版本、大小、写入地址与数据影响；结构/长度/XOR/芯片/应用描述/分区容量失败时禁止开始。工具不读取设备分区，增量需用户确认现有PageRest布局匹配；首次安装用完整包。
-One local BIN entry detects content rather than names: apps write at0x10000 and whole full images at0x0. No A/B tabs, full-to-app extraction or three-file branch. Selection immediately shows version, size, address and data impact; invalid structure/length/XOR/chip/app descriptor/capacity blocks starting. The tool does not read device partitions; app upgrades require a matching PageRest layout, while first installs use full images.
+烧录入口按内容识别而非文件名。官网通用 full 包默认进入“保留数据升级”：连接后确认设备已安装 PageRest，提取包内应用并只写 0x10000；识别失败立即停止，不会自动回退为完整写入。用户选择“全新安装”时才把完整镜像写入 0x0。入口仍兼容维护人员已有的 incremental 应用镜像。选择后立即显示镜像版本、大小、实际写入地址与数据影响；结构/长度/XOR/芯片/应用描述/分区容量失败时禁止开始。
+The entry detects image content rather than trusting the filename. The public universal full image defaults to Preserve data & update: after connecting, the flasher confirms an installed PageRest, extracts the bundled app and writes only 0x10000. Identification failure stops without falling back to a full write. Fresh installation explicitly writes the complete image at 0x0. The entry remains compatible with existing incremental app images for maintenance use. Selection immediately shows the version, size, effective write address and data impact; invalid structure, length, XOR, chip, app descriptor or capacity blocks starting.
 
-完整包包含设置区空洞填充，即使全片擦除关闭也重置设置与阅读记录。高级选项只在full包显示额外全片擦除，默认关闭；该选项会进一步删除内置书库等存储。选择增量包自动清除此选项，计划生成器拒绝增量+全擦。确认对话框再次显示实际文件/地址和影响，取消不打开串口。
-Full images include settings-region padding and reset settings/reading records even with full erase OFF. Advanced options offer additional full erase only for full images, OFF by default; this also deletes internal books/storage. App selection clears erase, and the planner rejects app-plus-erase. Confirmation repeats the actual file/address/data impact; cancellation never opens serial.
+“保留数据升级”不提供全片擦除；“全新安装”才显示额外全片擦除选项，默认关闭。完整写入可能重置设置与阅读记录，全片擦除还会删除内置书库等存储。选择 incremental 应用镜像也会清除全擦选项，计划生成器拒绝增量+全擦。确认对话框再次显示安装方式、实际文件/地址和影响，取消不打开串口。
+Preserve data & update never offers a chip erase. Fresh installation alone shows the additional full-erase option, which is off by default. A complete write may reset settings and reading records; full erase also deletes internal books and other storage. Selecting an incremental app image also clears erase, and the planner rejects app-plus-erase. Confirmation repeats the install mode, actual file/address and impact; cancellation never opens serial.
 
 读文件失败/格式失败清空旧选择；异步读取代次丢弃旧文件迟到结果，忙碌时禁止替换或重复开始。结构校验不代替发行包SHA256或设备启动验收。
 Read/format failures clear old selections; generations discard late results from old reads, and busy guards block replacement/double start. Structural checks do not replace release SHA256 or device boot acceptance.

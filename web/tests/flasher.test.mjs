@@ -77,4 +77,17 @@ for(const fail of ['choose','connect','write','reset','none']){
 }
 console.log('Upgrade fallback: identified device takes the app-only write, unidentified keeps the full image PASS');
 
+// 用户明确选择保留数据时，设备识别失败必须停止，不能回退为完整写入。
+// An explicit data-preserving choice must fail closed when device identification fails.
+{
+ globalThis.serialTest = {fail:'none',choices:0,transports:0,disconnects:0,writes:0,deviceHead:new Uint8Array(256)};
+ const states=[];
+ const f = new PicoFlasher({onProgress:p=>states.push(p),onLog:()=>{}});
+ const ok = await f.flashFiles([{data:new Uint8Array(0x11000),address:0,name:'full.bin'}], false, {app:new Uint8Array(200),name:'full.bin',requireMatch:true});
+ assert.equal(ok,false);
+ assert.equal(serialTest.writes,0,'A failed device match must never write the full image');
+ assert.match(states.at(-1).error,/已停止保留数据升级/);
+}
+console.log('Explicit data-preserving mode: unidentified devices stop before any write PASS');
+
 console.log('Production web flasher: chooser cancellation, handshake/write stage errors, preserved progress, no write retries, reset fallback and completed-write status PASS');
