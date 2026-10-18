@@ -6,6 +6,7 @@
 
 import { ESPLoader, Transport } from 'esptool-js';
 import { picoRestartTransport, type EspLoaderLike, type TransportLike } from './reset';
+import { identifyPicoApp } from './firmware';
 
 export type FlashState =
   | 'idle'
@@ -66,23 +67,38 @@ export class PicoFlasher {
     return typeof navigator !== 'undefined' && 'serial' in navigator;
   }
 
+  /// 中文：读取设备 0x10000 应用描述并识别本固件；返回版本号，失败/非本固件返回 null。
+  /// English: Read the on-device app description at 0x10000 and identify this firmware;
+  /// returns the version, or null on failure or a foreign image.
+  private async probePicoApp(): Promise<string | null> {
+    if (!this.esploader) return null;
+    try {
+      return identifyPicoApp(new Uint8Array(await this.esploader.readFlash(0x10000, 0x100)));
+    } catch (e: unknown) {
+      this.onLog?.(`设备识别读取失败，按完整安装处理：${e instanceof Error ? e.message : String(e)}`);
+      return null;
+    }
+  }
+
   /**
    * 烧录文件列表
    * @param files 待写入分区数组
    * @param eraseAll 是否全片擦除，仅完整包显式选择。/ Explicit full-image erase only.
+   * @param upgrade 完整包提供的增量回退：连接后识别设备已运行本固件时，只写应用分区保留数据。
+   * Full-image upgrade fallback: after connect, a device already running this firmware
+   * switches the write to the app partition only, preserving data.
    */
-  public async flashFiles(files: FlashFileItem[], eraseAll = false): Promise<boolean> {
+  public async flashFiles(files: FlashFileItem[], eraseAll = false, upgrade?: { app: Uint8Array; name: string }): Promise<boolean> {
     if (!this.isSupported()) {
       throw new Error('当前浏览器不支持 Web Serial API，请使用 Chrome、Edge 或其他 Chromium 内核浏览器。');
     }
 
     if (files.length === 0) {
-      throw new Error('未指定待烧录的文件。');
+      throw new Error('未指定待烧录文件。');
     }
 
     let stage = '选择串口';
-    let lastPercent = 0, lastWritten = 0;
-    const totalSize = files.reduce((acc, f) => acc + f.data.byteLength, 0);
+    let lastPercent = 0, lastWritten = 0, totalSize = 0;
     try {
       this.updateState('connecting', '请求连接设备串口…', 0);
       this.onLog?.('正在请求打开串口…');
@@ -112,9 +128,25 @@ export class PicoFlasher {
       const chip = await this.esploader.main();
       this.onLog?.(`设备握手成功: ${chip}`);
 
-      this.onLog?.(`准备烧录 ${files.length} 个分区，总计 ${(totalSize / 1024 / 1024).toFixed(2)} MB`);
+      // 完整包先识别设备：已运行本固件则改写为应用分区增量升级，保留设置与记录。
+      // Full images probe first: a device already running this firmware upgrades in
+      // place at the app partition, keeping settings and records.
+      let effective = files;
+      if (upgrade && !eraseAll) {
+        this.updateState('connected', '正在识别设备固件…', 8);
+        const deviceVersion = await this.probePicoApp();
+        if (deviceVersion) {
+          this.onLog?.(`识别到本机固件 Read_Pico ${deviceVersion}：改为保留数据增量升级，仅写 0x10000 应用分区。`);
+          effective = [{ address: 0x10000, name: `${upgrade.name}（应用分区）`, data: upgrade.app }];
+        } else {
+          this.onLog?.('未识别到本机固件（空片/其他固件/读取失败）：按完整安装写入 0x0，设置与阅读记录将重置。');
+        }
+      }
 
-      for (const item of files) {
+      totalSize = effective.reduce((acc, f) => acc + f.data.byteLength, 0);
+      this.onLog?.(`准备烧录 ${effective.length} 个分区，总计 ${(totalSize / 1024 / 1024).toFixed(2)} MB`);
+
+      for (const item of effective) {
         this.onLog?.(`- [0x${item.address.toString(16).toUpperCase()}] ${item.name} (${(item.data.byteLength / 1024).toFixed(1)} KB)`);
       }
 
@@ -125,18 +157,18 @@ export class PicoFlasher {
       this.updateState('writing', '正在写入固件…', 15, 0, totalSize);
 
       await this.esploader.writeFlash({
-        fileArray: files.map((f) => ({ data: f.data, address: f.address })),
+        fileArray: effective.map((f) => ({ data: f.data, address: f.address })),
         flashSize: 'keep',
         flashMode: 'keep',
         flashFreq: 'keep',
         eraseAll: eraseAll,
         compress: true,
         reportProgress: (fileIndex: number, written: number, total: number) => {
-          const currentFile = files[fileIndex];
+          const currentFile = effective[fileIndex];
           const filePct = total > 0 ? (written / total) * 100 : 0;
           const globalPct = Math.min(95, Math.floor(15 + (fileIndex / files.length) * 80 + ((total > 0 ? written / total : 0) / files.length) * 80));
           lastPercent = globalPct;
-          lastWritten = files.slice(0, fileIndex).reduce((n, f) => n + f.data.byteLength, 0) + written;
+          lastWritten = effective.slice(0, fileIndex).reduce((n, f) => n + f.data.byteLength, 0) + written;
           this.updateState(
             'writing',
             `写入 [${currentFile ? currentFile.name : `分区 ${fileIndex}`}] : ${filePct.toFixed(1)}% (${(written / 1024).toFixed(0)} KB / ${(total / 1024).toFixed(0)} KB)`,
