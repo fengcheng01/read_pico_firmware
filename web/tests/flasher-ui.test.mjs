@@ -14,13 +14,13 @@ globalThis.uiHooks={
 };
 const asModule=source=>'data:text/javascript,'+encodeURIComponent(source);
 const icons=['AlertCircle','ArrowRight','Check','CheckCircle2','FileCheck2','LoaderCircle','Terminal','Upload','Usb','X'];
-let calls=[];globalThis.flashBoundary=async(files,erase,opts)=>{calls.push({files,erase});opts.onProgress({state:'writing',percent:30,writtenBytes:20,totalBytes:100,message:'test writing'});await new Promise(resolve=>globalThis.finishFlash=resolve);opts.onProgress({state:'done',percent:100,writtenBytes:100,totalBytes:100,message:'test done'});};
+let calls=[];globalThis.flashBoundary=async(files,erase,upgrade,opts)=>{calls.push({files,erase,upgrade});opts.onProgress({state:'writing',percent:30,writtenBytes:20,totalBytes:100,message:'test writing'});await new Promise(resolve=>globalThis.finishFlash=resolve);opts.onProgress({state:'done',percent:100,writtenBytes:100,totalBytes:100,message:'test done'});};
 registerHooks({resolve(id,context,next){
  if(id==='react')return{url:asModule('export const {useState,useRef,useEffect}=globalThis.uiHooks;'),shortCircuit:true};
  if(id==='react/jsx-runtime')return{url:asModule('export const jsx=(type,props)=>({type,props});export const jsxs=jsx;'),shortCircuit:true};
  if(id==='lucide-react')return{url:asModule(icons.map(n=>`export const ${n}='svg';`).join('')),shortCircuit:true};
  if(context.parentURL===componentURL){
-  if(id.endsWith('/flasher'))return{url:asModule('export class PicoFlasher{constructor(opts){this.opts=opts;}flashFiles(files,erase){return globalThis.flashBoundary(files,erase,this.opts);}}'),shortCircuit:true};
+  if(id.endsWith('/flasher'))return{url:asModule('export class PicoFlasher{constructor(opts){this.opts=opts;}flashFiles(files,erase,upgrade){return globalThis.flashBoundary(files,erase,upgrade,this.opts);}}'),shortCircuit:true};
   if(id.endsWith('/firmware'))return{url:new URL('../src/utils/firmware.ts',import.meta.url).href,shortCircuit:true};
  }
  return next(id,context);
@@ -47,11 +47,12 @@ render();render();assert(start().props.disabled);assert.equal(nodes(tree).filter
 choose([file('spoof-full.bin',app)]);readers.at(-1).finish(app);render();assert(!start().props.disabled);assert.match(text(tree),/增量升级/);assert.match(text(tree),/0x10000/);assert.equal(calls.length,0);
 start().props.onClick();render();assert(find('dialog').props.ref.current.open);find('button',n=>text(n)==='返回检查').props.onClick();render();assert.equal(calls.length,0,'Cancel never accesses serial');
 choose([file('actual-full.bin',full)]);const stale=readers.at(-1);choose([file('actual-app.bin',app)]);readers.at(-1).finish(app);stale.finish(full);render();assert.match(text(tree),/actual-app.bin/);assert.doesNotMatch(text(tree),/连接后先识别设备/);
-choose([file('actual-full.bin',full)]);readers.at(-1).finish(full);render();assert.match(text(tree),/识别不到（空片或其它固件）才按完整安装写 0x0/);assert.equal(find('input',n=>n.props.type==='checkbox').props.checked,false);
-find('input',n=>n.props.type==='checkbox').props.onChange({target:{checked:true}});render();
-start().props.onClick();render();assert.match(text(find('dialog')),/内置文件和所有设置将被删除/);
-const promise=find('button',n=>text(n)==='确认并选择串口').props.onClick();render();assert.equal(calls.length,1);assert.equal(calls[0].files[0].address,0);assert.equal(calls[0].erase,true);assert.deepEqual(calls[0].files[0].data,full);assert(start().props.disabled);
-const oldReaders=readers.length;choose([file('cannot-change.bin',app)]);assert.equal(readers.length,oldReaders,'Busy file changes ignored');await find('button',n=>text(n)==='确认并选择串口').props.onClick();assert.equal(calls.length,1,'Double start ignored');globalThis.finishFlash();await promise;render();
+choose([file('actual-full.bin',full)]);readers.at(-1).finish(full);render();assert.match(text(tree),/识别失败会停止/);assert.match(text(tree),/写入地址0x10000/);assert.equal(nodes(tree).filter(n=>n.type==='input'&&n.props.type==='checkbox').length,0);
+start().props.onClick();render();const upgradePromise=find('button',n=>text(n)==='确认并选择串口').props.onClick();render();assert.equal(calls.length,1);assert.equal(calls[0].upgrade.requireMatch,true);assert.equal(calls[0].erase,false);globalThis.finishFlash();await upgradePromise;render();
+choose([file('actual-full.bin',full)]);readers.at(-1).finish(full);render();find('input',n=>n.props.type==='radio'&&n.props.value==='fresh').props.onChange();render();assert.match(text(tree),/写入地址0x0/);assert.equal(find('input',n=>n.props.type==='checkbox').props.checked,false);
+find('input',n=>n.props.type==='checkbox').props.onChange({target:{checked:true}});render();start().props.onClick();render();assert.match(text(find('dialog')),/内置文件和所有设置将被删除/);
+const promise=find('button',n=>text(n)==='确认并选择串口').props.onClick();render();assert.equal(calls.length,2);assert.equal(calls[1].files[0].address,0);assert.equal(calls[1].erase,true);assert.equal(calls[1].upgrade,undefined);assert.deepEqual(calls[1].files[0].data,full);assert(start().props.disabled);
+const oldReaders=readers.length;choose([file('cannot-change.bin',app)]);assert.equal(readers.length,oldReaders,'Busy file changes ignored');await find('button',n=>text(n)==='确认并选择串口').props.onClick();assert.equal(calls.length,2,'Double start ignored');globalThis.finishFlash();await promise;render();
 choose([file('actual-app.bin',app)]);readers.at(-1).finish(app);render();assert.equal(nodes(tree).filter(n=>n.type==='input'&&n.props.type==='checkbox').length,0,'Erase UI absent for app');
 start().props.onClick();render();const appPromise=find('button',n=>text(n)==='确认并选择串口').props.onClick();assert.equal(calls.at(-1).files[0].address,0x10000);assert.equal(calls.at(-1).erase,false);globalThis.finishFlash();await appPromise;render();
 choose([file('bad-read.bin',full)]);readers.at(-1).fail();render();assert(start().props.disabled);assert.match(text(tree),/文件读取或校验失败/);

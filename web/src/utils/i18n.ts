@@ -27,8 +27,8 @@ export const translations = {
     ],
     updateTitle: '最近，把这些细节做好了一点。', updates: [ ['正文排版，再细一点', '标点挤压、断词与字距微调让边缘更整齐；页脚的胶囊进度条显示章节位置和预计剩余时间。'], ['封面与图片，更耐看', '书架封面缓存扩容，来回翻页不再重新加载；图片重采样与十六级灰抖动让锁屏壁纸更细腻。'], ['翻页，更跟手', '阅读翻页省去电源反复上下电，连续翻页更快更顺；上传网页按文件显示进度与结果。'] ],
     helpTitle: '开始之前，了解这几件事。', faqs: [
-      ['第一次安装该选哪个文件？', '选择 full.bin 完整包，写入引导、分区表和应用。连接后烧录工具会先识别设备：若发现已在本固件上，会自动改为只更新应用并保留数据；全新设备才执行完整安装，此时设置与阅读记录会重置，请先备份。当前仅适配 RDP-G01-W。'],
-      ['日常升级怎样保留阅读记录？', '优先选择 incremental.bin，只写 0x10000 应用区、不全片擦除。误选 full.bin 也不必担心：工具识别到设备已运行本固件时，同样只更新应用区。识别失败或设备未知时才执行完整安装。'],
+      ['第一次安装该怎么选？', '下载通用完整固件，烧录时选择“全新安装”，写入引导、分区表和应用。该操作可能重置设置与阅读记录，请先备份。当前仅适配 RDP-G01-W。'],
+      ['日常升级怎样保留阅读记录？', '使用同一份通用完整固件，烧录时选择“保留数据升级”。工具识别到现有 PageRest 后只写 0x10000 应用区；识别失败会停止，不会自动执行完整安装。'],
       ['网页能直接向设备传书吗？', '在线烧录用于安装固件。传书请在设备的 WiFi 传输中开启热点或已有 WiFi，然后用浏览器打开设备显示的地址。'],
       ['蓝牙翻页器都支持吗？', '支持 BLE HID；传统蓝牙、私有协议或夹屏接收器不保证兼容。锁屏学习要求独立按键报告，锁屏后不能通过翻页器唤醒。'],
     ],
@@ -61,8 +61,8 @@ export const translations = {
     ],
     updateTitle: 'A few details, made a little better.', updates: [ ['Typography, a notch finer', 'Punctuation compression, hyphenation and tracking tidy the page; the pill footer shows chapter position and estimated time left.'], ['Covers and images, easier on the eye', 'A larger cover cache keeps the shelf instant when paging back; smoother resampling and 16-level dithering refine lock wallpapers.'], ['Page turns, closer at hand', 'Reading turns skip repeated power cycling for faster, smoother flips; the upload page reports per-file progress and results.'] ],
     helpTitle: 'A few things before you begin.', faqs: [
-      ['Which file is right for a first install?', 'Choose full.bin to write bootloader, partitions and app. After connecting, the flasher first identifies the device: if it already runs this firmware, it switches to an app-only update that keeps your data. Only a new or unrecognized device gets the full install, which resets settings and reading records—back them up first. Only RDP-G01-W is supported.'],
-      ['How do I keep reading records when updating?', 'Prefer incremental.bin: it writes only the app at 0x10000 without a full erase. Even if you pick full.bin by mistake, the tool recognizes a device already running this firmware and likewise updates only the app. A full install runs only when identification fails or the device is unknown.'],
+      ['How do I perform a first install?', 'Download the universal firmware and choose “Fresh installation” in the flasher to write the bootloader, partitions and app. It may reset settings and reading records, so back them up first. RDP-G01-W only.'],
+      ['How do I keep reading records when updating?', 'Use the same universal firmware and choose “Preserve data & update”. The flasher writes only the app at 0x10000 after identifying an existing PageRest device. If identification fails, it stops instead of starting a full installation.'],
       ['Can this website send books to my device?', 'The web flasher installs firmware. For books, start WiFi transfer on the device and open its displayed address in your browser.'],
       ['Will every Bluetooth remote work?', 'BLE HID is supported. Classic Bluetooth, private protocols and screen-clipping receivers are not guaranteed. Lock learning needs a distinct button report; Bluetooth cannot wake the locked device.'],
     ],
