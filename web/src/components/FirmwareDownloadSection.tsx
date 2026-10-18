@@ -10,7 +10,7 @@ const release = {
     file: `PageRest-Read_Pico-${version}-full.bin`,
     href: `./firmware/${version}/PageRest-Read_Pico-${version}-full.bin`,
     bytes: '3,985,520 B', offset: '0x0',
-    sha256: '1c84e92a8a94d84f1951fe0322f49f2b88fc6f340c0f21c5d69e4369cfac3c75',
+    sha256: 'b90bcdd73d9af357578280c43982d88efa4e394407519282a1a597db5eab83de',
   },
 };
 
