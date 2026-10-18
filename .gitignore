@@ -44,6 +44,8 @@ tools/buzzer_score_wav
 # ESP-IDF specific build outputs
 *.bin
 !main/assets/*.bin
+!web/public/firmware/
+!web/public/firmware/**/*.bin
 *.elf
 *.map
 flasher_args.json # Generated in build directory

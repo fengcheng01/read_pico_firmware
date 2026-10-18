@@ -2,7 +2,7 @@
 export type Lang = 'zh' | 'en';
 export const translations = {
   zh: {
-    device: '小纸 Pico', language: 'English', nav: ['功能', '界面', '在线烧录', '使用帮助'],
+    device: '小纸 Pico', language: 'English', nav: ['功能', '界面', '下载固件', '在线烧录', '使用帮助'],
     eyebrow: '为墨水屏而做的阅读固件', headline: ['好好读书，', '顺手记下。'],
     intro: 'PageRest 把阅读、书架与每日手帐放在一起。从上次读到的地方继续，把喜欢的句子留在锁屏上。',
     primary: '在线更新固件', secondary: '看看现在的界面', compatibility: '当前适配 小纸 Pico / Read Pico · RDP-G01-W',
@@ -36,7 +36,7 @@ export const translations = {
     footer: 'PageRest 是为墨水屏设计的阅读固件。当前适配一个机型，更多设备适配仍在后续计划中。', license: '第三方组件许可与声明', top: '回到顶部',
   },
   en: {
-    device: 'Read Pico', language: '中文', nav: ['Features', 'Interface', 'Web flasher', 'Help'],
+    device: 'Read Pico', language: '中文', nav: ['Features', 'Interface', 'Download', 'Web flasher', 'Help'],
     eyebrow: 'READING FIRMWARE FOR E-PAPER', headline: ['Make time to read.', 'Keep a little of it.'],
     intro: 'PageRest brings your reader, bookshelf and daily journal together. Pick up where you left off, and keep a favorite passage on your lock screen.',
     primary: 'Update firmware', secondary: 'Explore the interface', compatibility: 'Currently for Read Pico · RDP-G01-W',
