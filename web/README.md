@@ -52,6 +52,10 @@ Web Serial 烧录需要支持该 API 的桌面浏览器和 HTTPS（本地开发�
 
 Web Serial flashing requires a desktop browser supporting that API and HTTPS (localhost is supported for development). After deployment, check the landing page, screenshots and flasher section. Flash verification and device boot acceptance are separate from website deployment.
 
+生产构建把`esptool-js`的芯片检测与烧录辅助程序合入首次页面脚本。连接设备并完成握手后不再动态请求`esp32s3-*.js`，避免串口已打开时因网络或缓存失败中断烧录。`npm run build`会在打包后自动检查该约束；也可对已有`dist`单独运行`npm run test:bundle`。
+
+Production builds inline the `esptool-js` chip detection and flasher helpers into the initial page script. After opening the device and completing the handshake, the flasher no longer requests an `esp32s3-*.js` chunk that can fail because of network or cache state. `npm run build` checks this constraint after bundling; run `npm run test:bundle` to check an existing `dist` directory.
+
 ## BIN 导入与校验 / BIN import and validation
 
 在网站地址添加 `?tool=flasher#flasher` 可直接进入独立刷机页。

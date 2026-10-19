@@ -3,6 +3,11 @@
 按日期和作者简述对用户可见的功能变化；详细实现历史见 Git。使用方法见 [README](../README.zh-CN.md)。
 User-visible changes by date and author; Git retains implementation history. See [README](../README.md) for usage.
 
+## 官网 0.6.26 · 2026-10-19 / Website
+
+- 修复Windows端识别ESP32-S3后因动态烧录分包请求失败而中止的问题：生产站把芯片检测与烧录辅助程序合入首次页面脚本，串口握手后不再依赖网络取`esp32s3-*.js`；构建自动检查单包约束，网站回归直接使用公开版本镜像，不改变设备固件。
+  Fix Windows flashing aborts after ESP32-S3 detection when the dynamic helper request fails. Production now includes chip detection and flasher helpers in the initial page script, with no `esp32s3-*.js` network dependency after the serial handshake. Builds enforce the single-bundle constraint and website regressions use the published images; device firmware is unchanged.
+
 ## 0.6.12 · 2026-10-16
 
 - 修复干净构建中的过期波形依赖、SNTP条件编译和USB磁盘配置缺失；CI先检查提交树依赖与条件编译配对。官网发布版本独立维护，网站更新不再因版本文案触发固件构建。

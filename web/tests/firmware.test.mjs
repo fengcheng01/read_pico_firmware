@@ -5,12 +5,11 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { inspectFirmware, prepareFirmware } from '../src/utils/firmware.ts';
 
-const root = resolve(import.meta.dirname, '../..');
-const version = readFileSync(resolve(root, 'version.txt'), 'utf8').trim();
-assert.equal(readFileSync(resolve(root, 'web/firmware-version.txt'), 'utf8').trim(), version, 'Website release metadata must match the actual firmware build');
-const stem = `build/firmware/PageRest-Read_Pico-${version}`;
-const full = new Uint8Array(readFileSync(resolve(root, stem + '-full.bin')));
-const app = new Uint8Array(readFileSync(resolve(root, stem + '-incremental.bin')));
+const webRoot = resolve(import.meta.dirname, '..');
+const version = readFileSync(resolve(webRoot, 'firmware-version.txt'), 'utf8').trim();
+const stem = resolve(webRoot, `public/firmware/${version}/PageRest-Read_Pico-${version}`);
+const full = new Uint8Array(readFileSync(stem + '-full.bin'));
+const app = new Uint8Array(readFileSync(stem + '-incremental.bin'));
 assert.equal(inspectFirmware(full).kind, 'full');
 assert.equal(inspectFirmware(app).kind, 'app');
 assert.equal(inspectFirmware(app).version, version);

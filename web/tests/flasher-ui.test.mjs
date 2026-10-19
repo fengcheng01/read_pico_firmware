@@ -39,9 +39,9 @@ function render(){cursor=0;tree=FlasherSection({lang:'zh'});for(const n of nodes
 const input=()=>find('input',n=>n.props.type==='file');
 const start=()=>find('button',n=>n.props.className?.includes('flash-start'));
 const choose=(files)=>{input().props.onChange({target:{files}});render();};
-const version=readFileSync(new URL('../../version.txt',import.meta.url),'utf8').trim();
-const full=new Uint8Array(readFileSync(new URL(`../../build/firmware/PageRest-Read_Pico-${version}-full.bin`,import.meta.url)));
-const app=new Uint8Array(readFileSync(new URL(`../../build/firmware/PageRest-Read_Pico-${version}-incremental.bin`,import.meta.url)));
+const version=readFileSync(new URL('../firmware-version.txt',import.meta.url),'utf8').trim();
+const full=new Uint8Array(readFileSync(new URL(`../public/firmware/${version}/PageRest-Read_Pico-${version}-full.bin`,import.meta.url)));
+const app=new Uint8Array(readFileSync(new URL(`../public/firmware/${version}/PageRest-Read_Pico-${version}-incremental.bin`,import.meta.url)));
 const file=(name,bytes)=>({name,size:bytes.length});
 render();render();assert(start().props.disabled);assert.equal(nodes(tree).filter(n=>n.type==='input'&&n.props.type==='file').length,1);
 choose([file('spoof-full.bin',app)]);readers.at(-1).finish(app);render();assert(!start().props.disabled);assert.match(text(tree),/增量升级/);assert.match(text(tree),/0x10000/);assert.equal(calls.length,0);
