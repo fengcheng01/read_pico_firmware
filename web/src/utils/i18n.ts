@@ -6,7 +6,7 @@ export const translations = {
     eyebrow: '为墨水屏而做的阅读固件', headline: ['好好读书，', '顺手记下。'],
     intro: 'PageRest 把阅读、书架与每日手帐放在一起。从上次读到的地方继续，把喜欢的句子留在锁屏上。',
     primary: '在线更新固件', secondary: '看看现在的界面', compatibility: '当前适配 小纸 Pico / Read Pico · RDP-G01-W',
-    heroCaption: '正在读 · 从上次停下的地方继续', versionLabel: '0.6.28 · 更新日志',
+    heroCaption: '正在读 · 从上次停下的地方继续', versionLabel: '0.6.29 · 更新日志',
     strip: ['TXT / EPUB 阅读', '阅读手帐与目标', '个人摘录锁屏', 'BLE 翻页器'],
     featuresTag: '01 / 日常使用', featuresTitle: '常用的事，\n放在顺手的位置。', featuresIntro: '正在读、书架、手帐、设置。四个入口，连接一次完整的阅读日常。',
     features: [
@@ -40,7 +40,7 @@ export const translations = {
     eyebrow: 'READING FIRMWARE FOR E-PAPER', headline: ['Make time to read.', 'Keep a little of it.'],
     intro: 'PageRest brings your reader, bookshelf and daily journal together. Pick up where you left off, and keep a favorite passage on your lock screen.',
     primary: 'Update firmware', secondary: 'Explore the interface', compatibility: 'Currently for Read Pico · RDP-G01-W',
-    heroCaption: 'Now reading · Pick up where you left off', versionLabel: '0.6.28 · RELEASE NOTES',
+    heroCaption: 'Now reading · Pick up where you left off', versionLabel: '0.6.29 · RELEASE NOTES',
     strip: ['TXT / EPUB reader', 'Journal & daily goals', 'Personal quote lock', 'BLE page-turners'],
     featuresTag: '01 / EVERYDAY READING', featuresTitle: 'The things you use,\nright where you need them.', featuresIntro: 'Now reading, Library, Journal and Settings. Four starting points for your reading day.',
     features: [
