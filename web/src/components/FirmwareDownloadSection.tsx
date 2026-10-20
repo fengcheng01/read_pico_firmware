@@ -9,16 +9,16 @@ const release = {
   full: {
     file: `PageRest-Read_Pico-${version}-full.bin`,
     href: `./firmware/${version}/PageRest-Read_Pico-${version}-full.bin`,
-    bytes: '3,985,520 B', offset: '0x0',
-    sha256: 'b90bcdd73d9af357578280c43982d88efa4e394407519282a1a597db5eab83de',
+    bytes: '3,994,160 B', offset: '0x0',
+    sha256: '6d5391e40fec7bc11b0579eb02f23c580e70c201625d79170fa1953df8b22019',
   },
 };
 
 const copy = {
   zh: {
     tag: '03 / 下载固件', title: '准备好，再更新。',
-    intro: (v: string) => `当前公开候选版 ${v}。一份完整固件同时用于日常升级、首次安装和设备恢复。`,
-    built: '产品构建 · 2026-10-18 · RDP-G01-W', full: '通用完整固件',
+    intro: (v: string) => `当前公开版本 ${v}。一份完整固件同时用于日常升级、首次安装和设备恢复。`,
+    built: '产品构建 · 2026-10-19 · RDP-G01-W', full: '通用完整固件',
     fullDesc: '下载同一个文件；连接设备后，再选择保留数据升级或全新安装。',
     offset: '完整写入地址', size: '文件大小', checksum: 'SHA-256',
     download: '下载 BIN', copied: '已复制', copy: '复制',
@@ -27,8 +27,8 @@ const copy = {
   },
   en: {
     tag: '03 / DOWNLOAD FIRMWARE', title: 'Ready when you are.',
-    intro: (v: string) => `Current public candidate ${v}. One complete image covers updates, first installs and recovery.`,
-    built: 'Product build · 2026-10-18 · RDP-G01-W', full: 'Universal firmware',
+    intro: (v: string) => `Current public release ${v}. One complete image covers updates, first installs and recovery.`,
+    built: 'Product build · 2026-10-19 · RDP-G01-W', full: 'Universal firmware',
     fullDesc: 'Download one file, then choose a data-preserving update or a fresh installation after connecting.',
     offset: 'Full-write address', size: 'File size', checksum: 'SHA-256',
     download: 'Download BIN', copied: 'Copied', copy: 'Copy',

@@ -6,7 +6,7 @@ export const translations = {
     eyebrow: '为墨水屏而做的阅读固件', headline: ['好好读书，', '顺手记下。'],
     intro: 'PageRest 把阅读、书架与每日手帐放在一起。从上次读到的地方继续，把喜欢的句子留在锁屏上。',
     primary: '在线更新固件', secondary: '看看现在的界面', compatibility: '当前适配 小纸 Pico / Read Pico · RDP-G01-W',
-    heroCaption: '正在读 · 从上次停下的地方继续', versionLabel: '持续更新',
+    heroCaption: '正在读 · 从上次停下的地方继续', versionLabel: '0.6.28 · 更新日志',
     strip: ['TXT / EPUB 阅读', '阅读手帐与目标', '个人摘录锁屏', 'BLE 翻页器'],
     featuresTag: '01 / 日常使用', featuresTitle: '常用的事，\n放在顺手的位置。', featuresIntro: '正在读、书架、手帐、设置。四个入口，连接一次完整的阅读日常。',
     features: [
@@ -25,7 +25,7 @@ export const translations = {
       { title: 'WiFi 传输', desc: '热点或已有 WiFi 均可传输。网页的图书、图片和字体模块各自显示任务进度，图片可用于自定义锁屏壁纸。', points: ['图书 / 图片 / 字体', '文件名、进度与结果'] },
       { title: '蓝牙翻页器', desc: '连接 BLE HID 翻页器，可学习前后页和独立锁屏按键；锁屏后蓝牙停止，不能遥控唤醒。', points: ['连接与按键测试', '独立锁屏按键学习'] },
     ],
-    updateTitle: '最近，把这些细节做好了一点。', updates: [ ['正文排版，再细一点', '标点挤压、断词与字距微调让边缘更整齐；页脚的胶囊进度条显示章节位置和预计剩余时间。'], ['封面与图片，更耐看', '书架封面缓存扩容，来回翻页不再重新加载；图片重采样与十六级灰抖动让锁屏壁纸更细腻。'], ['翻页，更跟手', '阅读翻页省去电源反复上下电，连续翻页更快更顺；上传网页按文件显示进度与结果。'] ],
+    updateTitle: '连接更稳，阅读更顺。', updates: [ ['WiFi 连接状态更清楚', '传书首页统一展示网络、连接阶段、地址与二维码；认证失败保留真实原因，密码错误可直接重新输入。'], ['记住多个网络，自动选可用的', '最多保存六个 WiFi 配置，传书、同步和对时会按最近使用顺序扫描并尝试可见网络，成功后自动记住本次选择。'], ['阅读与同步细节继续完善', 'EPUB 标题在页尾空间不足时自动移到下一页；进度同步提升到 0.01% 精度，并修复 WiFi/TLS 内存不足导致的启动失败。'] ],
     helpTitle: '开始之前，了解这几件事。', faqs: [
       ['第一次安装该怎么选？', '下载通用完整固件，烧录时选择“全新安装”，写入引导、分区表和应用。该操作可能重置设置与阅读记录，请先备份。当前仅适配 RDP-G01-W。'],
       ['日常升级怎样保留阅读记录？', '使用同一份通用完整固件，烧录时选择“保留数据升级”。工具识别到现有 PageRest 后只写 0x10000 应用区；识别失败会停止，不会自动执行完整安装。'],
@@ -40,7 +40,7 @@ export const translations = {
     eyebrow: 'READING FIRMWARE FOR E-PAPER', headline: ['Make time to read.', 'Keep a little of it.'],
     intro: 'PageRest brings your reader, bookshelf and daily journal together. Pick up where you left off, and keep a favorite passage on your lock screen.',
     primary: 'Update firmware', secondary: 'Explore the interface', compatibility: 'Currently for Read Pico · RDP-G01-W',
-    heroCaption: 'Now reading · Pick up where you left off', versionLabel: 'Ongoing updates',
+    heroCaption: 'Now reading · Pick up where you left off', versionLabel: '0.6.28 · RELEASE NOTES',
     strip: ['TXT / EPUB reader', 'Journal & daily goals', 'Personal quote lock', 'BLE page-turners'],
     featuresTag: '01 / EVERYDAY READING', featuresTitle: 'The things you use,\nright where you need them.', featuresIntro: 'Now reading, Library, Journal and Settings. Four starting points for your reading day.',
     features: [
@@ -59,7 +59,7 @@ export const translations = {
       { title: 'WiFi transfer', desc: 'Use a hotspot or existing WiFi. Books, images and fonts have separate progress. Uploaded images can become lock-screen wallpapers.', points: ['Books / images / fonts', 'Names, progress and results'] },
       { title: 'Bluetooth remote', desc: 'Connect a BLE HID remote and learn turn and independent lock buttons. BLE stops on lock; remote wake is unavailable.', points: ['Connection and key test', 'Independent lock-key learning'] },
     ],
-    updateTitle: 'A few details, made a little better.', updates: [ ['Typography, a notch finer', 'Punctuation compression, hyphenation and tracking tidy the page; the pill footer shows chapter position and estimated time left.'], ['Covers and images, easier on the eye', 'A larger cover cache keeps the shelf instant when paging back; smoother resampling and 16-level dithering refine lock wallpapers.'], ['Page turns, closer at hand', 'Reading turns skip repeated power cycling for faster, smoother flips; the upload page reports per-file progress and results.'] ],
+    updateTitle: 'Steadier connections. Smoother reading.', updates: [ ['Clearer WiFi connection states', 'Transfer Home now brings network, connection phase, address and QR together; authentication failures retain their real reason and wrong passwords can be re-entered.'], ['Remember more than one network', 'Keep up to six WiFi profiles. Transfer, sync and time setup scan visible remembered networks in recent-use order and promote the one that succeeds.'], ['More careful reading and sync', 'EPUB headings move to the next page when the next paragraph cannot fit; progress sync now keeps 0.01% precision and avoids WiFi/TLS startup failures caused by memory pressure.'] ],
     helpTitle: 'A few things before you begin.', faqs: [
       ['How do I perform a first install?', 'Download the universal firmware and choose “Fresh installation” in the flasher to write the bootloader, partitions and app. It may reset settings and reading records, so back them up first. RDP-G01-W only.'],
       ['How do I keep reading records when updating?', 'Use the same universal firmware and choose “Preserve data & update”. The flasher writes only the app at 0x10000 after identifying an existing PageRest device. If identification fails, it stops instead of starting a full installation.'],

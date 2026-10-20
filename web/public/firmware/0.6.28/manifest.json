@@ -1,0 +1,47 @@
+{
+  "firmware": "PageRest",
+  "version": "0.6.28",
+  "chip": "esp32s3",
+  "project": "Read_Pico",
+  "config_defaults": "/Users/tangh/Developer/Github/pico/sdkconfig.defaults",
+  "flash_settings": {
+    "flash_mode": "dio",
+    "flash_size": "16MB",
+    "flash_freq": "80m"
+  },
+  "incremental_is_app_only": true,
+  "images": {
+    "full": {
+      "file": "PageRest-Read_Pico-0.6.28-full.bin",
+      "offset": "0x0",
+      "bytes": 3994160,
+      "sha256": "6d5391e40fec7bc11b0579eb02f23c580e70c201625d79170fa1953df8b22019"
+    },
+    "incremental": {
+      "file": "PageRest-Read_Pico-0.6.28-incremental.bin",
+      "offset": "0x10000",
+      "bytes": 3928624,
+      "sha256": "37d3ade5072c07102c23c9374e636eb75e0cc88160e7cc8b90cc29330f7e9134"
+    }
+  },
+  "segments": [
+    {
+      "offset": "0x0",
+      "file": "bootloader.bin",
+      "bytes": 21168,
+      "sha256": "d9e79aed9e67fcb9e9ca347e515f01dc79792bd860a0ed886443cbfd8746db3b"
+    },
+    {
+      "offset": "0x8000",
+      "file": "partition-table.bin",
+      "bytes": 3072,
+      "sha256": "205e21ddff471bce79c29a846bd04a48854cb42d406c784405d4c8e3ec1e6061"
+    },
+    {
+      "offset": "0x10000",
+      "file": "Read_Pico.bin",
+      "bytes": 3928624,
+      "sha256": "37d3ade5072c07102c23c9374e636eb75e0cc88160e7cc8b90cc29330f7e9134"
+    }
+  ]
+}
