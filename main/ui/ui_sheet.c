@@ -44,12 +44,23 @@ static void wrap_two_lines(const char* text, int px, int width, char line[2][128
         at += used;
     }
     if (*at && which == 2) {
-        // 第二行尾部换省略号，停在 UTF8 边界。/ Trade the second line's tail for an ellipsis at a UTF8 boundary.
-        size_t n = strlen(line[1]);
-        while (n && ((unsigned char)line[1][n] & 0xC0) == 0x80) --n;
-        if (n > 3) memcpy(line[1] + n - 3, "…", 3);
-        else snprintf(line[1], 128, "…");
-        line[1][strnlen(line[1], 127)] = 0;
+        // 第二行尾部换省略号：按整字符从尾回退，凑满三字节再替换，绝不切半个字符。
+        // Trade the second line's tail for an ellipsis: retreat whole characters until
+        // three bytes free up, never cutting a character in half.
+        size_t cut = strlen(line[1]);
+        bool placed = false;
+        while (cut > 0 && !placed) {
+            size_t k = cut;
+            while (k > 0 && ((unsigned char)line[1][k - 1] & 0xC0) == 0x80) --k;
+            if (k > 0) --k;
+            if (cut - k >= 3) {
+                memcpy(line[1] + k, "…", 3);
+                line[1][k + 3] = 0;
+                placed = true;
+            } else if (k == 0) break;
+            cut = k;
+        }
+        if (!placed) snprintf(line[1], 128, "…");
     }
 }
 

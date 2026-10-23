@@ -163,7 +163,12 @@ static void scan(EpdiyHighlevelState* hl, display_night_action_t action, unsigne
         clean && effect == 1 ? MODE_DU : MODE_GL16);
     assert(update_display_night_white_repaint(hl, action, direct, gray) == EPD_DRAW_SUCCESS);
     assert(scans == before + 1 && pushes == before_pushes + (clean ? CLEAR_PUSHES : 0));
-    assert(ons == before_ons + 1 && offs == before_offs + 1 && !powered);
+    // 所有推屏统一闲置保活：推完保持上电，到期检查才断电（电源时序决策变更）。
+    // Every update shares the idle keepalive: rails stay up after the push and only the
+    // deadline check cuts them.
+    assert(ons == before_ons + 1 && offs == before_offs && powered);
+    rails_idle_check(9000);
+    assert(offs == before_offs + 1 && !powered);
     assert(gc_scans == before_gc);
     assert(!memcmp(hl->front_fb, expected_front, BYTES) && !memcmp(hl->back_fb, expected_front, BYTES));
     assert(hl->waveform == &E0470_WAVEFORM);
@@ -258,7 +263,7 @@ int main(void) {
             failure = errors[e]; fail_scan = scans + 1;
             assert(update_display_night_white_repaint(&hl, clean ? DISPLAY_NIGHT_CLEAN : DISPLAY_NIGHT_TURN,
                 effect != 0, effect == 2) == failure);
-            assert(scans == before + 1 && pushes == before_pushes + clean * CLEAR_PUSHES && !powered);
+            assert(scans == before + 1 && pushes == before_pushes + clean * CLEAR_PUSHES);
             assert(!memcmp(hl.front_fb, expected_front, BYTES) && !memcmp(hl.back_fb, expected_prior, BYTES));
             fail_scan = 0;
             recover(&hl, effect);

@@ -2,7 +2,10 @@
  * SPDX-FileCopyrightText: 2026 mindreset
  * SPDX-License-Identifier: Apache-2.0
  * 凭据校验和有界连接状态机；不含平台资源。/ Credential validation and bounded connection policy without platform resources.
- * 冻结：密码不进入公开状态；每轮连接最多三次、15秒。/ Frozen: passwords never enter public status; three attempts within 15 seconds.
+ * 冻结修订：密码不进入公开状态；每轮连接最多三次，关联路由器与等待 DHCP 分别限时。
+ * Frozen revision: passwords never enter public status; each round makes at most three attempts, with separate router-association and DHCP deadlines.
+ * 冻结修订：用户批准按RSSI及认证筛选自动候选，同名去重、同信号按历史顺序；显式选网不被自动改选。
+ * Frozen revision: User-approved automatic candidates filter authentication and rank by RSSI, deduplicate SSIDs and break ties by history; explicit selection never auto-switches.
  */
 #pragma once
 #include <stdbool.h>
@@ -43,6 +46,16 @@ typedef struct {
     char password[65]; ///< 私有凭据，用毕擦除 / Private secret, erased after use
 } transfer_credentials_t;
 
+#define TRANSFER_WIFI_PROFILE_MAX 6
+#define TRANSFER_CREDENTIALS_STORE_VERSION 2
+
+typedef struct {
+    uint8_t version; ///< 存储格式版本 / Store format version
+    uint8_t count; ///< 有效网络数量 / Number of valid networks
+    uint8_t reserved[2]; ///< 保留并保持为零 / Reserved and kept zero
+    transfer_credentials_t profiles[TRANSFER_WIFI_PROFILE_MAX]; ///< 最近使用优先 / Most recently used first
+} transfer_credentials_store_t;
+
 static void clear_secret(void *ptr, size_t n) {
     volatile unsigned char *p = ptr;
     while (n--) *p++ = 0;
@@ -69,6 +82,87 @@ static bool credentials_from_text(const char *ssid, const char *password, transf
     out->version = 1; strcpy(out->ssid, ssid); strcpy(out->password, password);
     if (credentials_valid(out)) return true;
     clear_secret(out, sizeof(*out)); return false;
+}
+
+static int credentials_store_find(const transfer_credentials_store_t *store, const char *ssid) {
+    if (!store || !ssid) return -1;
+    for (uint8_t i = 0; i < store->count; ++i)
+        if (!strcmp(store->profiles[i].ssid, ssid)) return i;
+    return -1;
+}
+
+static bool credentials_store_valid(const transfer_credentials_store_t *store) {
+    if (!store || store->version != TRANSFER_CREDENTIALS_STORE_VERSION ||
+        !store->count || store->count > TRANSFER_WIFI_PROFILE_MAX ||
+        store->reserved[0] || store->reserved[1]) return false;
+    for (uint8_t i = 0; i < store->count; ++i) {
+        if (!credentials_valid(&store->profiles[i])) return false;
+        for (uint8_t j = 0; j < i; ++j)
+            if (!strcmp(store->profiles[i].ssid, store->profiles[j].ssid)) return false;
+    }
+    transfer_credentials_t empty = {0};
+    for (uint8_t i = store->count; i < TRANSFER_WIFI_PROFILE_MAX; ++i)
+        if (memcmp(&store->profiles[i], &empty, sizeof(empty))) return false;
+    return true;
+}
+
+// 新增或更新后移到首位；满额时淘汰最久未使用项。/ Add or update at the front; evict the least recently used entry when full.
+static bool credentials_store_upsert(transfer_credentials_store_t *store, const transfer_credentials_t *next) {
+    if (!store || !credentials_valid(next)) return false;
+    if (!credentials_store_valid(store)) memset(store, 0, sizeof(*store));
+    int found = credentials_store_find(store, next->ssid);
+    uint8_t stop = found >= 0 ? (uint8_t)found : store->count;
+    if (stop >= TRANSFER_WIFI_PROFILE_MAX) stop = TRANSFER_WIFI_PROFILE_MAX - 1;
+    for (uint8_t i = stop; i > 0; --i) store->profiles[i] = store->profiles[i - 1];
+    store->profiles[0] = *next;
+    if (found < 0 && store->count < TRANSFER_WIFI_PROFILE_MAX) ++store->count;
+    store->version = TRANSFER_CREDENTIALS_STORE_VERSION;
+    memset(store->reserved, 0, sizeof(store->reserved));
+    return credentials_store_valid(store);
+}
+
+static bool credentials_store_promote(transfer_credentials_store_t *store, const char *ssid) {
+    int found = credentials_store_find(store, ssid);
+    if (found < 0) return false;
+    if (!found) return true;
+    transfer_credentials_t selected = store->profiles[found];
+    for (int i = found; i > 0; --i) store->profiles[i] = store->profiles[i - 1];
+    store->profiles[0] = selected;
+    clear_secret(&selected, sizeof(selected));
+    return true;
+}
+
+static bool credentials_store_remove(transfer_credentials_store_t *store, const char *ssid) {
+    int found = credentials_store_find(store, ssid);
+    if (found < 0) return false;
+    for (uint8_t i = (uint8_t)found; i + 1 < store->count; ++i) store->profiles[i] = store->profiles[i + 1];
+    clear_secret(&store->profiles[store->count - 1], sizeof(store->profiles[0]));
+    if (!--store->count) memset(store, 0, sizeof(*store));
+    return true;
+}
+
+typedef struct {
+    uint8_t count, order[TRANSFER_WIFI_PROFILE_MAX];
+    int8_t rssi[TRANSFER_WIFI_PROFILE_MAX];
+} transfer_wifi_candidates_t;
+
+// 只存已保存网络的索引，不复制密码；重复AP只保留最强的兼容信号。
+// Keep only saved-profile indices, never password copies; duplicate APs keep the strongest compatible signal.
+static void credentials_offer_candidate(const transfer_credentials_store_t *store,
+        transfer_wifi_candidates_t *out, const read_pico_transfer_network_t *ap) {
+    int index = credentials_store_find(store, ap->ssid);
+    if (index < 0 || !ap->supported || ap->requires_password != (store->profiles[index].password[0] != 0)) return;
+    unsigned at = 0;
+    while (at < out->count && out->order[at] != index) ++at;
+    if (at < out->count) { if (ap->rssi <= out->rssi[at]) return; }
+    else { if (out->count >= TRANSFER_WIFI_PROFILE_MAX) return; ++out->count; }
+    out->order[at] = (uint8_t)index; out->rssi[at] = ap->rssi;
+    while (at && (out->rssi[at] > out->rssi[at - 1] ||
+           (out->rssi[at] == out->rssi[at - 1] && out->order[at] < out->order[at - 1]))) {
+        uint8_t swap = out->order[at - 1]; int8_t rssi = out->rssi[at - 1];
+        out->order[at - 1] = out->order[at]; out->rssi[at - 1] = out->rssi[at];
+        out->order[at] = swap; out->rssi[at] = rssi; --at;
+    }
 }
 
 static void scan_offer(read_pico_transfer_network_t out[READ_PICO_TRANSFER_SCAN_MAX], size_t *count,
@@ -130,14 +224,57 @@ static bool parse_credentials(const char *body, size_t length, transfer_credenti
 }
 
 typedef struct {
-    bool online, pending, failed; ///< 在线、待连接与终止状态 / Online, pending and terminal states
+    bool online, associated, pending, failed; ///< 在线、已关联、待连接与终止状态 / Online, associated, pending and terminal states
     unsigned attempts; ///< 本轮尝试次数 / Attempts in this round
     unsigned drops; ///< 在线后掉线次数（跨重连保留） / Drops after being online (kept across reconnects)
     int64_t deadline_ms, next_ms; ///< 总截止与下次尝试时刻 / Overall deadline and next attempt time
 } transfer_connection_t;
 
+typedef enum {
+    TRANSFER_WIFI_DISCONNECT_OTHER,
+    TRANSFER_WIFI_DISCONNECT_PASSWORD,
+    TRANSFER_WIFI_DISCONNECT_NOT_FOUND,
+} transfer_wifi_disconnect_t;
+
+enum {
+    TRANSFER_WIFI_REASON_4WAY_TIMEOUT = 15,
+    TRANSFER_WIFI_REASON_8021X_FAILED = 23,
+    TRANSFER_WIFI_REASON_NO_AP = 201,
+    TRANSFER_WIFI_REASON_AUTH_FAILED = 202,
+    TRANSFER_WIFI_REASON_HANDSHAKE_TIMEOUT = 204,
+    TRANSFER_WIFI_REASON_NO_COMPATIBLE_SECURITY = 210,
+    TRANSFER_WIFI_REASON_AUTHMODE_THRESHOLD = 211,
+    TRANSFER_WIFI_REASON_RSSI_THRESHOLD = 212,
+};
+
+// ESP-IDF沿用802.11原因值；在平台外归类，供宿主测试并避免页面接触驱动常量。
+// ESP-IDF retains the 802.11 reason values; classify them outside the platform layer for host tests and keep driver constants out of the UI.
+static transfer_wifi_disconnect_t transfer_wifi_disconnect_classify(unsigned reason) {
+    switch (reason) {
+        case TRANSFER_WIFI_REASON_4WAY_TIMEOUT:
+        case TRANSFER_WIFI_REASON_8021X_FAILED:
+        case TRANSFER_WIFI_REASON_AUTH_FAILED:
+        case TRANSFER_WIFI_REASON_HANDSHAKE_TIMEOUT:
+            return TRANSFER_WIFI_DISCONNECT_PASSWORD;
+        case TRANSFER_WIFI_REASON_NO_AP:
+        case TRANSFER_WIFI_REASON_NO_COMPATIBLE_SECURITY:
+        case TRANSFER_WIFI_REASON_AUTHMODE_THRESHOLD:
+        case TRANSFER_WIFI_REASON_RSSI_THRESHOLD:
+            return TRANSFER_WIFI_DISCONNECT_NOT_FOUND;
+        default:
+            return TRANSFER_WIFI_DISCONNECT_OTHER;
+    }
+}
+
 static void connection_begin(transfer_connection_t *c, int64_t now) {
-    *c = (transfer_connection_t){.pending = true, .deadline_ms = now + 15000, .next_ms = now};
+    *c = (transfer_connection_t){.pending = true, .deadline_ms = now + 30000, .next_ms = now};
+}
+
+static void connection_associated(transfer_connection_t *c, int64_t now) {
+    if (c->failed) return;
+    c->associated = true;
+    c->pending = false;
+    c->deadline_ms = now + 20000;
 }
 
 static void connection_lost(transfer_connection_t *c, int64_t now) {
@@ -146,7 +283,8 @@ static void connection_lost(transfer_connection_t *c, int64_t now) {
     // A drop refreshes the deadline and attempts but accumulates: flapping connect-drop
     // cycles no longer reset the watchdog forever.
     if (c->online) { unsigned drops = c->drops; connection_begin(c, now); c->drops = drops + 1; }
-    c->online = false; c->pending = true; c->next_ms = now + 1000;
+    else if (c->associated) c->deadline_ms = now + 30000;
+    c->online = false; c->associated = false; c->pending = true; c->next_ms = now + 1000;
 }
 
 // 0等待、1连接、-1终止本轮。/ 0 waits, 1 connects, -1 terminates this round.

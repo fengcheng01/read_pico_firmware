@@ -78,6 +78,8 @@ void os_time_set_tz(int16_t qh);
 void os_time_network(bool sta_uplink);
 /// 电量千分比（0-1000），无有效快照返回 -1；只读缓存不做 IO。/ Battery permille (0-1000), -1 without a valid snapshot; cached read, no IO.
 int os_time_battery_permille(void);
+/// 只插值已信任锚点，不轮询硬件；供低频历史采样。/ Interpolate a trusted anchor without polling hardware for low-rate history samples.
+bool os_time_cached_utc(int64_t now_ms, uint32_t* utc);
 /// 最近一次 STA 会话内是否成功校时；会话结束或失效后复位。/ Whether the last STA session calibrated time; cleared when it ends or on invalidate.
 bool os_time_recently_synced(void);
 

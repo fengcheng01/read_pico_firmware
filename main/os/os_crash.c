@@ -11,27 +11,34 @@
 #include <stdio.h>
 #include <string.h>
 
-// 与 esp_reset_reason_t 数值一一对应；跨 IDF 版本保持稳定。
-// Mirrors esp_reset_reason_t values; stable across IDF versions.
+// 对齐 IDF v6.1 完整枚举；设备桥在编译时核对，避免漏项导致后续原因错位。
+// Match the complete IDF v6.1 enum, checked by the device bridge at compile time to prevent shifted names after omissions.
 const char* os_crash_reset_name(int reason) {
     switch (reason) {
         case 0: return "UNKNOWN";
         case 1: return "POWERON";
-        case 2: return "SW";
-        case 3: return "PANIC";
-        case 4: return "INT_WDT";
-        case 5: return "TASK_WDT";
-        case 6: return "WDT";
-        case 7: return "BROWNOUT";
-        case 8: return "SDIO";
+        case 2: return "EXT";
+        case 3: return "SW";
+        case 4: return "PANIC";
+        case 5: return "INT_WDT";
+        case 6: return "TASK_WDT";
+        case 7: return "WDT";
+        case 8: return "DEEPSLEEP";
+        case 9: return "BROWNOUT";
+        case 10: return "SDIO";
+        case 11: return "USB";
+        case 12: return "JTAG";
+        case 13: return "EFUSE";
+        case 14: return "PWR_GLITCH";
+        case 15: return "CPU_LOCKUP";
         default: return "RST?";
     }
 }
 
 bool os_crash_reason_abnormal(int reason) {
-    // 3..7 = panic、中断看门狗、任务看门狗、其他看门狗、掉电。
-    // 3..7 cover panic, interrupt/task/other watchdogs and brownout.
-    return reason >= 3 && reason <= 7;
+    // 软件重启与深睡唤醒不计异常；错误、掉电与CPU锁死才记。
+    // Software resets and deep-sleep wakes are normal; record faults, brownouts and CPU lockups.
+    return (reason >= 4 && reason <= 7) || reason == 9 || (reason >= 13 && reason <= 15);
 }
 
 size_t os_crash_format_record(char* out, size_t cap, uint32_t unix_utc, int reason) {

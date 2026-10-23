@@ -63,7 +63,9 @@ static void qr_regression(app_ctx_t* ctx) {
     on_tick(ctx);
     assert(test_qr_encodes == encodes);
     EpdRect toggle = control_rect(3);
-    assert(toggle.x+toggle.width < 404 && toggle.y+toggle.height <= 518);
+    EpdRect qr = connection_qr_rect();
+    EpdRect card = connection_card_rect();
+    assert(toggle.x + toggle.width < qr.x && toggle.y + toggle.height <= card.y + card.height);
     ui_gesture_event_t ev={.type=UI_GESTURE_PRESS,.x0=toggle.x+2,.y0=toggle.y+2,.x=toggle.x+2,.y=toggle.y+2};
     on_gesture(ctx,&ev);
     ev.type=UI_GESTURE_TAP; ev.x=650;
@@ -143,6 +145,11 @@ int main(void) {
     test_configured = true;
     enter_networks();
     network_ui_tick(&ctx);
+    tap(&ctx, network_control_rect(1));
+    assert(test_select_count == 1 && !strcmp(test_saved_ssid, "network1"));
+    assert(s_view == TRANSFER_HOME && s_mode == READ_PICO_TRANSFER_MODE_STA && s_start_pending);
+    enter_networks();
+    network_ui_tick(&ctx);
     tap(&ctx, network_control_rect(9));
     assert(s_network_page == 1);
     tap(&ctx, network_control_rect(7));
@@ -211,6 +218,43 @@ int main(void) {
     ctx.now_ms = 3000;
     assert(on_tick(&ctx) == APP_REDRAW_FULL);
     assert(s_status.changed_count == 1);
+    // 连接卡与状态卡必须在 STARTING -> ERROR 时同步整页更新。
+    // The connection and status cards must refresh together on STARTING -> ERROR.
+    s_mode = READ_PICO_TRANSFER_MODE_STA;
+    s_status.mode = test_status.mode = READ_PICO_TRANSFER_MODE_STA;
+    s_status.state = READ_PICO_TRANSFER_STARTING;
+    test_status.state = READ_PICO_TRANSFER_ERROR;
+    test_status.last_error = ESP_ERR_WIFI_TIMEOUT;
+    ctx.now_ms = 5100;
+    assert(on_tick(&ctx) == APP_REDRAW_PAGE);
+    assert(s_status.state == READ_PICO_TRANSFER_ERROR);
+    // 错误卡中的恢复动作必须可直接点击：重试保留模式，重选进入扫描页。
+    // Recovery actions in the error card must be directly actionable: Retry keeps the mode, Reselect opens scanning.
+    assert(hit_control(control_rect(6).x + 2, control_rect(6).y + 2) == 6);
+    assert(hit_control(control_rect(7).x + 2, control_rect(7).y + 2) == 7);
+    stops_before = test_stop_count;
+    tap(&ctx, control_rect(6));
+    assert(s_view == TRANSFER_HOME && s_mode == READ_PICO_TRANSFER_MODE_STA && s_start_pending);
+    assert(test_stop_count > stops_before);
+    s_start_pending = false;
+    s_status = test_status;
+    tap(&ctx, control_rect(7));
+    assert(s_view == TRANSFER_NETWORKS && s_scan_pending);
+    s_view = TRANSFER_HOME;
+    s_mode = READ_PICO_TRANSFER_MODE_STA;
+    s_status = test_status = (read_pico_transfer_status_t){.mode=READ_PICO_TRANSFER_MODE_STA,
+        .state=READ_PICO_TRANSFER_ERROR,.last_error=ESP_ERR_WIFI_PASSWORD};
+    snprintf(s_status.wifi_ssid, sizeof(s_status.wifi_ssid), "Office-WiFi");
+    snprintf(test_status.wifi_ssid, sizeof(test_status.wifi_ssid), "Office-WiFi");
+    assert(password_failed());
+    tap(&ctx, control_rect(6));
+    assert(s_view == TRANSFER_HOME && s_mode == READ_PICO_TRANSFER_MODE_AP && s_start_pending);
+    s_start_pending = false;
+    s_mode = READ_PICO_TRANSFER_MODE_STA;
+    s_status = test_status;
+    tap(&ctx, control_rect(7));
+    assert(s_view == TRANSFER_PASSWORD && s_edit_field == EDIT_WIFI);
+    assert(!strcmp(s_selected.ssid, "Office-WiFi") && s_selected.requires_password && !s_password[0]);
     transfer_on_exit(&ctx);
     assert(!test_font_suspended);
     assert(test_store_changes == 1);
@@ -245,7 +289,7 @@ int main(void) {
     cancel_sync();
     test_scan_error=0; test_scan_count=8;
     enter_networks(); network_ui_tick(&ctx);
-    snprintf(s_saved_ssid,sizeof(s_saved_ssid),"%s",s_networks[0].ssid); s_saved_configured=true;
+    snprintf(s_saved_ssid,sizeof(s_saved_ssid),"%s",s_networks[0].ssid); s_saved_configured=true; s_networks[0].remembered=true;
     tap(&ctx, network_control_rect(0));
     assert(s_view==TRANSFER_HOME && s_start_pending && s_mode==READ_PICO_TRANSFER_MODE_STA);
     on_enter(&ctx); assert(s_mode==READ_PICO_TRANSFER_MODE_STA);

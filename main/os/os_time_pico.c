@@ -181,6 +181,11 @@ int os_time_battery_permille(void) {
     // Battery shares the time snapshot: poll refreshes it throttled, this stays IO-free.
     return pmu && pmu->status_ok && pmu->soc_permille <= 1000 ? pmu->soc_permille : -1;
 }
+bool os_time_cached_utc(int64_t now_ms, uint32_t* utc) {
+    if (!s_anchored || !utc) return false;
+    *utc = interpolated(now_ms);
+    return *utc >= OS_TIME_UNIX_MIN && *utc < OS_TIME_UNIX_MAX;
+}
 
 bool os_time_recently_synced(void) { return s_recently_synced; }
 

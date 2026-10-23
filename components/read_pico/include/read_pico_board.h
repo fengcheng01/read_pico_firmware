@@ -105,6 +105,13 @@ esp_err_t read_pico_tp_rst(bool high);
 /// call before light sleep and after wake.
 void read_pico_clear_ioe_int(void);
 
+/// 高压轨已关后停放扩展器；浅睡必须传false保留按键唤醒，部分失败自动回滚。
+/// Park the expander only with rails off; light sleep must pass false for key wake. Partial failures roll back.
+esp_err_t read_pico_ioe_sleep(bool host_off);
+/// 恢复睡前输出及运行方向；失败可再次调用，不能在恢复成功前启动扫描。
+/// Restore pre-sleep outputs and active directions; retry failures before starting scans.
+esp_err_t read_pico_ioe_wake(void);
+
 #ifdef __cplusplus
 }
 #endif

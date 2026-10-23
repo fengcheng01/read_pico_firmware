@@ -2,11 +2,14 @@
  * SPDX-FileCopyrightText: 2026 mindreset
  * SPDX-License-Identifier: Apache-2.0
  *
- * 墨水屏刷新。四个按钮 2×2：整屏全刷、局部快刷、16 灰阶图（默认裁剪表）、
- * 8 灰阶图（原厂 30 相快表），各自报耗时。
+ * 墨水屏刷新。2×2 四按钮：整屏全刷、局部快刷、16 灰阶图（默认裁剪表）、
+ * 8 灰阶图（原厂 30 相快表），各自报耗时；另有整行第五动作“灰缘直刷阶梯”，
+ * 从白基准逐级走正文灰缘波形，供落点表同板拍摄校准。
  *
  * EPD refresh. Four buttons in 2×2: full-screen, partial, 16-gray (default
  * cropped table), 8-gray (factory 30-phase fast table); each reports timing.
+ * A fifth full-width action renders the gray-direct landing ladder from a white
+ * baseline through the body gray-edge waveform for same-board calibration.
  */
 
 #include <stdio.h>
@@ -25,7 +28,8 @@
 #define DEMO_ACT_AREA 1
 #define DEMO_ACT_GRAY16 2
 #define DEMO_ACT_GRAY8 3
-#define DEMO_ACT_COUNT 4
+#define DEMO_ACT_GRAY_DIRECT 4
+#define DEMO_ACT_COUNT 5
 
 static int32_t s_demo_ms[DEMO_ACT_COUNT];
 static int s_demo_last = -1;
@@ -37,6 +41,12 @@ static bool s_demo_pattern;
 // 四个按钮 2×2 排：下面一行就是底栏（右端仍留给菜单钮），上面一行同宽往上挪一格。
 // Four buttons in 2×2: the lower row is the bar (right end still the menu button); the upper row is the same width, one cell up.
 static EpdRect demo_btn_rect(int i) {
+    if (i == DEMO_ACT_GRAY_DIRECT) {
+        // 第五个动作整行更宽，摆在 2×2 上方；灰缘校准属于诊断低频入口。
+        // The fifth action is a full-width row above the 2×2; gray-edge calibration is a low-frequency diagnostic entry.
+        return (EpdRect){.x = UI_MARGIN, .y = demo_btn_rect(0).y - 84,
+                         .width = ui_content_width(), .height = 72};
+    }
     EpdRect rect = ui_bar_rect(i % 2, 2);
     if (i < 2) rect.y -= UI_BAR_H + UI_GAP;
     return rect;
@@ -150,9 +160,52 @@ static void draw_pattern_page(uint8_t* framebuffer, const char* caption) {
     ui_draw_menu_handle(framebuffer, false);
 }
 
+// 灰缘直刷落点阶梯：从真实白基准逐级走灰缘波形，用于拍摄对照校准落点表（s_land）。
+// Gray-direct landing ladder: drive every code from a real white baseline through the
+// gray-edge waveform, for photographing against the 16-gray page to calibrate s_land.
+static void draw_gray_direct_page(uint8_t* framebuffer) {
+    const int width = epd_rotated_display_width();
+    const int inner = width - 2 * UI_MARGIN;
+
+    ui_clear_page(framebuffer);
+    int y = ui_draw_header(
+        framebuffer, "灰缘落点阶梯 Gray-Direct Ladder",
+        "对照 16 灰阶图拍摄 · 点按返回 Compare 16-Gray · Tap to Return"
+    );
+
+    const int bar_h = 360;
+    const int step = inner / 16;
+    char label[4];
+    for (int i = 0; i < 16; i++) {
+        epd_fill_rect(
+            (EpdRect){
+                .x = UI_MARGIN + i * step,
+                .y = y,
+                .width = step,
+                .height = bar_h,
+            },
+            (uint8_t)(i * 17),
+            framebuffer
+        );
+        snprintf(label, sizeof(label), "%d", i);
+        ui_text_vc(
+            framebuffer, UI_MARGIN + i * step + step / 2, y + bar_h + 22, 22,
+            label, EPD_DRAW_ALIGN_CENTER, false
+        );
+    }
+    y += bar_h + 60;
+    ui_text(
+        framebuffer, UI_MARGIN, y, UI_PX_CAPTION,
+        "上格=灰缘21相实际落点；两格观感相同即落点并列，色差即落点偏差",
+        EPD_DRAW_ALIGN_LEFT, false
+    );
+    ui_draw_menu_handle(framebuffer, false);
+}
+
 static void draw_demo_page(uint8_t* fb) {
     static const char* const names[DEMO_ACT_COUNT] = {
         "整屏全刷 Full", "局部快刷 Partial", "16 灰阶图 16-Gray", "8 灰阶图 8-Gray",
+        "灰缘直刷阶梯 Gray-Direct Ladder",
     };
     char line[48];
     ui_clear_page(fb);
@@ -260,6 +313,19 @@ static app_redraw_t demo_touch(app_ctx_t* ctx, const cst836u_touch_t* touch) {
                     ctx->hl, &E0470_GRAY8_WAVEFORM, MODE_GC16
                 )
                 : update_display_from_white(ctx->hl);
+            break;
+        case DEMO_ACT_GRAY_DIRECT:
+            guard_draw_result(ctx->hl, flash_white(ctx));
+            draw_gray_direct_page(ctx->fb);
+            s_demo_pattern = true;
+            display_hold_white_exit(true);
+            started_us = esp_timer_get_time();
+            // 与速度档灰缘正文同表同描述符：白基准上的 15→k 就是正文白底落点。
+            // Same table and descriptor as gray-edge body turns: 15→k from white
+            // is exactly the white-background landing used by body text.
+            err = update_display_from_white_with(
+                ctx->hl, &E0470_GRAY_DIRECT_WAVEFORM, MODE_GL16
+            );
             break;
         default:
             return APP_REDRAW_NONE;

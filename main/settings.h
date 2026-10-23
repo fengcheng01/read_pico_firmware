@@ -19,8 +19,8 @@ unsigned app_settings_daily_goal(void);
 /// 持久保存0..360分钟、5分钟步进；成功才更新缓存。/ Persist0..360 minutes in five-minute steps; update cached state only on success.
 bool app_settings_set_daily_goal(unsigned minutes);
 
-/// 默认深睡。浅睡：按键回原页；拿起唤醒默认关。软睡：SOFT_SLEEP 拉低 EN，再短按开机。关机：EN=0，长按开机。
-/// Default is deep. Light: key returns to the page; pickup-wake defaults off. Soft sleep: SOFT_SLEEP drops EN, then a short press boots. Off: EN=0, long-press to boot.
+/// 默认浅睡：按键回原页；拿起唤醒默认关。深睡和关机由用户显式选择，关机需长按开机。
+/// Light sleep is the default: a key returns to the page and pickup-wake stays off. Deep sleep and power-off are explicit choices; power-off needs a long press to boot.
 typedef enum {
     APP_SLEEP_LIGHT = 0,
     APP_SLEEP_DEEP = 1,
@@ -63,6 +63,10 @@ void app_settings_set_book_shake(bool on);
 bool app_settings_book_turn_anim(void);
 /// 保存实验性错相揭页动画开关。/ Persist the experimental staggered page-turn switch.
 void app_settings_set_book_turn_anim(bool on);
+/// 动画0关/1原有/2柔化对照，旧0/1记录原样兼容。/ Animation0 off/1 original/2 soft comparison, preserving legacy0/1 values.
+uint8_t app_settings_book_turn_style(void);
+/// 仅提交成功才更新内存，不改其他阅读配置。/ Update RAM only after a successful commit; preserve other reader preferences.
+bool app_settings_set_book_turn_style(uint8_t style);
 /// 本地时区偏移，四分之一小时为单位，默认 +32（UTC+8）。/ Local timezone offset in quarter-hours, default +32 (UTC+8).
 int8_t app_settings_tz_qh(void);
 /// 保存时区；越界值被拒绝。/ Persist the timezone; out-of-range values are rejected.
@@ -149,8 +153,8 @@ bool app_settings_set_lock_pin(const char* pin);
 /// Unlock challenge cadence: true verifies every unlock, false boot-only (light-sleep wake skips it). True by default.
 bool app_settings_lock_pin_wake(void);
 void app_settings_set_lock_pin_wake(bool on);
-/// 清残影周期：通用页及成功夜间正文翻页使用，日间正文/控件不计数；0=关，档位0/3/5/10/14/20/30，新装默认5。
-/// Cleanup interval for generic pages and successful night body turns, excluding day body/controls; 0=off, tiers 0/3/5/10/14/20/30, fresh default 5.
+/// 清残影周期：成功的日夜正文翻页及符合条件的通用整页更新使用，控件局刷不计数；0=关，档位0/3/5/10/14/20/30，新装默认10。
+/// Cleanup interval for successful day/night body turns and eligible generic page updates; local controls do not count. 0=off, tiers0/3/5/10/14/20/30, fresh default10.
 /// 夜间方案共用计数，第N次按所选方案清理；失败不计数，任何成功整屏GC或开机清白重置，关闭后的成功夜间翻页清除未完成周期。
 /// Night profiles share a count and clean on turn N using their selected policy; failures do not count, any successful full-screen GC or boot white clear resets it, and successful disabled night turns clear an unfinished interval.
 uint8_t app_settings_gc_every(void);
@@ -164,6 +168,20 @@ void app_settings_set_book_direct(bool on);
 /// Optional actual gray direct edges, off by default; compose vendor DU endpoints with GL gray transitions, slower than original DU with possible local gray-edge flicker.
 bool app_settings_book_edge_gray(void);
 void app_settings_set_book_edge_gray(bool on);
+
+/// 已撤回的字缘实验兼容API：固定关闭，setter无副作用，不读写旧键。
+/// Withdrawn edge-experiment compatibility APIs: always off; setters have no effects or legacy-key access.
+bool app_settings_book_edge_opt(void);
+void app_settings_set_book_edge_opt(bool on);
+/// 固定原始0；setter仅0返回成功，其它值拒绝，不读写NVS。/ Always original0; setters accept only0 and reject other values without NVS access.
+uint8_t app_settings_book_edge_style(void);
+bool app_settings_set_book_edge_style(uint8_t style);
+/// 细腻灰阶开关，默认快速；仅日间速度灰阶正文，保存失败保持旧值。/ Fine Gray toggle, Fast by default; daytime gray-speed body only, retaining the value on save failure.
+bool app_settings_book_gray_balanced(void);
+bool app_settings_set_book_gray_balanced(bool on);
+/// 0快速灰阶、1细腻灰阶，原21/28相效果不变；旧实验2..5回1不修写，失败保留旧值。/ 0 Fast Gray,1 Fine Gray retain the original21/28-phase effects; withdrawn2..5 fall back to1 without repair writes, and failures retain the value.
+uint8_t app_settings_book_gray_profile(void);
+bool app_settings_set_book_gray_profile(uint8_t profile);
 
 /// 夜间白预驱实验，默认关；普通夜间翻页15→0先用白脉冲再走厂家黑迁移，白像素加白光学不可见，黑底残影改善待同板验证。
 /// Night white pre-drive experiment, off by default; ordinary night turns drive 15→0 white first before the vendor black transitions, optically invisible on white pixels, with black-background ghost relief awaiting same-board proof.

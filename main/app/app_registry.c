@@ -26,6 +26,8 @@ extern const app_desc_t app_os_sleep;
 extern const app_desc_t app_os_pin;
 extern const app_desc_t app_image;
 extern const app_desc_t app_os_storage;
+extern const app_desc_t app_os_battery;
+extern const app_desc_t app_os_history;
 extern const app_desc_t app_os_tools;
 extern const app_desc_t app_refresh;
 extern const app_desc_t app_reading;
@@ -59,6 +61,8 @@ static const struct { os_app_id_t id; const app_desc_t* app; } s_apps[] = {
     {OS_APP_STORAGE, &app_os_storage},
     {OS_APP_TOOLS, &app_os_tools},
     {OS_APP_BLUETOOTH, &app_os_bluetooth},
+    {OS_APP_BATTERY, &app_os_battery},
+    {OS_APP_HISTORY, &app_os_history},
     {OS_APP_DIAGNOSTICS, &app_home},
     {OS_APP_NONE, &app_refresh},
     {OS_APP_NONE, &app_reading},
@@ -78,7 +82,7 @@ static const struct { os_app_id_t id; const app_desc_t* app; } s_apps[] = {
 #define PRODUCT_COUNT 4
 // 首个诊断行：跟在设置子页（含锁屏图片）之后。/ First diagnostic row: after the
 // Settings children (including lock images).
-#define DIAGNOSTIC_FIRST 14
+#define DIAGNOSTIC_FIRST 16
 
 int app_product_count(void) { return PRODUCT_COUNT; }
 int app_diagnostic_count(void) { return APP_COUNT - DIAGNOSTIC_FIRST; }

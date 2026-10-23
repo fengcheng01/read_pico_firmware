@@ -16,11 +16,13 @@ with tempfile.TemporaryDirectory(prefix="pico-touch-input-") as directory:
 typedef void* SemaphoreHandle_t;
 typedef void* TaskHandle_t;
 void* xSemaphoreCreateMutex(void);
+void* xSemaphoreCreateBinary(void);
 int xSemaphoreTake(void*, unsigned);
 int xSemaphoreGive(void*);
 int xTaskCreatePinnedToCore(void (*)(void*),const char*,unsigned,void*,unsigned,void**,int);
 #define pdTRUE 1
 unsigned long ulTaskNotifyTake(int clear, unsigned ticks);
+void xTaskNotifyGive(void* task);
 '''
     for name in ("FreeRTOS.h","semphr.h","task.h"):
         (out/"freertos"/name).write_text(header)

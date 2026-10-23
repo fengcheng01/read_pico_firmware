@@ -34,6 +34,7 @@ typedef enum {
 
 typedef struct {
     bool network_only; ///< 仅 STA 联网，不启动文件服务或访问存储 / STA network only, without file service or storage access
+    bool use_selected_wifi; ///< 本次严格连接已显式选择的首选网络 / Connect only the explicitly selected preferred network this session
     read_pico_transfer_mode_t mode; ///< 网络模式，默认热点 / Network mode, default AP
     const char *root_dir; ///< 已挂载根目录，start 内复制 / Mounted root, copied by start
     const char *font_dir; ///< 可选 TF 字体目录；调用方须暂停 SD 字体读取至 stop 返回 / Optional TF font directory; caller must suspend SD font reads until stop returns
@@ -49,8 +50,9 @@ typedef struct {
     read_pico_transfer_state_t state; ///< 当前状态 / Current state
     read_pico_transfer_mode_t mode; ///< 网络模式 / Network mode
     char url[64]; ///< 可访问地址，未联网为空 / Reachable address, empty when offline
-    char wifi_ssid[33]; ///< 已保存网络名称，不含密码 / Saved network name, never a password
-    bool wifi_configured; ///< 存在有效凭据 / Valid credentials saved
+    char wifi_ssid[33]; ///< 当前首选或正在连接的网络，不含密码 / Preferred or connecting network, never a password
+    bool wifi_configured; ///< 至少存在一个有效凭据 / At least one valid credential is saved
+    bool wifi_associated; ///< 已关联路由器，可能仍在等待 DHCP / Associated with the router, possibly still awaiting DHCP
     bool network_ready; ///< 已取得可用网络地址 / Usable network address acquired
     unsigned sta_count; ///< 连接数 / Station count
     char ssid[33]; ///< 热点名称 / AP name
@@ -70,17 +72,21 @@ void read_pico_transfer_stop(void);
 bool read_pico_transfer_try_stop_if_idle(void);
 /// 跨任务复制一致状态快照。/ Copy a consistent snapshot across tasks.
 void read_pico_transfer_get_status(read_pico_transfer_status_t *out);
-/// 控制任务每500ms驱动有界连接重试与15秒超时。/ Owner task polls every 500 ms for bounded retries and a 15 s timeout.
+/// 判断连接错误是否由 WiFi 密码/认证失败引起；不暴露驱动原因码。/ Report whether a connection error came from WiFi password/authentication failure without exposing driver reason codes.
+bool read_pico_transfer_error_is_password(esp_err_t error);
+/// 控制任务每500ms驱动有界连接重试，关联与 DHCP 各自限时。/ Owner task polls every 500 ms for bounded retries with separate association and DHCP deadlines.
 void read_pico_transfer_service_poll(void);
-/// 只读已保存SSID；未配置仍返回ESP_OK。/ Read only the saved SSID; unconfigured still returns ESP_OK.
+/// 只读当前首选SSID；未配置仍返回ESP_OK。/ Read only the preferred SSID; unconfigured still returns ESP_OK.
 esp_err_t read_pico_transfer_get_saved_wifi(char ssid[33], bool *configured);
-/// 仅热点或停止状态可遗忘；上传中拒绝。/ Forget only while AP or stopped; rejected during upload.
+/// 仅热点或停止状态可遗忘当前首选网络；上传中拒绝。/ Forget the preferred network only while AP or stopped; rejected during upload.
 esp_err_t read_pico_transfer_forget_wifi(void);
 /// 停服后小缓冲同步扫描2.4GHz网络；最多16个去重SSID，按信号降序；释放失败交给stop重试。
 /// Scan synchronously with small buffers while stopped; up to 16 unique SSIDs by RSSI; failed resource release is retried by stop.
 esp_err_t read_pico_transfer_scan_wifi(read_pico_transfer_network_t out[READ_PICO_TRANSFER_SCAN_MAX], size_t *count);
-/// 停服后保存设备输入的凭据，不自动连接；密码校验与网页相同。/ Save device-entered credentials while stopped without connecting; validation matches the webpage.
+/// 停服后记住或更新设备输入的凭据并设为首选，不自动连接。/ Remember or update device-entered credentials as preferred while stopped, without connecting.
 esp_err_t read_pico_transfer_save_wifi(const char *ssid, const char *password);
+/// 停服后把已记住的SSID设为首选；密码不离开组件。/ Make a remembered SSID preferred while stopped; its password never leaves the component.
+esp_err_t read_pico_transfer_select_saved_wifi(const char *ssid);
 
 /// UI 获取文件/进度互斥会话；上传或删除中立即返回 false，不等待。
 /// UI claims an exclusive file/progress session; return false immediately during upload/deletion.

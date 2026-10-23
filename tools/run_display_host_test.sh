@@ -12,6 +12,8 @@ cc -std=c11 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
     -Itools/display_host_stubs -Imain -Imain/app \
     tools/display_host_test.c main/display.c main/display_pixels.c -o build/book-tests/display
 build/book-tests/display
+python3 tools/animation_waveform_host_test.py
+python3 tools/turn_engine_host_test.py
 
 # 导航表测试链接真实厂家源表和裁剪器，不用波形标识替身。/ Navigation tests link real vendor tables and trimming, without waveform shims.
 cc -std=c11 -Wall -Wextra -Werror -g -fsanitize=address,undefined \

@@ -70,10 +70,10 @@ enum EpdDrawError update_display_with(
 /// 标准正文：日间厂家GL16不计周期；夜间保持，与直刷共计成功翻页，按gc_every清理（0关）。
 /// Standard body: vendor GL16 by day without counting; night holds and shares successful-turn gc_every cleaning with direct (0 disables).
 enum EpdDrawError update_display_text_turn(EpdiyHighlevelState* hl, bool white_on_black);
-/// 错相揭页动画（实验）：整页一次差分、16条带一拍一带，每像素完整 GL16 相位；仅日间标准正文调用，
+/// 错相揭页动画（实验）：整页一次差分、16条带一拍一带；可选柔化仅重排白到灰脉冲对，原49相不变；仅日间标准正文调用，
 /// 未知基准、入口补偿或扫描失败内部回退 update_display_text_turn；成功翻页计入 gc_every 周期。
-/// Staggered page-turn animation (experimental): one whole-page difference, 16 bands one per tick, full GL16
-/// phases per pixel; day standard bodies only. Unknown baselines, entry compensation or scan failures fall back
+/// Staggered page-turn animation (experimental): one whole-page difference,16 bands; optional softening interleaves white-to-gray pulses within the original49 phases.
+/// Day standard bodies only. Unknown baselines, entry compensation or scan failures fall back
 /// to update_display_text_turn internally; successful turns count toward the gc_every cycle.
 enum EpdDrawError update_display_page_turn(EpdiyHighlevelState* hl, EpdRect area, bool forward);
 /// 厂家黑白DU直刷，实际二值目标和真实旧灰参考；日间不计周期，夜间与标准共计成功翻页。

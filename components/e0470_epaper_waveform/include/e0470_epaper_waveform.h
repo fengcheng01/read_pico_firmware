@@ -87,6 +87,9 @@ extern const EpdWaveform E0470_DIRECT_WAVEFORM;
 /// removing the page-wide synchronized overshoot flash; endpoints still copy vendor DU verbatim.
 #define E0470_GRAY_DIRECT_FRAMES (E0470_FULL_DU_FRAMES + 1)
 extern const EpdWaveform E0470_GRAY_DIRECT_WAVEFORM;
+/// 细腻灰阶：保留已选用的28相厂家灰8/DU有效动作，不追加补刷；原表不因产品改名而改变。/ Fine Gray retains the selected28-phase vendor gray8/DU actions without post-scans; naming does not change the original table.
+#define E0470_GRAY_BALANCED_FRAMES 28
+extern const EpdWaveform E0470_GRAY_BALANCED_WAVEFORM;
 
 /// 厂家DU满幅迁移的动作脉冲数（相0-17）。/ Vendor DU action pulses for a full-travel transition (phases 0-17).
 #define E0470_DU_TRAVEL_PULSES 18

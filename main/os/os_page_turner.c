@@ -9,6 +9,10 @@
  * Frozen revision: Add a learned independent lock action returned only in body text; reversal never affects it, and migrate old two-key preferences without assigning a default lock key.
  * 冻结修订：真机反馈学习按键"突然未映射"与失联后无响应；替换保存设备不再清空学习按键（地址轮换保映射），绑定按帧内容而非通道号匹配，链路错误相在间隔后自动重连，启动内存不足先请求一次可重建缓存回收。
  * Frozen revision: Hardware lost learned keys and went unresponsive after link errors; replacing the saved peer never clears learned keys (address rotation keeps mappings), bindings match frame content rather than channel index, the error phase auto-reconnects after the interval, and short start headroom requests one rebuildable-cache reclaim first.
+ * 冻结修订：用户批准第二批省电；连续重连失败后按10/20/40/80/160/300秒退避，成功连接或手动连接重置，不取消自动重连。
+ * Frozen revision: User-approved batch-two power saving backs off repeated reconnect failures by 10/20/40/80/160/300 seconds; success or manual connection resets it without disabling automatic reconnect.
+ * 冻结修订：未建栈的同步启动失败在干净离页时清除启动次数；过早操作显示启动中或真实无线错误，不用笼统忙态覆盖。
+ * Frozen revision: Clean exit after a synchronous pre-stack startup failure clears its boot-attempt count; premature actions report Starting or the actual radio error instead of masking both as generic busy state.
  */
 #include "os_page_turner.h"
 #include "nvs.h"
@@ -36,6 +40,8 @@ static int64_t s_retry_at, s_last_turn, s_save_retry_at, s_learn_until, s_health
 static os_ble_phase_t s_previous_phase;
 static uint32_t s_forget_revision;
 static uint8_t s_tries;
+static uint8_t s_reconnect_step;
+static bool s_reconnect_pending;
 static struct { os_ble_input_t frame; bool down; } s_last[8];
 
 static void note(const char* text) { snprintf(s_info.note, sizeof(s_info.note), "%s", text); }
@@ -101,11 +107,12 @@ bool os_page_turner_pause(void) {
         return false;
     }
     // 主动停机是健康退出，不累计为启动崩溃。/ An intentional clean stop is not a failed boot.
-    if (s_running && s_tries) tries_store(0);
+    if (s_tries) tries_store(0);
     s_running = false; s_attempted = false; s_info.learning = 0;
     if (s_pending_forget) { s_pending_forget = false; note("遗忘尚未确认完成，请重试"); }
     s_info.test[0] = 0;
     s_retry_at = 0; s_last_turn = 0;
+    s_reconnect_step = 0; s_reconnect_pending = false;
     memset(s_last, 0, sizeof(s_last)); os_ble_radio_clear(); os_ble_radio_snapshot(&s_info.radio);
     return true;
 }
@@ -131,7 +138,13 @@ bool os_page_turner_reverse(void) {
     note(p.reversed ? "翻页方向已反转" : "已恢复正常方向"); return true;
 }
 static bool result(esp_err_t rc, const char* success) {
-    if (rc != ESP_OK) { note("蓝牙忙或未就绪，请稍后重试"); return false; }
+    if (rc != ESP_OK) {
+        os_ble_radio_snapshot(&s_info.radio);
+        note(s_info.radio.phase == OS_BLE_STARTING ? "蓝牙正在启动，请稍后再操作" :
+             s_info.radio.phase == OS_BLE_ERROR && s_info.radio.error[0] ? s_info.radio.error :
+             "蓝牙忙或未就绪，请稍后重试");
+        return false;
+    }
     note(success); return true;
 }
 bool os_page_turner_scan(void) {
@@ -141,6 +154,7 @@ bool os_page_turner_scan(void) {
 bool os_page_turner_connect(const os_ble_peer_t* peer) {
     if (!peer) return false;
     s_info.learning = 0; s_manual_disconnect = false; s_save_retry_at = 0;
+    s_reconnect_step = 0; s_reconnect_pending = true;
     return result(os_ble_radio_connect(peer), "正在连接，按键就绪后会自动保存设备");
 }
 bool os_page_turner_disconnect(void) {
@@ -234,6 +248,15 @@ int os_page_turner_poll(int64_t now, bool body, bool wanted) {
         s_running = true; s_retry_at = now + 500; s_health_at = now + 10000;
     }
     os_ble_radio_snapshot(&s_info.radio);
+    if (s_info.radio.phase == OS_BLE_READY) {
+        s_reconnect_step = 0; s_reconnect_pending = false; s_retry_at = now + 1000;
+    } else if (s_reconnect_pending && (s_info.radio.phase == OS_BLE_IDLE || s_info.radio.phase == OS_BLE_ERROR)) {
+        // 失败完成后才起算退避；远端关机时不再每10秒持续发起射频连接。
+        // Start backoff after failure completes; a powered-off remote no longer triggers radio connects every ten seconds.
+        uint32_t delay = s_reconnect_step < 5 ? 10000u << s_reconnect_step : 300000u;
+        if (s_reconnect_step < 5) ++s_reconnect_step;
+        s_retry_at = now + delay; s_reconnect_pending = false;
+    }
     if (s_info.radio.phase != OS_BLE_READY && s_previous_phase == OS_BLE_READY)
         memset(s_last, 0, sizeof(s_last));
     if (s_info.radio.phase == OS_BLE_READY && s_previous_phase != OS_BLE_READY) {
@@ -270,7 +293,7 @@ int os_page_turner_poll(int64_t now, bool body, bool wanted) {
     // The error phase no longer waits for user action: reconnect the saved peer after the interval, same as idle.
     if (!s_manual_disconnect && s_prefs.saved &&
         (s_info.radio.phase == OS_BLE_IDLE || s_info.radio.phase == OS_BLE_ERROR) && now >= s_retry_at) {
-        os_ble_radio_connect(&s_prefs.peer); s_retry_at = now + 10000;
+        os_ble_radio_connect(&s_prefs.peer); s_reconnect_pending = true;
     }
     if (s_info.radio.phase == OS_BLE_ERROR && s_info.radio.error[0]) note(s_info.radio.error);
     int direction = 0; os_ble_input_t input;

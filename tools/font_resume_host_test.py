@@ -3,7 +3,13 @@
 # 真实字体暂停/恢复策略：首次返回、缺文件、重复恢复与内置选择。/ Actual suspend/resume policy for first returns, missing files, repeated calls and built-in preference.
 from pathlib import Path
 import os,subprocess,tempfile
-r=Path(__file__).resolve().parents[1];s=(r/'main/font/ttf_font.c').read_text();a=s.index('esp_err_t ttf_font_suspend_sd(');b=s.index('\nesp_err_t ttf_font_open(',a)
+r=Path(__file__).resolve().parents[1];s=(r/'main/font/ttf_font.c').read_text()
+def function(name):
+ a=s.index('esp_err_t '+name+'('); start=s.index('{',a); depth=1; end=start+1
+ while depth:
+  depth += (s[end]=='{') - (s[end]=='}'); end+=1
+ return s[a:end]+'\n'
+production=function('ttf_font_suspend_sd')+function('ttf_font_resume_sd')
 unit=r'''
 #include <assert.h>
 #include <stdbool.h>
@@ -21,7 +27,7 @@ static bool ttf_font_path_is_builtin(const char*p){return !p||!*p||!strcmp(p,"bu
 static const char* app_settings_font_path(void){return saved;}
 static int ttf_font_open_builtin(void){++builtins;builtin=true;strcpy(font_path,"builtin");return 0;}
 static int ttf_font_open(const char*p){assert(!sd_suspended);++opens;if(missing){ttf_font_open_builtin();return ESP_ERR_NOT_FOUND;}builtin=false;font_ready=true;strcpy(font_path,p);return ESP_OK;}
-'''+s[a:b]+r'''
+'''+production+r'''
 int main(void){
  for(int n=0;n<100;++n){assert(!ttf_font_suspend_sd(true)&&builtin&&sd_suspended);assert(!ttf_font_resume_sd()&&!builtin&&!sd_suspended);assert(!strcmp(font_path,saved));}
  assert(opens==100&&builtins==100);assert(!ttf_font_resume_sd()&&opens==100);

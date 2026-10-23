@@ -52,11 +52,27 @@ bool read_pico_transfer_try_stop_if_idle(void) {
 void read_pico_transfer_get_status(read_pico_transfer_status_t* out) {
     if (out) *out = s_status;
 }
+bool read_pico_transfer_error_is_password(esp_err_t error) {
+    return error == ESP_ERR_WIFI_PASSWORD;
+}
 void read_pico_transfer_service_poll(void) {}
-// 只改变隔离的网络快照，用于真实传书页的接收、完成和失败验收。
-// Change only the isolated network snapshot for real transfer-page receiving, completion and error checks.
+// 只改变隔离的网络快照，用于真实传书页的接收、完成、上传失败和连接失败验收。
+// Change only the isolated network snapshot for real transfer-page receiving, completion, upload-error and connection-error checks.
 void preview_transfer_fixture(int value) {
+    if (value == 6) {
+        s_wifi_configured = true;
+        return;
+    }
     if (!s_running) return;
+    if (value == 4 || value == 5) {
+        s_status.state = READ_PICO_TRANSFER_ERROR;
+        s_status.network_ready = false;
+        s_status.wifi_associated = false;
+        s_status.last_error = value == 5 ? ESP_ERR_WIFI_PASSWORD : ESP_FAIL;
+        s_status.cur_total = s_status.cur_bytes = 0;
+        s_status.cur_name[0] = 0;
+        return;
+    }
     s_status.done_count = value == 2 ? 1 : 0;
     s_status.changed_count = s_status.done_count;
     s_status.state = value == 1 ? READ_PICO_TRANSFER_UPLOADING : value == 3 ? READ_PICO_TRANSFER_ERROR : READ_PICO_TRANSFER_READY;
@@ -84,12 +100,19 @@ esp_err_t read_pico_transfer_scan_wifi(read_pico_transfer_network_t out[READ_PIC
         out[i].rssi = -40 - (int8_t)i * 8;
         out[i].supported = true;
         out[i].requires_password = i != 2;
+        out[i].remembered = s_wifi_configured && i < 2;
     }
     *count = 3;
     return ESP_OK;
 }
 esp_err_t read_pico_transfer_save_wifi(const char* ssid, const char* password) {
     (void)password;
+    if (!ssid || !*ssid) return ESP_ERR_INVALID_ARG;
+    snprintf(s_wifi_ssid, sizeof(s_wifi_ssid), "%s", ssid);
+    s_wifi_configured = true;
+    return ESP_OK;
+}
+esp_err_t read_pico_transfer_select_saved_wifi(const char* ssid) {
     if (!ssid || !*ssid) return ESP_ERR_INVALID_ARG;
     snprintf(s_wifi_ssid, sizeof(s_wifi_ssid), "%s", ssid);
     s_wifi_configured = true;
@@ -128,6 +151,10 @@ bool os_sync_job_start(os_sync_job_t job, char* note, size_t cap) {
     snprintf(note, cap, "正在同步，可返回或停止…");
     return true;
 }
+bool os_sync_job_start_book(const char* path, char* note, size_t cap) {
+    if (!path || !path[0]) return false;
+    return os_sync_job_start(OS_SYNC_JOB_MERGE, note, cap);
+}
 bool os_sync_job_poll(char* note, size_t cap) {
     if (!s_sync_preview) return false;
     s_sync_preview = false;
@@ -142,7 +169,9 @@ void os_sync_job_cancel(void) { s_sync_preview = false; }
 bool read_pico_transfer_claim_sync(void) { return true; }
 void read_pico_transfer_release_sync(void) {}
 
-int os_time_battery_permille(void) { return 780; }
+static int s_battery_permille = 780;
+void preview_battery_fixture(int permille) { s_battery_permille = permille; }
+int os_time_battery_permille(void) { return s_battery_permille; }
 bool os_time_recently_synced(void) { return false; }
 void os_time_clock_status(char* out, size_t cap) { snprintf(out, cap, "预览不测量走时 · 请在真机测试"); }
 

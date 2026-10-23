@@ -34,6 +34,9 @@ void ui_product_home_bar(uint8_t* fb, bool transfer_enabled);
 os_app_id_t ui_product_home_bar_hit(uint16_t x, uint16_t y, bool transfer_enabled);
 /// 统一产品页标题；不读取硬件或文件。/ Shared product header without hardware or file reads.
 void ui_product_header(uint8_t* fb, const char* title, const char* detail);
+/// 顶栏电池（76×28）按电量实心填充，内部数字在填充区反色；负数显示未知空壳。
+/// Header battery (76×28) fills with charge and reverses its digits over the fill; negative means unknown/unfilled.
+void ui_product_battery(uint8_t* fb, int x, int y, int permille);
 /// 子页返回触区与绘制共用。/ Shared subpage back geometry and drawing.
 EpdRect ui_product_back_rect(void);
 /// 绘制子页返回按钮。/ Draw a subpage back button.

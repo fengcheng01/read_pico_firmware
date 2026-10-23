@@ -31,7 +31,7 @@ static void ui_press_settle(app_ctx_t* c, ui_press_t* p, int64_t now) {(void)c;(
 typedef enum {APP_REDRAW_NONE,APP_REDRAW_PAGE,APP_REDRAW_AREA} app_redraw_t;
 static read_pico_transfer_status_t status;
 static bool configured, claim_ok=true, claimed, synced, ntp_success;
-static int starts, stops, releases, ntp_calls, polls, start_error;
+static int starts, stops, releases, cleanups, ntp_calls, polls, start_error;
 static os_time_info_t info;
 static bool app_settings_clock_auto(void) {return true;}
 static void app_loop_stay_awake(void) {}
@@ -48,6 +48,7 @@ void read_pico_transfer_release_sync(void) {assert(claimed);claimed=false;releas
 void read_pico_transfer_get_status(read_pico_transfer_status_t* out) {*out=status;}
 esp_err_t read_pico_transfer_start_saved_network(void) {starts++;status.mode=READ_PICO_TRANSFER_MODE_STA;status.state=READ_PICO_TRANSFER_STARTING;return start_error;}
 void read_pico_transfer_stop(void) {assert(claimed);stops++;status=(read_pico_transfer_status_t){0};}
+bool read_pico_transfer_try_stop_if_idle(void) {cleanups++;status=(read_pico_transfer_status_t){0};return true;}
 void read_pico_transfer_service_poll(void) {polls++;}
 '''
 state = source[source.index('static int s_drawn_minute'):source.index('static void stop_sync')]
@@ -59,13 +60,15 @@ int main(void) {
  start_sync(&ctx); assert(!s_sync_active && !starts && !claimed);
  configured=true;claim_ok=false;start_sync(&ctx);assert(!starts&&!claimed);
  claim_ok=true;status.state=READ_PICO_TRANSFER_READY;start_sync(&ctx);assert(!starts&&!claimed&&!stops);
+ status.state=READ_PICO_TRANSFER_ERROR;start_sync(&ctx);assert(cleanups==1&&starts==1&&s_sync_active&&claimed);stop_sync();
+ starts=stops=releases=0;
  status.state=READ_PICO_TRANSFER_STOPPED;start_error=1;start_sync(&ctx);assert(starts==1&&!claimed&&!s_sync_active);
  status.state=READ_PICO_TRANSFER_STOPPED;start_error=0;start_sync(&ctx);assert(s_sync_active&&claimed);
  ctx.now_ms=500;on_tick(&ctx);assert(polls==1&&!ntp_calls);
  status.network_ready=true;on_tick(&ctx);assert(ntp_calls==1&&s_sync_active);
  ntp_success=true;assert(on_tick(&ctx)==APP_REDRAW_PAGE);assert(!s_sync_active&&!claimed&&stops==1);
  assert(strstr(s_sync_note,"已校准"));
- ntp_success=false;ctx.now_ms=1000;start_sync(&ctx);ctx.now_ms=31000;
+ ntp_success=false;ctx.now_ms=1000;start_sync(&ctx);ctx.now_ms=56000;
  on_tick(&ctx);assert(!s_sync_active&&!claimed&&stops==2&&strstr(s_sync_note,"失败"));
  start_sync(&ctx);status.state=READ_PICO_TRANSFER_ERROR;on_tick(&ctx);assert(stops==3&&!claimed);
  start_sync(&ctx);time_on_exit(&ctx);assert(stops==4&&!claimed);
@@ -73,7 +76,7 @@ int main(void) {
  time_on_exit(&ctx);assert(stops==5);
  s_sync_requested=true;ctx.consumed=true;on_tick(&ctx);assert(s_sync_requested&&!s_sync_active);
  ctx.consumed=false;on_tick(&ctx);assert(s_sync_active&&!s_sync_requested);stop_sync();
- puts("time page: no WiFi, busy, start failure, success, timeout, disconnect, exit, sleep and deferred start PASS");
+ puts("time page: no WiFi, busy, stale-error cleanup, start failure, success, timeout, disconnect, exit, sleep and deferred start PASS");
 }
 '''
 out = root / 'build-host/time-page-test'; out.mkdir(parents=True,exist_ok=True)

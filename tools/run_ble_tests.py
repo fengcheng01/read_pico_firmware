@@ -7,6 +7,10 @@ import os
 import subprocess
 import tempfile
 ROOT = Path(__file__).resolve().parents[1]
+for config_name in ("sdkconfig.defaults", "sdkconfig.ci"):
+    config = (ROOT / config_name).read_text()
+    assert "CONFIG_BT_CTRL_MODEM_SLEEP=y" in config
+    assert "CONFIG_BT_CTRL_LPCLK_SEL_MAIN_XTAL=y" in config
 OUT = ROOT / "build-host/ble"
 OUT.mkdir(parents=True, exist_ok=True)
 flags = ["-std=gnu11", "-g", "-O1", "-Wall", "-Wextra", "-Werror", "-fsanitize=address,undefined", "-fno-omit-frame-pointer"]

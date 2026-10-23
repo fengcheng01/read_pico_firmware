@@ -23,4 +23,6 @@ typedef enum {
     OS_APP_PIN = 13, ///< 锁屏密码 / Lock PIN
     OS_APP_IMAGES = 14, ///< 锁屏图片 / Lock images
     OS_APP_BLUETOOTH = 15, ///< 蓝牙翻页器 / Bluetooth page-turner
+    OS_APP_BATTERY = 16, ///< 电量历史 / Battery history
+    OS_APP_HISTORY = 17, ///< 阅读记录 / Reading history
 } os_app_id_t;

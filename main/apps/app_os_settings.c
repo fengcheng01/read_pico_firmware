@@ -57,8 +57,14 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
     ui_product_root_bar(fb, OS_APP_SETTINGS);
 }
 static int hit(uint16_t x, uint16_t y) {
-    for (unsigned i = 0; i < sizeof(items) / sizeof(items[0]); ++i)
-        if (!row_disabled(i) && ui_rect_hit(row_rect(i), x, y)) return (int)i;
+    for (unsigned i = 0; i < sizeof(items) / sizeof(items[0]); ++i) {
+        // 命中用卡片本体（含14px行距已被绘制排除），卡间空隙不触发。
+        // Hit-test the card body itself (the 14px row gap stays outside drawing),
+        // so taps between cards trigger nothing.
+        EpdRect r = row_rect(i);
+        EpdRect card = {r.x, r.y, r.width, r.height - 14};
+        if (!row_disabled(i) && ui_rect_hit(card, x, y)) return (int)i;
+    }
     return -1;
 }
 static app_redraw_t gesture(app_ctx_t* ctx, const ui_gesture_event_t* ev) {

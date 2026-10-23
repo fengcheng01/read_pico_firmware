@@ -22,11 +22,12 @@ cover = r'''
 #define BOOK_STORE_PATH_MAX 288
 #define BOOK_ROWS 3
 static int shelf_rows(void){return BOOK_ROWS;}
+static int64_t esp_timer_get_time(void){return 0;}
 static struct {char path[288];} s_shelf[30];
 static int s_visible_count=30;
 ''' + cache + r'''
 int main(void){
-    (void)s_cover_batch_grid;(void)s_cover_batch_due;
+    (void)s_cover_batch_grid;(void)s_cover_batch_due;(void)s_cover_diag_pending;
     for(int i=0;i<30;++i)snprintf(s_shelf[i].path,288,"/books/%d.epub",i);
     for(int leaf=0;leaf<10;++leaf){
         for(int row=0;row<3;++row){int i=leaf*3+row;uint8_t* gray=row==0?malloc(4):NULL;cover_store(s_shelf[i].path,gray,leaf);}
@@ -40,6 +41,7 @@ int main(void){
 '''
 time_source = (ROOT / 'main/os/os_time_pico.c').read_text()
 time_core = time_source[time_source.index('static const char* TAG'):time_source.index('int os_time_battery_permille')]
+time_core += time_source[time_source.index('bool os_time_cached_utc('):time_source.index('\nbool os_time_recently_synced(')]
 time = r'''
 #include "os_time.h"
 #include "os_clock_rate.h"
@@ -67,7 +69,9 @@ static const pmu_snapshot_t* read_pico_pmu_get(void){return &snapshot;}
 ''' + time_core + r'''
 int main(void){
     const uint32_t base=1791079200;
+    uint32_t cached=0;assert(!os_time_cached_utc(0,&cached)&&!os_time_cached_utc(0,NULL));
     snapshot.time_ok=true;snapshot.unix_sec=base;os_time_poll(0);assert(os_time_info()->unix_utc==base);
+    snapshot.time_ok=false;assert(os_time_cached_utc(123000,&cached)&&cached==base+123);snapshot.time_ok=true;
     // PMU 快 120 秒，浅睡分钟更新与唤醒查询不能追它。/ A PMU 120 seconds fast must not step minute/wake polls.
     for(int minute=1;minute<=360;++minute){snapshot.unix_sec=base+minute*60+120;os_time_force_poll();os_time_poll(minute*60000LL);assert(os_time_info()->unix_utc==base+minute*60);}
     os_time_rtc_reanchor();os_time_poll(360*60000LL);assert(os_time_info()->unix_utc==snapshot.unix_sec);

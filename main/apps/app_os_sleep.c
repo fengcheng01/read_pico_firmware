@@ -84,8 +84,8 @@ static int idle_current(void) {
 
 #define PREVIEW_W 100
 #define PREVIEW_H 178
-extern const uint8_t lock_4bpp_pack_start[] asm("_binary_lock_4bpp_pack_start");
-extern const uint8_t lock_4bpp_pack_end[] asm("_binary_lock_4bpp_pack_end");
+extern const uint8_t loading_4bpp_pack_start[] asm("_binary_loading_4bpp_pack_start");
+extern const uint8_t loading_4bpp_pack_end[] asm("_binary_loading_4bpp_pack_end");
 static uint8_t *s_static_preview, *s_image_preview;
 static const char* s_image_note;
 static uint32_t s_preview_minute;
@@ -133,6 +133,7 @@ static app_redraw_t quote_picker_open(void) {
 }
 static void draw_quote_picker(uint8_t* fb) {
     ui_clear_page(fb);ui_product_header(fb,"锁屏摘录","先选择一句预览，再确认设为锁屏");
+    if (ui_press_active(&s_press) && s_press.id == 100) ui_draw_pressed_round_rect(fb, back_rect(), UI_BTN_RADIUS);
     ui_draw_button(fb,back_rect(),"返回睡眠",false);
     char count[64];snprintf(count,sizeof(count),"共 %u 条 · 每页 4 条",(unsigned)s_quote_count);
     ui_text(fb,UI_MARGIN,198,26,count,EPD_DRAW_ALIGN_LEFT,false);
@@ -197,10 +198,10 @@ static void prepare_previews(void) {
     free_previews();
     s_image_note = app_settings_lock_image()[0] ? "图片样式暂不可预览，读取失败时使用内置图" : "图片样式未选壁纸，将使用内置图";
     size_t bytes = (size_t)UI_LOCK_WIDTH * UI_LOCK_HEIGHT / 2;
-    size_t packed_size = (size_t)(lock_4bpp_pack_end - lock_4bpp_pack_start);
+    size_t packed_size = (size_t)(loading_4bpp_pack_end - loading_4bpp_pack_start);
     uint8_t* packed_gray = heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (packed_gray && asset_pack_size(lock_4bpp_pack_start, packed_size) == bytes &&
-        asset_pack_unpack(lock_4bpp_pack_start, packed_size, packed_gray, bytes)) {
+    if (packed_gray && asset_pack_size(loading_4bpp_pack_start, packed_size) == bytes &&
+        asset_pack_unpack(loading_4bpp_pack_start, packed_size, packed_gray, bytes)) {
         s_static_preview = heap_caps_malloc(PREVIEW_W * PREVIEW_H, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
         if (s_static_preview) for (int y = 0; y < PREVIEW_H; ++y) for (int x = 0; x < PREVIEW_W; ++x) {
             int sx = x * UI_LOCK_WIDTH / PREVIEW_W, sy = y * UI_LOCK_HEIGHT / PREVIEW_H;

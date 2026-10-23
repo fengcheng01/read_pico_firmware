@@ -13,6 +13,7 @@
 
 #include "cst836u.h"
 #include "epd_highlevel.h"
+#include "esp_err.h"
 #include "sc7a20h.h"
 #include "settings.h"
 
@@ -26,6 +27,10 @@ typedef enum {
     APP_WAKE_PICKUP,
     APP_WAKE_TIMER, ///< 锁屏分钟刷新或低频维护定时唤醒 / Timer wake for lock-face minutes or infrequent maintenance
 } app_wake_source_t;
+
+/// 登记睡前需要停用的常开电源外设；不在开机时保留CPU保存区内存。
+/// Bind always-powered peripherals for sleep parking without retaining CPU-save memory at boot.
+void app_sleep_bind(cst836u_handle_t tp, sc7a20h_handle_t acc);
 
 /// 进入锁屏与睡眠；tp 非空时浅睡唤醒后先校验 PIN 再清屏返回。origin_app 为锁屏时的
 /// 页面产品 ID：断电级睡眠前记入 NVS，下次开机直达该页（阅读页配合续读标记自动开书）。
@@ -50,9 +55,9 @@ void app_sleep_disarm_minute_wake(void);
 /// Legacy PMU clock alarm control; disabled at boot/lock entry, with dynamic faces using ESP timer wakes.
 void app_sleep_alarm_clock(bool on);
 app_wake_source_t app_last_wake_source(void);
-/// 软睡或关机，拉掉 EN 后停住，不会返回。
-/// Soft sleep or power-off: drop EN and halt; does not return.
-void app_enter_host_sleep(app_sleep_mode_t mode);
+/// 软睡或关机：成功断电不返回；命令失败或应答后仍有电则恢复外设并返回错误，调用方回退浅睡。
+/// Soft sleep/off never returns after power loss; command failure or a powered host after ACK restores peripherals and returns an error for light-sleep fallback.
+esp_err_t app_enter_host_sleep(app_sleep_mode_t mode);
 
 /// 开机/唤醒阻塞校验；未设密码直接通过，输错留在本页，正确返回 true。
 /// 输入途中按电源键返回 false＝要求回到锁屏重睡（开机页由调用方转软睡）。

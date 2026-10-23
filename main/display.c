@@ -1,7 +1,16 @@
 /*
  * SPDX-FileCopyrightText: 2026 mindreset
  * SPDX-License-Identifier: Apache-2.0
+ * 冻结修订：0.7.0用户仅保留当前快速/细腻灰阶效果，撤回所有灰阶刷新实验；旧内部档均回原均衡。
+ * 两生产表逐相不改，不新增分区/补刷，不改FULL时序、周期清理或失败恢复。
+ * Frozen revision: User-approved0.7.0 retains current Fast/Fine Gray effects and withdraws gray-refresh experiments,
+ * mapping old internal modes to original balance. Retain every phase of both production tables without new
+ * bands/post-scans or FULL timing/cleanup/failure-recovery changes.
+ * 冻结修订：用户授权日间纯文字28相均衡对照，独立正文档只推一次；周期清理与失败恢复保留。
+ * Frozen revision: The user authorizes daytime text28-phase balance as a separate single-scan body mode, retaining cleanup and failure recovery.
  *
+ * 冻结修订：用户授权可选日间纯文字动画柔化，保留原档位及49相/16带/节拍，仅交换白到灰脉冲对。
+ * Frozen revision: User authorizes optional daytime text-animation softening, retaining original profiles and49 phases/16 bands/pacing while interleaving only white-to-gray pulse pairs.
  * 刷屏出口：按模式推屏、普通刷新后下电、跟手空闲下电、pclk 欠载回退。
  *
  * Present path: power down after normal updates, idle timeout for tracking, and pclk underrun recovery.
@@ -62,6 +71,7 @@
 #include "app_config.h"
 #include "e0470_epaper_waveform.h"
 #include "e0470_page_turn.h"
+#include "display_animation.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -80,7 +90,7 @@ void display_set_bulk_io(bool active) {
     ESP_LOGI(TAG, "bulk I/O scan margin %s", active ? "on" : "off");
 }
 
-// 仅跟手供电保活，普通页面不保留静态 VCOM。/ Keep rails for tracking bursts only; ordinary pages never retain static VCOM.
+// 跟手与正文翻页共用闲置保活窗口；其余页面不保留静态 VCOM。/ Tracking and body turns share the idle keepalive window; other pages never retain static VCOM.
 #define RAILS_IDLE_TIMEOUT_MS 8000
 // 0 表示轨道已断电；否则是到期时间（ms），到点后主循环断电。
 // 0 means the rails are off; otherwise a deadline (ms) after which the loop powers them down.
@@ -90,13 +100,28 @@ void rails_keepalive(void) {
     rails_deadline_ms = esp_timer_get_time() / 1000 + RAILS_IDLE_TIMEOUT_MS;
 }
 
-// 普通推屏立即下电，避免静置时继续受静态电压驱动。/ Power off ordinary updates immediately to prevent static-voltage drift.
+// 正文翻页波形集合：TEXTTURN/DIRECT/GRAY_DIRECT 及夜间/预驱变体。
+// Body-turn waveform family: TEXTTURN/DIRECT/GRAY_DIRECT plus night/pre-drive variants.
+static bool body_turn_waveform(const EpdWaveform* waveform) {
+    return waveform == &E0470_TEXTTURN_WAVEFORM || waveform == &E0470_TEXTTURN_NIGHT_WAVEFORM ||
+        waveform == &E0470_DIRECT_WAVEFORM || waveform == &E0470_GRAY_DIRECT_WAVEFORM || waveform == &E0470_GRAY_BALANCED_WAVEFORM ||
+        waveform == &E0470_NIGHT_PREWIPE_GL_WAVEFORM || waveform == &E0470_DIRECT_PREWIPE_WAVEFORM ||
+        waveform == &E0470_GRAY_DIRECT_PREWIPE_WAVEFORM;
+}
+
+// 决策变更（2026-10-17，二轮）：实机日志实测每次翻页/翻屏 display≈950-1250ms，其中断电保持
+// 500ms 加上电≈590ms 是纯电源时序，扫描仅≈240ms。所有推屏统一走 8 秒闲置保活（原仅触摸
+// 跟手享有）：连续交互不再逐屏上下电，静置到期仍按原序列断电防静态电压漂移；睡眠、锁屏、
+// 关机与上电失败路径保持立即断电。
+// Decision change (2026-10-17, second round): device logs measured ~950-1250ms per refresh,
+// ~590ms of it pure power sequencing (the 500ms power-off hold plus power-up) against a ~240ms
+// scan. Every update now shares the 8-second idle keepalive (formerly touch-only): continuous
+// interaction stops cycling rails per refresh, while the idle deadline still runs the full off
+// sequence against static-voltage drift; sleep, lock, shutdown and failed power-on paths keep
+// powering off immediately.
 static void finish_update(const EpdWaveform* waveform) {
-    if (waveform == &E0470_FOLLOW_WAVEFORM) rails_keepalive();
-    else {
-        rails_deadline_ms = 0;
-        epd_poweroff();
-    }
+    (void)waveform;
+    rails_keepalive();
 }
 
 void rails_idle_check(int64_t now_ms) {
@@ -192,10 +217,7 @@ static enum EpdDrawError hl_update(
 ) {
     const bool is_full_screen = area == NULL ||
         (area->x == 0 && area->y == 0 && area->width >= epd_width() && area->height >= epd_height());
-    const bool body_profile = waveform == &E0470_TEXTTURN_WAVEFORM || waveform == &E0470_TEXTTURN_NIGHT_WAVEFORM ||
-        waveform == &E0470_DIRECT_WAVEFORM || waveform == &E0470_GRAY_DIRECT_WAVEFORM ||
-        waveform == &E0470_NIGHT_PREWIPE_GL_WAVEFORM || waveform == &E0470_DIRECT_PREWIPE_WAVEFORM ||
-        waveform == &E0470_GRAY_DIRECT_PREWIPE_WAVEFORM;
+    const bool body_profile = body_turn_waveform(waveform);
     night_body_turn = night_body_turn && is_full_screen && body_profile;
     const unsigned night_every = night_body_turn ? app_settings_gc_every() : 0;
     // 日间标准定稿黑/灰像素；夜间标准和黑白直刷用选择码保持全部未变像素。
@@ -247,7 +269,7 @@ static enum EpdDrawError hl_update(
     enum EpdDrawError result;
     if (area != NULL && !is_full_screen) result = full ? epd_hl_update_area_full(hl, mode, 25, *area)
                                        : epd_hl_update_area(hl, mode, 25, *area);
-    else if ((waveform == &E0470_DIRECT_WAVEFORM || waveform == &E0470_TEXTTURN_NIGHT_WAVEFORM || waveform == &E0470_GRAY_DIRECT_WAVEFORM ||
+    else if ((waveform == &E0470_DIRECT_WAVEFORM || waveform == &E0470_TEXTTURN_NIGHT_WAVEFORM || waveform == &E0470_GRAY_DIRECT_WAVEFORM || waveform == &E0470_GRAY_BALANCED_WAVEFORM ||
               waveform == &E0470_NIGHT_PREWIPE_GL_WAVEFORM || waveform == &E0470_DIRECT_PREWIPE_WAVEFORM ||
               waveform == &E0470_GRAY_DIRECT_PREWIPE_WAVEFORM) && (mode & 0xF) != MODE_GC16)
         result = epd_hl_update_screen_selective(hl, mode, 25,
@@ -365,9 +387,12 @@ enum EpdDrawError update_display_page_turn(EpdiyHighlevelState* hl, EpdRect area
         use_scan_for(waveform, MODE_GL16);
         return EPD_DRAW_POWER_NOT_READY;
     }
+    if (app_settings_book_turn_style() == 2) waveform = display_animation_waveform();
     e0470_page_turn_set_tick_us(E0470_TURN_FAST_TICK_US);
     enum EpdDrawError result = e0470_page_turn_with_waveform_compact(
         hl, area, forward ? E0470_TURN_RTL : E0470_TURN_LTR, waveform, 16);
+    display_animation_release();
+    waveform = &E0470_TEXTTURN_WAVEFORM;
     use_scan_for(waveform, MODE_GL16);
     if (result != EPD_DRAW_SUCCESS) {
         // 引擎失败不回写基准；原出口从真实旧基准完整重放这一翻。
@@ -392,7 +417,7 @@ static enum EpdDrawError update_display_with_profile(
     // Day entries retain actual prior frames; night entries clear before a uniform redraw so old setting gray codes cannot retain outlines.
     const bool clean_entry = (waveform == &E0470_NAVIGATION_WAVEFORM ||
         waveform == &E0470_TEXTTURN_WAVEFORM || waveform == &E0470_TEXTTURN_NIGHT_WAVEFORM ||
-        waveform == &E0470_DIRECT_WAVEFORM || waveform == &E0470_GRAY_DIRECT_WAVEFORM ||
+        waveform == &E0470_DIRECT_WAVEFORM || waveform == &E0470_GRAY_DIRECT_WAVEFORM || waveform == &E0470_GRAY_BALANCED_WAVEFORM ||
         waveform == &E0470_NIGHT_PREWIPE_GL_WAVEFORM || waveform == &E0470_DIRECT_PREWIPE_WAVEFORM ||
         waveform == &E0470_GRAY_DIRECT_PREWIPE_WAVEFORM) &&
         (mode & 0xF) == MODE_GL16 && s_navigation_entry;
@@ -450,7 +475,7 @@ enum EpdDrawError update_display_text_gray_direct(EpdiyHighlevelState* hl, bool 
 
 enum EpdDrawError update_display_reader_turn(EpdiyHighlevelState* hl, display_reader_mode_t mode,
                                             EpdRect area, bool forward) {
-    if (mode < DISPLAY_READER_STANDARD || mode > DISPLAY_READER_ANIMATED) return EPD_DRAW_INVALID_CROP;
+    if (mode < DISPLAY_READER_STANDARD || mode > DISPLAY_READER_GRAY_COMPACT) return EPD_DRAW_INVALID_CROP;
     unsigned every = app_settings_gc_every();
     bool due = every && s_day_body_turns >= every - 1;
     uint32_t generation = s_clean_generation;
@@ -464,6 +489,11 @@ enum EpdDrawError update_display_reader_turn(EpdiyHighlevelState* hl, display_re
         case DISPLAY_READER_STANDARD: result = update_display_text_turn(hl, false); break;
         case DISPLAY_READER_BINARY: result = update_display_text_direct(hl, false); break;
         case DISPLAY_READER_GRAY: result = update_display_text_gray_direct(hl, false); break;
+        case DISPLAY_READER_GRAY_BALANCED: result = update_display_with_profile(hl, &E0470_GRAY_BALANCED_WAVEFORM, MODE_GL16, false, false); break;
+        case DISPLAY_READER_GRAY_STAGGERED: result = update_display_with_profile(hl, &E0470_GRAY_BALANCED_WAVEFORM, MODE_GL16, false, false); break;
+        case DISPLAY_READER_GRAY_SYNC: result = update_display_with_profile(hl, &E0470_GRAY_BALANCED_WAVEFORM, MODE_GL16, false, false); break;
+        case DISPLAY_READER_GRAY_MILD: result = update_display_with_profile(hl, &E0470_GRAY_BALANCED_WAVEFORM, MODE_GL16, false, false); break;
+        case DISPLAY_READER_GRAY_COMPACT: result = update_display_with_profile(hl, &E0470_GRAY_BALANCED_WAVEFORM, MODE_GL16, false, false); break;
         default: result = update_display_page_turn(hl, area, forward); break;
     }
     // 成功的手动/入口/故障恢复全刷已统一清零；失败不推进，到期失败留给下一次重试。

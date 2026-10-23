@@ -318,7 +318,11 @@ static void sleep_try(app_ctx_t* ctx) {
         app_lock_ignore_for(APP_LOCK_IGNORE_BOOT_MS);
         return;
     }
-    app_enter_host_sleep(mode);
+    (void)app_enter_host_sleep(mode);
+    // 下电失败保留诊断页并回退浅睡；按键/拿起返回原页。
+    // Failed power-down retains the diagnostic page and falls back to light sleep until key/pickup wake.
+    app_light_sleep_wait(s_ui.pickup_ok ? ctx->acc : NULL);
+    app_lock_ignore_for(APP_LOCK_IGNORE_BOOT_MS);
 }
 
 static app_redraw_t sleep_on_hit(app_ctx_t* ctx, int hit) {

@@ -12,6 +12,19 @@
  * Frozen revision: After service shutdown, resume restores the selected font on this task before painting the return page, retaining safe fallback and saved settings.
  * 冻结修订：速度灰阶正文可减小曲线展平误差0.35→0.15像素，独立缓存，不加粗或改度量；UI/画质保留原光栅。
  * Frozen revision: Gray-speed body may reduce curve flattening error from0.35to0.15px in a separate cache identity, without stroke/metric changes; UI/quality retain the original raster.
+ * 决策变更（2026-10-17）：用户要求在无闪与21相速度不变的前提下继续改善灰缘抗锯齿；速度灰缘另获授权
+ * 在绘制取码时按落点表反演（只改目标灰码的选择，不动光栅、缓存身份、度量、波形、相数或剂量），
+ * 默认关、独立 bk_edgeopt 存储，落点表数值须经同板对比校准；UI/画质档光栅与取码保持原样。
+ * Decision change (2026-10-17): the user asks for further gray-edge anti-aliasing without changing the
+ * flash-free 21-phase turn; gray-speed drawing may now invert a landing table when picking target codes
+ * (target-code selection only — raster, cache identity, metrics, waveforms, phases and doses untouched),
+ * off by default under its own bk_edgeopt key, with landing values awaiting same-board calibration; UI and
+ * quality-tier rasterization and code selection stay as-is.
+ * 决策修订（2026-10-22）：用户授权实机平滑对照，独立档2按字形坐标2×2分配相邻可分灰码，
+ * 不改覆盖率/字重/缓存/度量/波形或相数；旧0/1逐点保留，空间平均不是新增物理灰阶，光学效果待验。
+ * Decision revision (2026-10-22): the user authorizes a hardware comparison; separate mode2 uses
+ * glyph-local2x2 allocation between distinguishable codes, retaining coverage/stroke/cache/metrics/
+ * waveforms/phases and old0/1 pointwise. Spatial averages are not extra physical grays; optics await testing.
  * 冻结修订：内置字体解包前保留可用卡字体，先释放可重建缓存；切换失败恢复原字体且不开放传输，禁止把页面留在无字状态。
  * Frozen revision: Keep a usable SD font until built-in inflation succeeds, releasing rebuildable caches first; failed switching restores the original font and gates transfer instead of leaving blank labels.
  * 冻结修订：光栅化分配失败不得发布缺字缓存；回收可重建资源后有界重试，原字库、度量与字体设置保持。
@@ -37,6 +50,12 @@
 #include "asset_pack.h"
 
 static bool raster_allocation_failed;
+static bool font_io_failed;
+static bool font_render_failed;
+#ifdef TTF_TEST_HOOKS
+static bool test_fail_reads;
+void ttf_font_test_fail_reads(bool fail) { test_fail_reads = fail; }
+#endif
 static void* ttf_malloc(size_t size, void* userdata) {
     (void)userdata;
     void* result = heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -183,6 +202,8 @@ static int raw_ascent_units;
 static int current_weight = TTF_WGHT_DEF;
 static int current_stroke;
 static bool current_precise_curves;
+static bool current_edge_optimize;
+static uint8_t current_edge_style;
 static int wght_min = TTF_WGHT_MIN;
 static int wght_def = TTF_WGHT_DEF;
 static int wght_max = TTF_WGHT_MAX;
@@ -251,6 +272,9 @@ static bool io_read_raw(uint32_t offset, void* dst, size_t n) {
         return true;
     }
     if (font_fd < 0) return false;
+#ifdef TTF_TEST_HOOKS
+    if (test_fail_reads && font_ready) { font_io_failed = true; return false; }
+#endif
     int64_t t0 = bench_on ? esp_timer_get_time() : 0;
     bool ok = false;
     do {
@@ -277,6 +301,7 @@ static bool io_read_raw(uint32_t offset, void* dst, size_t n) {
         ok = done == n;
     } while (0);
     if (bench_on) bench.read_us += esp_timer_get_time() - t0;
+    if (!ok && font_ready) font_io_failed = true;
     return ok;
 }
 
@@ -371,12 +396,16 @@ static int io_victim(void) {
 
 static bool io_load_block(uint32_t base) {
     if (io_find(base) >= 0) return true;
+#ifdef TTF_TEST_HOOKS
+    if (test_fail_reads && font_ready) { font_io_failed = true; return false; }
+#endif
     if (io_data == NULL && !io_ensure()) return false;
     int slot = io_victim();
     uint8_t* dst = io_data + (size_t)slot * TTF_IO_BLOCK;
     int64_t t0 = bench_on ? esp_timer_get_time() : 0;
     if (lseek(font_fd, (off_t)base, SEEK_SET) < 0) {
         font_file_pos = UINT32_MAX;
+        if (font_ready) font_io_failed = true;
         if (bench_on) bench.read_us += esp_timer_get_time() - t0;
         return false;
     }
@@ -384,6 +413,7 @@ static bool io_load_block(uint32_t base) {
     if (bench_on) bench.read_us += esp_timer_get_time() - t0;
     if (got <= 0) {
         font_file_pos = UINT32_MAX;
+        if (font_ready) font_io_failed = true;
         return false;
     }
     font_file_pos = base + (uint32_t)got;
@@ -411,7 +441,10 @@ static bool file_read_at(uint32_t offset, void* dst, size_t n) {
         uint32_t skip = pos - base;
         if (!io_load_block(base)) return false;
         int slot = io_find(base);
-        if (slot < 0 || skip >= io_fill[slot]) return false;
+        if (slot < 0 || skip >= io_fill[slot]) {
+            if (font_ready) font_io_failed = true;
+            return false;
+        }
         size_t take = (size_t)io_fill[slot] - skip;
         if (take > left) take = left;
         memcpy(out, io_data + (size_t)slot * TTF_IO_BLOCK + skip, take);
@@ -1303,6 +1336,7 @@ static bool apply_gvar_composite(uint8_t* blob, uint32_t len, int gid) {
 static bool ensure_work(void) {
     if (work != NULL) return true;
     work = heap_caps_calloc(1, sizeof(ttf_work_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (work == NULL) raster_allocation_failed = true;
     return work != NULL;
 }
 
@@ -1706,13 +1740,14 @@ static glyph_entry_t* rasterize_glyph(uint32_t codepoint, int pixel_height) {
     glyph_entry_t* entry = heap_caps_calloc(
         1, sizeof(*entry), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT
     );
-    if (entry == NULL) return NULL;
+    if (entry == NULL) { raster_allocation_failed = true; return NULL; }
 
     if (bitmap_bytes > 0) {
         entry->bitmap = heap_caps_malloc(
             bitmap_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT
         );
         if (entry->bitmap == NULL) {
+            raster_allocation_failed = true;
             heap_caps_free(entry);
             return NULL;
         }
@@ -1743,7 +1778,10 @@ static glyph_entry_t* rasterize_glyph(uint32_t codepoint, int pixel_height) {
         int stride = width + 2, rows = height + 2;
         size_t tuned_bytes = (size_t)stride * rows;
         uint8_t* tuned = heap_caps_calloc(tuned_bytes, 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-        if (!tuned) { heap_caps_free(entry->bitmap); heap_caps_free(entry); return NULL; }
+        if (!tuned) {
+            raster_allocation_failed = true;
+            heap_caps_free(entry->bitmap); heap_caps_free(entry); return NULL;
+        }
         int strength = current_stroke < 0 ? -current_stroke : current_stroke;
         for (int y = -1; y <= height; ++y) for (int x = -1; x <= width; ++x) {
             int original = x >= 0 && x < width && y >= 0 && y < height ? entry->bitmap[(size_t)y * width + x] : 0;
@@ -1796,12 +1834,13 @@ static const glyph_entry_t* get_glyph(uint32_t codepoint, int pixel_height) {
     if (bench_on) bench.misses++;
     int64_t t0 = bench_on ? esp_timer_get_time() : 0;
     entry = rasterize_glyph(codepoint, pixel_height);
-    if (!entry) {
+    if (!entry && raster_allocation_failed) {
         // 字体映射和旧字形可重建，失败不能永久污染其它页面的文字。
-        // Maps and old glyphs are rebuildable; failed output must not permanently poison text on other pages.
+        // Maps and old glyphs are rebuildable after allocation failure; an I/O failure must not erase them.
         ttf_font_reclaim();
         entry = rasterize_glyph(codepoint, pixel_height);
     }
+    if (!entry) font_render_failed = true;
     if (bench_on) bench.raster_us += esp_timer_get_time() - t0;
     return entry;
 }
@@ -1886,6 +1925,14 @@ bool ttf_font_ready(void) {
     return font_ready;
 }
 
+bool ttf_font_io_failed(void) {
+    return font_ready && font_fd >= 0 && font_io_failed;
+}
+
+bool ttf_font_render_failed(void) {
+    return font_ready && font_fd >= 0 && (font_render_failed || font_io_failed);
+}
+
 void ttf_set_weight(int wght) {
     current_weight = clamp_weight(wght);
 }
@@ -1894,6 +1941,12 @@ void ttf_set_stroke(int steps) { current_stroke = steps < -16 ? -16 : steps > 16
 int ttf_get_stroke(void) { return current_stroke; }
 void ttf_set_precise_curves(bool precise) { current_precise_curves = precise; }
 bool ttf_get_precise_curves(void) { return current_precise_curves; }
+void ttf_set_edge_optimize(bool on) { ttf_set_edge_style(on ? 1 : 0); }
+bool ttf_get_edge_optimize(void) { return current_edge_optimize; }
+void ttf_set_edge_style(uint8_t style) {
+    current_edge_style = style <= 2 ? style : 0;
+    current_edge_optimize = current_edge_style != 0;
+}
 
 int ttf_get_weight(void) {
     return current_weight;
@@ -1948,6 +2001,8 @@ static void abandon_font_source(void) {
 
 void ttf_font_unload(void) {
     font_ready = false;
+    font_io_failed = false;
+    font_render_failed = false;
     cache_reset();
     io_unmap();
     io_reset();
@@ -2024,6 +2079,8 @@ static esp_err_t load_opened_font(void) {
     }
 
     font_ready = true;
+    font_io_failed = false;
+    font_render_failed = false;
     ESP_LOGI(
         TAG, "%s %s, %d glyphs, glyf %u KB%s, gvar %u KB%s, working %u KB",
         glyf_ram != NULL ? "mapped" : "stream",
@@ -2100,39 +2157,142 @@ esp_err_t ttf_font_resume_sd(void) {
     return ESP_OK;
 }
 
+// 切换卡字体时保留当前可用字库；候选字库建表失败后直接恢复，不依赖再分配内存。
+// Keep the usable font during an SD-font switch; restore it without allocating if the candidate fails.
+typedef struct {
+    int fd;
+    const uint8_t* memory;
+    uint32_t memory_len, file_pos;
+    uint8_t* builtin, *loca, *data;
+    uint32_t loca_len, glyf_off, glyf_len, gvar_off, gvar_len, gvar_data_off;
+    uint32_t work_loca, work_glyf;
+    uint32_t* gvar_offsets;
+    stbtt_fontinfo info;
+    ttf_size_metrics_t metrics[2];
+    int glyphs, ascent, weight, weight_min, weight_def, weight_max;
+    int shared_count, axis_count;
+    int16_t shared_tuples[8];
+    bool ready, long_loca, variation;
+    bool io_failed, render_failed;
+    char path[TTF_FONT_PATH_MAX];
+} font_snapshot_t;
+
+static font_snapshot_t font_snapshot_take(void) {
+    font_snapshot_t old = {
+        .fd = font_fd, .memory = font_mem, .memory_len = font_mem_len,
+        .file_pos = font_file_pos, .builtin = builtin_memory,
+        .loca = file_loca, .data = font_data, .loca_len = file_loca_len,
+        .glyf_off = file_glyf_off, .glyf_len = file_glyf_len,
+        .gvar_off = file_gvar_off, .gvar_len = file_gvar_len,
+        .gvar_data_off = gvar_data_array_off, .work_loca = work_loca_off,
+        .work_glyf = work_glyf_off, .gvar_offsets = gvar_glyph_off,
+        .info = font_info, .glyphs = num_glyphs, .ascent = raw_ascent_units,
+        .weight = current_weight, .weight_min = wght_min, .weight_def = wght_def,
+        .weight_max = wght_max, .shared_count = shared_tuple_count,
+        .axis_count = gvar_axis_count, .ready = font_ready,
+        .long_loca = loca_long, .variation = gvar_ready,
+        .io_failed = font_io_failed, .render_failed = font_render_failed,
+    };
+    memcpy(old.metrics, size_metrics, sizeof(old.metrics));
+    memcpy(old.shared_tuples, shared_tuple_f2dot14, sizeof(old.shared_tuples));
+    memcpy(old.path, font_path, sizeof(old.path));
+
+    // 可重建缓存和映射先释放；持有旧源及度量，清空全局所有权后加载候选。
+    // Release rebuildable caches/maps first; retain the old source and metrics while loading the candidate.
+    ttf_font_reclaim();
+    font_fd = -1;
+    font_mem = NULL;
+    builtin_memory = NULL;
+    file_loca = NULL;
+    font_data = NULL;
+    gvar_glyph_off = NULL;
+    ttf_font_unload();
+    return old;
+}
+
+static void font_snapshot_restore(const font_snapshot_t* old) {
+    font_fd = old->fd;
+    font_mem = old->memory;
+    font_mem_len = old->memory_len;
+    font_file_pos = old->file_pos;
+    builtin_memory = old->builtin;
+    file_loca = old->loca;
+    font_data = old->data;
+    file_loca_len = old->loca_len;
+    file_glyf_off = old->glyf_off;
+    file_glyf_len = old->glyf_len;
+    file_gvar_off = old->gvar_off;
+    file_gvar_len = old->gvar_len;
+    gvar_data_array_off = old->gvar_data_off;
+    work_loca_off = old->work_loca;
+    work_glyf_off = old->work_glyf;
+    gvar_glyph_off = old->gvar_offsets;
+    font_info = old->info;
+    memcpy(size_metrics, old->metrics, sizeof(size_metrics));
+    num_glyphs = old->glyphs;
+    raw_ascent_units = old->ascent;
+    current_weight = old->weight;
+    wght_min = old->weight_min;
+    wght_def = old->weight_def;
+    wght_max = old->weight_max;
+    shared_tuple_count = old->shared_count;
+    gvar_axis_count = old->axis_count;
+    memcpy(shared_tuple_f2dot14, old->shared_tuples, sizeof(shared_tuple_f2dot14));
+    font_ready = old->ready;
+    font_io_failed = old->io_failed;
+    font_render_failed = old->render_failed;
+    loca_long = old->long_loca;
+    gvar_ready = old->variation;
+    memcpy(font_path, old->path, sizeof(font_path));
+    io_reset();
+}
+
+static void font_snapshot_dispose(const font_snapshot_t* old) {
+    if (old->fd >= 0) close(old->fd);
+    heap_caps_free(old->builtin);
+    heap_caps_free(old->loca);
+    heap_caps_free(old->data);
+    heap_caps_free(old->gvar_offsets);
+}
+
 esp_err_t ttf_font_open(const char* path) {
     if (ttf_font_path_is_builtin(path)) {
         return ttf_font_open_builtin();
     }
     if (sd_suspended) return ESP_ERR_INVALID_STATE;
 
-    char prev[TTF_FONT_PATH_MAX];
-    strlcpy(prev, font_path, sizeof(prev));
-    bool had = font_ready;
-    bool prev_file = had && !ttf_font_path_is_builtin(prev);
-
-    ttf_font_unload();
-    if (!ensure_work()) return ESP_ERR_NO_MEM;
-
-    font_fd = open_font_file(path);
-    if (font_fd < 0) {
+    // 路径不存在时无需打断当前字库；候选建表失败也必须可零分配回滚。
+    // A missing path must not disrupt the current font; failed candidate setup must roll back without allocation.
+    char previous_path[TTF_FONT_PATH_MAX];
+    memcpy(previous_path, font_path, sizeof(previous_path));
+    int candidate_fd = open_font_file(path);
+    if (candidate_fd < 0) {
         ESP_LOGW(TAG, "TTF missing: %s", path);
-        if (prev_file) {
-            font_fd = try_open_path(prev);
-            if (font_fd >= 0) return load_opened_font();
-        }
+        if (font_ready) return ESP_ERR_NOT_FOUND;
         return ttf_font_open_builtin() == ESP_OK ? ESP_ERR_NOT_FOUND : ESP_FAIL;
     }
+    bool had = font_ready;
+    font_snapshot_t old = font_snapshot_take();
+    memcpy(old.path, previous_path, sizeof(old.path));
+    if (!ensure_work()) {
+        close(candidate_fd);
+        font_snapshot_restore(&old);
+        return ESP_ERR_NO_MEM;
+    }
+
+    font_fd = candidate_fd;
+    strlcpy(font_path, path, sizeof(font_path));
+    ESP_LOGI(TAG, "using %s", path);
 
     esp_err_t err = load_opened_font();
     if (err != ESP_OK) {
-        if (prev_file && strcmp(prev, path) != 0) {
-            ttf_font_unload();
-            font_fd = try_open_path(prev);
-            if (font_fd >= 0 && load_opened_font() == ESP_OK) return err;
-        }
-        return ttf_font_open_builtin() == ESP_OK ? err : ESP_FAIL;
+        ttf_font_unload();
+        font_snapshot_restore(&old);
+        if (!had) return ttf_font_open_builtin() == ESP_OK ? err : ESP_FAIL;
+        ESP_LOGW(TAG, "TTF switch failed, previous font retained: 0x%x", (unsigned)err);
+        return err;
     }
+    font_snapshot_dispose(&old);
     return ESP_OK;
 }
 
@@ -2199,6 +2359,62 @@ static uint8_t mix_ink(uint8_t alpha, uint8_t fg, uint8_t bg) {
     return (uint8_t)(bg + s_cover[alpha] * ((int)fg - (int)bg) / 255);
 }
 
+// 灰缘落点表（实验，须同板校准）：灰缘21相单调阶梯下各灰码的光学落点，0..255 尺度。
+// 0..12 按阶梯设计落点即码值（0.5.38实测误差为半级量级）；13与14在白底降灰同为3脉冲无迟到
+// 脉冲，实测同落约12.5档，浅端两码不可分；0/15为端点。该表拟合白底降灰方向，重叠区旧灰行
+// 与升向落点有偏差，仅作取码反演的第一版标定，数值改动须真机A/B。
+// Gray-edge landing table (experimental, same-board calibration required): the optical landing
+// of each code under the 21-phase monotonic gray ladder, on a 0..255 scale. Codes 0..12 follow
+// the ladder's design landings (0.5.38 measured errors at half-level scale); 13 and 14 share
+// three pulses with no late pulse on the white descent, both landing near 12.5, so the two
+// lightest codes are indistinguishable; 0/15 are endpoints. Fitted to the white-descent
+// direction; old-gray and climbing landings drift, so this is a first calibration for code
+// inversion only, and value changes need on-device A/B.
+static const uint16_t s_land[16] = {
+    0, 17, 34, 51, 68, 85, 102, 119, 136, 153, 170, 187, 204, 212, 212, 255
+};
+
+// 落点反演取码：理想光学位置取落点表最近的码；端点精确（覆盖满即前景码）。
+// Landing inversion: pick the code whose landing is nearest the ideal optical position;
+// endpoints stay exact (full coverage yields the foreground code).
+static uint8_t mix_ink_edge(uint8_t alpha, uint8_t fg, uint8_t bg) {
+    if (alpha >= 255) return fg;
+    const int t = s_land[bg] + (int)(s_cover[alpha] * ((int)s_land[fg] - (int)s_land[bg]) / 255);
+    uint8_t best = bg;
+    int best_d = 256;
+    for (int k = 0; k < 16; ++k) {
+        int d = (int)s_land[k] - t;
+        if (d < 0) d = -d;
+        if (d < best_d) { best_d = d; best = (uint8_t)k; }
+    }
+    return best;
+}
+
+// 只对白底黑字细分相邻落点；字形局部坐标固定图案，不随翻页/屏幕位置随机变化。
+// Subdivide adjacent landings for black on white only; glyph-local coordinates keep the pattern stable across turns/positions.
+// 2×2中点阈值使均匀覆盖块的平均落点误差≤相邻档距/8；单像素可能有颗粒，须同板对照。
+// Centered2x2 thresholds bound uniform-block mean error to gap/8; individual pixels may look grainy, requiring same-board comparison.
+static uint8_t mix_ink_smooth(uint8_t alpha, uint8_t fg, uint8_t bg, int gx, int gy) {
+    if (alpha == 0) return bg;
+    if (alpha == 255) return fg;
+    if (fg != 0 || bg != 15) return mix_ink_edge(alpha, fg, bg);
+    const int target = 255 - s_cover[alpha];
+    int low = 0, high = 15;
+    while (high - low > 1) {
+        int mid = (low + high) / 2;
+        if (s_land[mid] <= target) low = mid;
+        else high = mid;
+    }
+    // 13/14同落点只取13，避免相同光学位置混用两个码。
+    // Canonicalize the tied13/14 landing to13 instead of mixing equivalent codes.
+    if (low == 14) low = 13;
+    if (high == 14) high = 13;
+    static const uint8_t threshold[2][2] = {{1, 5}, {7, 3}};
+    return (target - s_land[low]) * 8 >
+           (s_land[high] - s_land[low]) * threshold[(unsigned)gy & 1][(unsigned)gx & 1]
+        ? (uint8_t)high : (uint8_t)low;
+}
+
 void ttf_draw_text(
     uint8_t* framebuffer, int x, int y, int size, const char* text,
     enum EpdFontFlags align, uint8_t fg, uint8_t bg
@@ -2234,8 +2450,11 @@ void ttf_draw_text_px(
                 for (int gx = 0; gx < glyph->width; gx++) {
                     uint8_t alpha = glyph->bitmap[gy * glyph->width + gx];
                     if (alpha == 0) continue;
+                    uint8_t code = current_edge_style == 2 ? mix_ink_smooth(alpha, fg, bg, gx, gy)
+                                                        : current_edge_optimize ? mix_ink_edge(alpha, fg, bg)
+                                                         : mix_ink(alpha, fg, bg);
                     epd_draw_pixel(
-                        cursor_x + glyph->left + gx, yy, mix_ink(alpha, fg, bg) << 4, framebuffer
+                        cursor_x + glyph->left + gx, yy, code << 4, framebuffer
                     );
                 }
             }

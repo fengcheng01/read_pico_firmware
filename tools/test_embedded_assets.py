@@ -17,7 +17,7 @@ cmap = font.getBestCmap()
 missing = set(common_chinese() + "中庸一剑青莲十步千里寒蝉清风明月") - {chr(cp) for cp in cmap}
 assert not missing, sorted(missing)
 font.close()
-for name, suffix in (("builtin", "ttf"), ("lock_4bpp", "bin"), ("loading_4bpp", "bin")):
+for name, suffix in (("builtin", "ttf"), ("loading_4bpp", "bin")):
     raw = (ROOT / f"main/assets/{name}.{suffix}").read_bytes()
     packed = (ROOT / f"main/assets/{name}.pack").read_bytes()
     assert packed[:4] == b"RPFT" and struct.unpack("<I", packed[4:8])[0] == len(raw)
@@ -58,7 +58,7 @@ static unsigned char* load(const char* path, size_t* length) {
     unsigned char* data=malloc(*length); assert(data); assert(fread(data,1,*length,f)==*length); fclose(f); return data;
 }
 int main(int argc,char** argv) {
-    assert(argc==7);
+    assert(argc==5);
     for(int i=1;i<argc;i+=2) {
         size_t packed,raw; unsigned char *input=load(argv[i],&packed), *expected=load(argv[i+1],&raw), *output=malloc(raw);
         assert(asset_pack_size(input,packed)==raw);
@@ -116,6 +116,6 @@ with tempfile.TemporaryDirectory(prefix="pico-assets-") as temp:
                     f"-I{path}", "-Itools/ui_gesture_stubs", "-Itools/zip_host_stubs", "-Imain", "-Imain/ui", "-Imain/font",
                     str(path / "test.c"), "main/asset_pack.c", "main/ui/ui_assets.c", "-lz", "-o", str(exe)], cwd=ROOT, check=True)
     args=[]
-    for name,suffix in (("builtin","ttf"),("lock_4bpp","bin"),("loading_4bpp","bin")):
+    for name,suffix in (("builtin","ttf"),("loading_4bpp","bin")):
         args += [str(ROOT / f"main/assets/{name}.pack"), str(ROOT / f"main/assets/{name}.{suffix}")]
     subprocess.run([str(exe), *args],check=True)

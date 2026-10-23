@@ -5,6 +5,8 @@
  * English: Product layout atop the existing drawing kit, using fixed text buffers.
  * 冻结修订：密码数字和清空/退格在字库失败时仍有无分配图形，不改变密码校验与命中区域。
  * Frozen revision: PIN digits and clear/backspace retain allocation-free graphics on font failure, without changing verification or hit regions.
+ * 冻结修订：用户实机拒绝空壳电池；填充按真实电量比例变化，数字在填充区反色，保持原顶栏尺寸且不新增分配。
+ * Frozen revision: Hardware feedback rejects the empty battery outline; fill follows actual charge and reverses digits within the filled area, retaining header dimensions without new allocations.
  */
 #include "ui_product.h"
 #include "ui_gesture.h"
@@ -174,17 +176,19 @@ void ui_product_excerpt_lock(uint8_t* fb, const char* text, const char* path, co
     size_t count = 0, wide = 0;
     for (const char* p = text; *p;) { size_t n = character_bytes(p); ++count; if (n >= 3) ++wide; p += n; }
     if (wide * 2 >= count) {
+        const int source_width = 88, source_gap = 24;
         EpdRect body = {UI_MARGIN, preview ? 300 : 224, ui_content_width(), preview ? 676 : 752};
         int quote_px = count <= 8 ? 60 : count <= 24 ? 52 : 48;
-        EpdRect ink = excerpt_vertical(fb, body, text, quote_px, UI_INK_BLACK, 88);
-        if (ink.x >= UI_MARGIN + 88) {
-            // 来源靠近正文左侧，两列竖排；过长明确省略，不制造作者或装饰印章。
-            // Keep the source beside the quote in up to two vertical columns, explicitly ellipsizing without inventing authors or stamps.
+        EpdRect ink = excerpt_vertical(fb, body, text, quote_px, UI_INK_BLACK, source_width + source_gap);
+        if (ink.x >= UI_MARGIN + source_width + source_gap) {
+            // 来源与正文之间保留明确留白；来源最多两列竖排，过长明确省略，不制造作者或装饰印章。
+            // Keep a clear gap between source and quote; use up to two vertical source columns and explicitly ellipsize without invented authors or stamps.
             char* tail = source; unsigned letters = 0;
             while (*tail && letters++ < 20) tail += character_bytes(tail);
             if (*tail) memcpy(tail, "…", sizeof("…"));
             int source_height = ink.height < 128 ? 128 : ink.height > 480 ? 480 : ink.height;
-            excerpt_vertical(fb, (EpdRect){ink.x - 88, ink.y + (ink.height - source_height) / 2, 88, source_height}, source, 26, 4, 0);
+            excerpt_vertical(fb, (EpdRect){ink.x - source_gap - source_width, ink.y + (ink.height - source_height) / 2,
+                                           source_width, source_height}, source, 26, 4, 0);
         } else ui_product_title(fb, (EpdRect){UI_MARGIN, preview ? 232 : 158, ui_content_width(), 44}, source, 26, 1);
     } else {
         EpdRect body = {UI_MARGIN + 40, preview ? 328 : 270, ui_content_width() - 80, preview ? 620 : 680};
@@ -227,6 +231,39 @@ void ui_product_header(uint8_t* fb, const char* title, const char* detail) {
     ui_text(fb, UI_MARGIN, 24, 30, "小纸 Pico  /  READ PICO", EPD_DRAW_ALIGN_LEFT, false);
     ui_text(fb, UI_MARGIN, 68, 64, title, EPD_DRAW_ALIGN_LEFT, false);
     ui_product_title(fb, (EpdRect){UI_MARGIN, 142, ui_content_width(), 44}, detail, 32, 1);
+}
+// 先在白底绘字，再精确反转填充区域，让跨越电量边界的字形保留对比；不扩大到相邻半字节。
+// Paint text on white first, then invert exactly the charged region to preserve contrast across its boundary without touching neighboring nibbles.
+static void battery_invert_charge(uint8_t* fb, EpdRect rect) {
+    if (!fb || rect.width <= 0 || rect.height <= 0) return;
+    EpdRect physical = ui_rotate_rect_to_fb(rect);
+    int width = epd_width(), height = epd_height();
+    int x0 = physical.x < 0 ? 0 : physical.x;
+    int y0 = physical.y < 0 ? 0 : physical.y;
+    int x1 = physical.x + physical.width, y1 = physical.y + physical.height;
+    if (x1 > width) x1 = width;
+    if (y1 > height) y1 = height;
+    size_t stride = (size_t)(width + 1) / 2;
+    for (int y = y0; y < y1; ++y) for (int x = x0; x < x1; ++x)
+        fb[(size_t)y * stride + x / 2] ^= (uint8_t)(x & 1 ? 0xf0 : 0x0f);
+}
+void ui_product_battery(uint8_t* fb, int x, int y, int permille) {
+    EpdRect body = {x, y, 70, 28};
+    ui_fill_round_rect(fb, body, 4, UI_GRAY_WHITE);
+    ui_draw_round_rect(fb, body, 4, UI_GRAY_BLACK);
+    ui_draw_round_rect(fb, (EpdRect){x + 1, y + 1, 68, 26}, 3, UI_GRAY_BLACK);
+    epd_fill_rect((EpdRect){x + 70, y + 9, 6, 10}, UI_GRAY_BLACK, fb);
+    char label[8];
+    if (permille < 0) strcpy(label, "--");
+    else snprintf(label, sizeof(label), "%d%%", (permille > 1000 ? 1000 : permille) / 10);
+    int px = 20;
+    while (px > 12 && ttf_text_width_px(px, label) > 60) --px;
+    ui_text_vc(fb, x + 35, y + 14, px, label, EPD_DRAW_ALIGN_CENTER, false);
+    if (permille >= 10) {
+        int percent = (permille > 1000 ? 1000 : permille) / 10;
+        int filled = (64 * percent + 50) / 100;
+        battery_invert_charge(fb, (EpdRect){x + 3, y + 3, filled, 22});
+    }
 }
 EpdRect ui_product_back_rect(void) { return (EpdRect){470, 60, 174, 80}; }
 void ui_product_back(uint8_t* fb, const char* label) { ui_draw_button(fb, ui_product_back_rect(), label, false); }
@@ -451,20 +488,43 @@ void ui_product_reader_chrome(uint8_t* fb, const char* title, unsigned page, uns
     while (label_px > 20 && ttf_text_width_px(label_px, label) > track.width) label_px -= 2;
     int status_width = track.width - ttf_text_width_px(label_px, label) - 20;
     if (status && status[0] && status_width > 26)
-        ui_product_title(fb, (EpdRect){track.x, track.y + 54, status_width, 36}, status, 26, 1);
-    ui_text(fb, track.x + track.width, track.y + 54, label_px, label, EPD_DRAW_ALIGN_RIGHT, false);
-    // 进度轨道（开百分比时）：浅灰底线 + 黑色已读段 + 章节起点刻度（千分比位置）。
-    // Progress track (with percent on): a light baseline, the black read segment and
-    // chapter-start ticks at permille positions.
+        ui_product_title(fb, (EpdRect){track.x, track.y + 64, status_width, 36}, status, 26, 1);
+    ui_text(fb, track.x + track.width, track.y + 64, label_px, label, EPD_DRAW_ALIGN_RIGHT, false);
+    // 章节分段胶囊条（开百分比时）：章节起点成为分段缝，已读段纯黑、未读段浅灰，
+    // 当前章内按千分比部分填充；过密的起点就近并入邻段，替代旧的横线加竖刻度。
+    // Chapter-segmented pills (with percent on): chapter starts become gaps; read
+    // segments are solid black and unread light gray, with the current chapter filled
+    // by permille; dense starts merge into neighbors, replacing the old line and ticks.
     if (bar) {
-        int y = track.y + 47;
-        epd_fill_rect((EpdRect){track.x, y, track.width, 3}, UI_GRAY_LIGHT, fb);
-        int fill = (int)((int64_t)track.width * (percent > 100 ? 100 : percent) / 100);
-        if (fill > 0) epd_fill_rect((EpdRect){track.x, y, fill, 3}, UI_GRAY_BLACK, fb);
-        for (int i = 0; ticks && i < tick_count; ++i) {
+        const int seg_min = 7, seg_gap = 2, seg_h = 10;
+        int y = track.y + 46;
+        int bound_x[130], bound_pm[130];
+        int nb = 0;
+        bound_x[nb] = 0; bound_pm[nb] = 0; ++nb;
+        for (int i = 0; ticks && i < tick_count && nb < 129; ++i) {
             if (ticks[i] >= 1000) continue;
-            int x = track.x + (int)((int64_t)track.width * ticks[i] / 1000);
-            epd_fill_rect((EpdRect){x, y - 3, 2, 9}, UI_GRAY_BLACK, fb);
+            int x = (int)((int64_t)track.width * ticks[i] / 1000);
+            if (x - bound_x[nb - 1] < seg_min) continue;
+            bound_x[nb] = x; bound_pm[nb] = (int)ticks[i]; ++nb;
+        }
+        if (track.width - bound_x[nb - 1] < seg_min && nb > 1) --nb;
+        int at = percent > 100 ? 1000 : (int)percent * 10;
+        for (int i = 0; i < nb; ++i) {
+            int x0 = bound_x[i];
+            int x1 = i + 1 < nb ? bound_x[i + 1] : track.width;
+            int w = x1 - x0 - (i + 1 < nb ? seg_gap : 0);
+            if (w <= 0) continue;
+            EpdRect seg = {track.x + x0, y, w, seg_h};
+            ui_fill_round_rect(fb, seg, 3, UI_GRAY_LIGHT);
+            int pm0 = bound_pm[i], pm1 = i + 1 < nb ? bound_pm[i + 1] : 1000;
+            if (at > pm0) {
+                int fill = at >= pm1 ? w : (int)((int64_t)w * (at - pm0) / (pm1 - pm0));
+                if (fill > 0) {
+                    EpdRect part = {seg.x, seg.y, fill, seg_h};
+                    if (fill >= seg_h) ui_fill_round_rect(fb, part, 3, UI_GRAY_BLACK);
+                    else epd_fill_rect(part, UI_GRAY_BLACK, fb);
+                }
+            }
         }
     }
     ui_draw_menu_handle(fb, false);

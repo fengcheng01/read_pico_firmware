@@ -17,13 +17,20 @@ def function(name):
     import re
     found = re.search(r"^static [^\n]+\b" + name + r"\([^\n]*\) \{", text, re.M)
     assert found, name
-    start, at, depth, quote, escape = found.start(), found.end(), 1, None, False
+    start, at, depth, quote, escape, line_comment, block_comment = found.start(), found.end(), 1, None, False, False, False
     while depth:
         c = text[at]
-        if quote:
+        next_c = text[at + 1] if at + 1 < len(text) else ""
+        if line_comment:
+            if c == "\n": line_comment = False
+        elif block_comment:
+            if c == "*" and next_c == "/": block_comment = False; at += 1
+        elif quote:
             if escape: escape = False
             elif c == "\\": escape = True
             elif c == quote: quote = None
+        elif c == "/" and next_c == "/": line_comment = True; at += 1
+        elif c == "/" and next_c == "*": block_comment = True; at += 1
         elif c in "\"'": quote = c
         elif c == "{": depth += 1
         elif c == "}": depth -= 1
@@ -86,9 +93,10 @@ static char s_sync_note[128], s_resume_name[256];
 static void os_sync_job_cancel(void) {}
 static void apply_entry(app_ctx_t* ctx);
 static bool s_catalog_valid;
+static int64_t s_eta_since;
 #include "book_store.h"
 // 根结构用真实头文件，避免与 book_entry 的 ABI 分叉。/ Real header for the root struct; no ABI fork with book_entry.
-typedef struct {uint32_t file_size;uint16_t chapter;uint32_t byte_off;uint8_t px,pct;uint32_t last_open_s;uint32_t read_ms,pages;} book_progress_t;
+typedef struct {uint32_t file_size;uint16_t chapter;uint32_t byte_off;uint8_t px,pct,pct_frac;bool approximate;uint32_t last_open_s;uint32_t read_ms,pages;} book_progress_t;
 typedef struct book_progress_watch {char path[288];atomic_bool invalidated;struct book_progress_watch* next;} book_progress_watch_t;
 static book_progress_watch_t* test_watches;
 static book_progress_watch_t* book_progress_watch_create(const char* path){book_progress_watch_t* w=calloc(1,sizeof(*w));assert(w);strcpy(w->path,path);atomic_init(&w->invalidated,false);w->next=test_watches;test_watches=w;return w;}
@@ -140,6 +148,7 @@ static int test_save_error,test_last_error,test_save_calls,test_last_calls;
 static size_t book_layout_page_count(void){return 3;}
 static size_t book_layout_page_start_offset(size_t page){return page*100;}
 static unsigned percent(size_t page){return (unsigned)page*20;}
+static unsigned percent_basis_points(size_t page){return percent(page)*100+37;}
 int book_progress_save(const char* p,const book_progress_t* value){(void)p;(void)value;test_save_calls++;return test_save_error;}
 int book_progress_set_last_path(const char* p){test_last_calls++;if(!test_last_error)snprintf(test_last_path,sizeof(test_last_path),"%s",p);return test_last_error;}
 static bool book_progress_last_path(char* out,size_t cap){snprintf(out,cap,"%s",test_last_path);return *out!=0;}
@@ -166,6 +175,7 @@ static bool s_boot_resume;
 static int s_du_count;
 static int64_t s_size_settle_ms,s_poll_ms;
 static void* s_prep_task,*s_prep_done,*s_draw_lock,*s_next_fb;
+static bool s_prep_sync_suspended;
 static void ensure_prep(void){}
 // 断电续读标记替身：不触 NVS，按测试需要读端恒为关。/ Power-cut reading-marker
 // stand-in: no NVS; the read side always reports off unless a test arms it.
@@ -206,7 +216,9 @@ static void ui_text(uint8_t* fb,int x,int y,int px,const char* text,int align,bo
 
 static bool s_ended;
 static unsigned s_mark_count;
-static bool s_ended;
+static bool s_cover_diag_pending;
+static int s_cover_prefetch_leaf=-1,s_cover_prefetch_pos;
+static void shelf_cover_restore(app_ctx_t* ctx){(void)ctx;}
 static void covers_reset(void);
 __attribute__((unused)) static int book_marks_next(const char* path, unsigned long cap){(void)path;(void)cap;return -1;}
 __attribute__((unused)) static void marks_reload(void){ s_mark_count = 0; }
@@ -234,7 +246,7 @@ __attribute__((unused)) static int64_t esp_timer_get_time(void){return 0;}
 '''
 unit += (source.parents[1] / "book/book_entry.h").read_text().replace('#include "book_store.h"', '').replace('#pragma once', '')
 unit += 'static book_entry_request_t s_entry;\nstatic bool s_entry_active;\nstatic bool s_quote_selecting;\nstatic EpdRect quote_button(int i){return (EpdRect){40+i*310,944,294,70};}\nstatic bool choose_quote(int x,int y){(void)x;(void)y;return false;}\nstatic app_redraw_t quote_action(bool save){(void)save;s_quote_selecting=false;return APP_REDRAW_PAGE;}\n'
-unit += 'static unsigned s_read_ms, s_pages;\nstatic bool s_full_settle;\nstatic bool s_scrub;\nstatic bool scrub_ready(void){return false;}\nstatic void scrub_begin(app_ctx_t* ctx,int x){(void)ctx;(void)x;}\nstatic void scrub_move(app_ctx_t* ctx,int x){(void)ctx;(void)x;}\nstatic app_redraw_t scrub_commit(app_ctx_t* ctx,int x){(void)ctx;(void)x;return APP_REDRAW_PAGE;}\nstatic void scrub_restore(app_ctx_t* ctx){(void)ctx;}\n'
+unit += 'static unsigned s_read_ms, s_pages;\nstatic bool s_full_settle;\nstatic bool s_scrub;\nstatic int s_scrub_paint_x;\nstatic bool scrub_ready(void){return false;}\nstatic void scrub_begin(app_ctx_t* ctx,int x){(void)ctx;(void)x;}\nstatic void scrub_move(app_ctx_t* ctx,int x){(void)ctx;(void)x;}\nstatic app_redraw_t scrub_commit(app_ctx_t* ctx,int x){(void)ctx;(void)x;return APP_REDRAW_PAGE;}\nstatic void scrub_restore(app_ctx_t* ctx){(void)ctx;}\n'
 unit += source.read_text()[source.read_text().index('static book_store_root_t s_scan_roots'):source.read_text().index('static void scan_close')]
 unit += 'static void book_cover_join(void) {}\nstatic unsigned book_progress_revision(void) { return 0; }\n'
 unit += '// 开书事务只影响自动续读询问；替身保持允许，让 UI 行为与未接入时一致。/ The open transaction only gates automatic prompts; the stub stays permissive so UI behavior is unchanged.\n'

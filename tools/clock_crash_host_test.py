@@ -54,7 +54,7 @@ static void reset_boot(void) {
  tick_us=0; network_us=0; saved_ppm=0; saved_count=0; ignored_write=false; ntp_event=false;
  snapshot=(pmu_snapshot_t){0}; os_time_apply(0,32);
  s_pending=false; s_written=false; s_boot_abnormal=false;
- reset_reason=3; mount_result=ESP_OK; mount_calls=0; file_calls=0; fail_log_write=false;
+ reset_reason=4; mount_result=ESP_OK; mount_calls=0; file_calls=0; fail_log_write=false;
  assert(unlink(host_log_path)==0 || errno==ENOENT);
 }
 static void advance_awake(int seconds) {
@@ -75,7 +75,7 @@ static void assert_record(uint32_t utc, int reason) {
 }
 static void nonzero_boot_tick(void) {
  const uint32_t base=1791400000;
- for(int reason=3;reason<=7;++reason) {
+ for(int reason=4;reason<=7;++reason) {
   reset_boot(); reset_reason=reason; tick_us=120000000;
   network_us=(int64_t)base*1000000; snapshot.time_ok=true; snapshot.unix_sec=base;
   os_crash_boot_check(); assert(os_crash_boot_abnormal() && s_pending && !s_written);
@@ -88,7 +88,7 @@ static void nonzero_boot_tick(void) {
   int mounts=mount_calls,files=file_calls; os_crash_flush();
   assert(mount_calls==mounts && file_calls==files);
  }
- puts("crash clock: all five abnormal reasons at boot tick 120s anchor current PMU without adding boot uptime PASS");
+ puts("crash clock: panic and watchdog reasons at boot tick 120s anchor current PMU without adding boot uptime PASS");
 }
 static void assert_trusted(uint32_t anchor_sec, int64_t anchor_ms, os_clock_rate_t rate, uint32_t utc) {
  assert(os_time_info()->unix_utc==utc && s_anchored && os_time_recently_synced());
@@ -112,7 +112,7 @@ static void deferred_log_retry_preserves_learning(void) {
  }
  os_clock_rate_t rate=s_rate; uint32_t utc=os_time_info()->unix_utc;
  fail_log_write=false; os_crash_flush(); assert(!s_pending && s_written);
- assert_trusted(anchor_sec,anchor_ms,rate,utc); assert_record(utc,3);
+ assert_trusted(anchor_sec,anchor_ms,rate,utc); assert_record(utc,4);
  // 延迟重试后第二网络锚点仍能覆盖之前的睡眠样本。/ The second network anchor still covers sleep samples preceding the delayed retry.
  advance_sleep(45); sync();
  assert(saved_ppm==4184 && saved_count==1 && s_rate.result==OS_CLOCK_LEARNED);
@@ -128,11 +128,11 @@ static void unavailable_mount_and_time(void) {
  assert(s_pending && !s_written && file_calls==0);
  assert_trusted(anchor_sec,anchor_ms,rate,utc);
  mount_result=ESP_OK; os_crash_flush(); assert(!s_pending && s_written);
- assert_trusted(anchor_sec,anchor_ms,rate,utc); assert_record(utc,3);
+ assert_trusted(anchor_sec,anchor_ms,rate,utc); assert_record(utc,4);
  reset_boot(); tick_us=120000000; network_us=1791400000000000LL;
  os_crash_boot_check(); os_crash_flush();
  assert(!s_pending && s_written && !s_anchored && !s_rate.sampled);
- assert(os_time_info()->state!=OS_TIME_VALID); assert_record(0,3);
+ assert(os_time_info()->state!=OS_TIME_VALID); assert_record(0,4);
  puts("crash clock: mount retry preserves trusted time; unavailable PMU records unknown UTC without inventing an anchor PASS");
 }
 static void normal_boot_is_noop(void) {
@@ -166,7 +166,7 @@ args = parser.parse_args()
 with tempfile.TemporaryDirectory(prefix="pico-clock-crash-", dir="/tmp") as folder:
     d = Path(folder)
     (d / "test.c").write_text(harness)
-    flags = ["-std=gnu11", "-Wall", "-Wextra", "-Werror", "-g", "-fsanitize=address,undefined"]
+    flags = ["-std=gnu11", "-Wall", "-Wextra", "-Werror", "-g", "-DCONFIG_LWIP_SNTP_MAX_SERVERS=2", "-fsanitize=address,undefined"]
     if os.uname().sysname == "Darwin":
         flags += ["-isysroot", "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"]
     subprocess.run([os.environ.get("CC", "cc"), *flags, "-Imain/os", str(d / "test.c"),

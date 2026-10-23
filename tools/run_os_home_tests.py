@@ -9,6 +9,13 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 flags = ["-std=gnu11", "-Wall", "-Wextra", "-Werror", "-g", "-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
+# 设备和 CI 必须使用同一条已测 P-256 TLS 曲线；内存回归由常驻 PSRAM 同步栈另行覆盖。
+# Device and CI must share the tested P-256 TLS curve; the persistent PSRAM sync-stack test covers memory regressions separately.
+for config_name in ("sdkconfig.defaults", "sdkconfig.ci"):
+    config = (ROOT / config_name).read_text(encoding="utf-8")
+    assert "CONFIG_FREERTOS_TASK_CREATE_ALLOW_EXT_MEM=y" in config
+    assert "CONFIG_MBEDTLS_ECP_DP_SECP256R1_ENABLED=y" in config
+    assert "CONFIG_MBEDTLS_ECP_DP_CURVE25519_ENABLED=n" in config
 if os.uname().sysname == "Darwin":
     developer = Path(subprocess.check_output(["xcode-select", "-p"], text=True).strip())
     sdk = Path(os.environ.get("PREVIEW_MACOS_SDK", developer / "Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"))
@@ -16,13 +23,14 @@ if os.uname().sysname == "Darwin":
         flags += ["-isysroot", str(sdk)]
 with tempfile.TemporaryDirectory(prefix="rp-os.", dir="/tmp") as folder:
     includes = ["-Imain/book", "-Imain/os", "-Imanaged_components/espressif__cjson/cJSON", "-Imain/app", "-Itools/book_storage_stubs", "-Icomponents/read_pico/include"]
-    for name, sources in (("home", ["tools/os_home_host_test.c", "main/book/book_home.c", "main/book/book_entry.c"]),
+    for name, sources in (("eta", ["tools/book_eta_host_test.c"]),
+                          ("home", ["tools/os_home_host_test.c", "main/book/book_home.c", "main/book/book_entry.c"]),
                           ("store", ["tools/book_store_host_test.c"]),
                           ("device", ["tools/os_device_host_test.c", "main/os/os_device_pico.c"]),
                           ("product", ["tools/ui_product_host_test.c", "main/ui/product/ui_product.c", "main/ui/ui_dither.c", "main/book/book_entry.c", "main/os/os_lunar.c"]),
                           ("time", ["tools/os_time_host_test.c", "main/os/os_time.c"]),
                           ("xpointer", ["tools/book_xpointer_host_test.c", "main/book/book_xpointer.c", "main/book/html_text.c"]),
-                          ("records", ["tools/book_records_host_test.c", "main/book/book_stats.c", "main/book/book_stats_store.c", "main/book/book_quotes.c"]),
+                          ("records", ["tools/book_records_host_test.c", "main/book/book_stats.c", "main/book/book_stats_store.c", "main/book/book_stats_archive.c", "main/book/book_quotes.c", "main/os/os_time.c"]),
                           ("stats", ["tools/book_stats_host_test.c", "main/book/book_stats.c"]),
                           ("sleep", ["tools/app_sleep_hooks_host_test.c", "main/app/app_sleep_hooks.c"]),
                           ("sync", ["tools/os_sync_host_test.c", "main/os/os_sync.c", "managed_components/espressif__cjson/cJSON/cJSON.c"]),
@@ -58,5 +66,10 @@ with tempfile.TemporaryDirectory(prefix="rp-os.", dir="/tmp") as folder:
         elif name == "product":
             target_includes = ["-Imain/book", "-Imain/font", "-Imain/ui", "-Imain/ui/product", "-Imain/app", "-Imain/os", "-Itools/os_home_stubs", "-Itools/app_loop_stubs", "-Itools/book_layout_stubs"]
         subprocess.run([os.environ.get("CC", "cc"), *target_flags, *target_includes, *sources, "-o", binary], cwd=ROOT, check=True)
-        subprocess.run([binary, folder] if name == "home" else [binary], cwd=ROOT, check=True,
+        subprocess.run([binary, folder] if name in ("home","records") else [binary], cwd=ROOT, check=True,
                        env=dict(os.environ, UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1"))
+
+# 睡眠硬件边界以故障注入回归覆盖；不把宿主通过当成实机功耗验收。
+# Fault-inject sleep hardware boundaries without treating host passes as device power acceptance.
+for script in ("history_host_test.py", "epd_power_host_test.py", "sleep_power_host_test.py", "lock_sleep_host_test.py"):
+    subprocess.run([os.environ.get("PYTHON", "python3"), str(ROOT / "tools" / script)], cwd=ROOT, check=True)

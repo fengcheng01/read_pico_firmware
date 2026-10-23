@@ -34,6 +34,7 @@ static EpdRect back_rect(void) { return ui_product_back_rect(); }
 static EpdRect refresh_rect(void) { return (EpdRect){UI_MARGIN, 880, 260, 84}; }
 
 static EpdRect usb_rect(void) { return (EpdRect){324, 880, 320, 84}; }
+static EpdRect battery_rect(void) { return (EpdRect){UI_MARGIN, 984, ui_content_width(), 72}; }
 static ui_press_t s_press;
 static bool pressed_id(int id) { return ui_press_active(&s_press) && s_press.id == id; }
 static bool s_usb_confirm, s_usb_start;
@@ -103,6 +104,7 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
     (void)ctx;
     ui_clear_page(fb);
     ui_product_header(fb, "存储", "卡与容量");
+    if (pressed_id(100)) ui_draw_pressed_round_rect(fb, back_rect(), UI_BTN_RADIUS);
     ui_draw_button(fb, back_rect(), "返回设置", false);
     ui_text(fb, UI_MARGIN, 214, 30, "TF 卡（图书与字库）", EPD_DRAW_ALIGN_LEFT, false);
     char line[96];
@@ -137,6 +139,7 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
     ui_draw_button(fb, refresh_rect(), "重新检测", !s_probing);
     if (pressed_id(1)) ui_draw_pressed_round_rect(fb, usb_rect(), UI_BTN_RADIUS);
     ui_draw_button(fb, usb_rect(), "USB 连接电脑", false);
+    ui_draw_button(fb, battery_rect(), "电量历史 ›", false);
     if (s_usb_confirm) {
         // 确认走统一底部面板：原按钮不变身，取消/确认位置固定。
         // Confirmation uses the shared bottom sheet: source buttons keep their identity and Cancel/Confirm stay put.
@@ -165,6 +168,7 @@ static int control_at(uint16_t x, uint16_t y, EpdRect* rect) {
     if (ui_rect_hit(back_rect(), x, y)) { if (rect) *rect = back_rect(); return 100; }
     if (!s_probing && ui_rect_hit(refresh_rect(), x, y)) { if (rect) *rect = refresh_rect(); return 0; }
     if (ui_rect_hit(usb_rect(), x, y)) { if (rect) *rect = usb_rect(); return 1; }
+    if (ui_rect_hit(battery_rect(), x, y)) { if (rect) *rect = battery_rect(); return 4; }
     return -1;
 }
 
@@ -179,6 +183,7 @@ static app_redraw_t gesture(app_ctx_t* ctx, const ui_gesture_event_t* ev) {
     ui_press_forget(&s_press);
     app_redraw_t result = APP_REDRAW_NONE;
     if (id >= 0 && id == control_at(ev->x, ev->y, NULL)) {
+        if (id == 4) { ctx->request_app = app_by_id(OS_APP_BATTERY); return APP_REDRAW_NONE; }
         if (id == 2) s_usb_confirm = false;
         else if (id == 3) s_usb_start = true;
         else if (id == 1) {

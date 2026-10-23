@@ -11,9 +11,10 @@
 #include <stdio.h>
 #define BOOK_CHAPTER_MAX 2048
 #define BOOK_CHAPTER_BYTES_MAX (96 * 1024)
+#define BOOK_CHAPTER_TITLE_MAX 96
 typedef struct {
     uint32_t offset; ///< 原文件偏移 / Original file offset
-    char title[41]; ///< UTF-8 标题 / UTF-8 title
+    char title[BOOK_CHAPTER_TITLE_MAX + 1]; ///< UTF-8 标题 / UTF-8 title
 } book_entry_t;
 typedef struct {
     FILE *file; ///< 文件句柄 / File handle

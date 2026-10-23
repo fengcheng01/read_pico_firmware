@@ -14,6 +14,7 @@ static bool have_disk;
 static size_t disk_length=sizeof(preferences_t);
 static int nvs_failure, starts, stops, connects, start_error, stop_error;
 static bool headroom_ok = true;
+static bool reclaim_restores = true;
 static int reclaims;
 static os_ble_snapshot_t radio;
 static os_ble_input_t input[16];
@@ -25,7 +26,7 @@ esp_err_t nvs_set_blob(nvs_handle_t h,const char* key,const void* p,size_t n){as
 esp_err_t nvs_get_u8(nvs_handle_t h,const char* key,uint8_t* p){assert(h==1&&!strcmp(key,"tries"));*p=tries_disk;return ESP_OK;}
 esp_err_t nvs_set_u8(nvs_handle_t h,const char* key,uint8_t p){assert(h==1&&!strcmp(key,"tries"));tries_pending=p;return nvs_failure==2?ESP_FAIL:ESP_OK;}
 esp_err_t nvs_commit(nvs_handle_t h){assert(h==1);if(nvs_failure==3)return ESP_FAIL;disk=pending;disk_length=sizeof(disk);have_disk=true;tries_disk=tries_pending;return ESP_OK;}
-esp_err_t os_ble_radio_start(void){++starts;radio.phase=start_error?OS_BLE_ERROR:OS_BLE_IDLE;if(start_error)snprintf(radio.error,sizeof(radio.error),"injected startup failure");return start_error?ESP_FAIL:ESP_OK;}
+esp_err_t os_ble_radio_start(void){++starts;if(!headroom_ok){radio.phase=OS_BLE_ERROR;snprintf(radio.error,sizeof(radio.error),"蓝牙内存不足，请退出图书后重试");return ESP_ERR_NO_MEM;}radio.phase=start_error?OS_BLE_ERROR:OS_BLE_IDLE;if(start_error)snprintf(radio.error,sizeof(radio.error),"injected startup failure");return start_error?ESP_FAIL:ESP_OK;}
 esp_err_t os_ble_radio_stop(void){++stops;if(stop_error)return ESP_FAIL;radio.phase=OS_BLE_OFF;return ESP_OK;}
 esp_err_t os_ble_radio_scan(void){radio.phase=OS_BLE_SCANNING;return ESP_OK;}
 esp_err_t os_ble_radio_connect(const os_ble_peer_t* peer){++connects;radio.peer=*peer;radio.phase=OS_BLE_CONNECTING;return ESP_OK;}
@@ -35,7 +36,7 @@ void os_ble_radio_snapshot(os_ble_snapshot_t* out){*out=radio;}
 bool os_ble_radio_pop(os_ble_input_t* out){if(tail==head)return false;*out=input[tail++%16];return true;}
 void os_ble_radio_clear(void){head=tail=0;}
 bool os_ble_radio_headroom(void){return headroom_ok;}
-static void count_reclaim(void){++reclaims;headroom_ok=true;}
+static void count_reclaim(void){++reclaims;if(reclaim_restores)headroom_ok=true;}
 static void key(uint32_t at,uint8_t usage){os_ble_input_t e={.at_ms=at,.len=8};e.bytes[2]=usage;e.key=ble_hid_boot(e.bytes,8);input[head++%16]=e;}
 static void raw(uint32_t at,uint8_t value){os_ble_input_t e={.at_ms=at,.len=1,.bytes={value}};input[head++%16]=e;}
 // 非标准帧可落在任意通道：学习与触发允许使用不同通道号。/ Raw frames may arrive on any channel: learning and triggering may use distinct indices.
@@ -163,6 +164,35 @@ int main(void) {
     headroom_ok=false;
     os_page_turner_poll(330000,true,true);
     assert(reclaims==1&&starts==7);
+    // 同步余量失败尚未创建无线栈；离页必须清ERROR与启动次数，下一次进页立即重试。
+    // A synchronous headroom failure owns no radio stack; leaving must clear ERROR/attempts so re-entry retries immediately.
+    assert(os_page_turner_pause());os_page_turner_enter();
+    reclaim_restores=false;headroom_ok=false;int failed_starts=starts;
+    os_page_turner_poll(331000,true,true);
+    assert(starts==failed_starts+1&&radio.phase==OS_BLE_ERROR&&strstr(s_info.note,"内存不足")&&tries_disk==1);
+    os_page_turner_leave();assert(radio.phase==OS_BLE_OFF&&tries_disk==0);
+    headroom_ok=true;reclaim_restores=true;os_page_turner_enter();os_page_turner_poll(331001,true,true);
+    assert(starts==failed_starts+2);
     os_page_turner_set_reclaimer(NULL);
+    // 持续失联在失败完成后退避；边界前不连接，成功/手动操作立即复位。
+    // Back off after each completed failure; never retry before the deadline, and reset on success/manual action.
+    radio.phase=OS_BLE_READY;os_page_turner_poll(400000,true,true);
+    radio.phase=OS_BLE_IDLE;os_page_turner_poll(401000,true,true);
+    assert(s_reconnect_pending&&radio.phase==OS_BLE_CONNECTING);
+    int64_t failed_at=420000;
+    const unsigned delays[]={10000,20000,40000,80000,160000,300000,300000};
+    for(unsigned i=0;i<sizeof(delays)/sizeof(delays[0]);++i){
+        radio.phase=OS_BLE_ERROR;int previous=connects;
+        os_page_turner_poll(failed_at,true,true);
+        assert(s_retry_at==failed_at+delays[i]);
+        os_page_turner_poll(failed_at+delays[i]-1,true,true);assert(connects==previous);
+        os_page_turner_poll(failed_at+delays[i],true,true);assert(connects==previous+1);
+        failed_at+=delays[i]+18000;
+    }
+    radio.phase=OS_BLE_READY;os_page_turner_poll(failed_at,true,true);assert(!s_reconnect_step&&!s_reconnect_pending);
+    radio.phase=OS_BLE_IDLE;s_retry_at=failed_at+300000;s_reconnect_step=5;
+    int previous=connects;assert(os_page_turner_connect(&s_prefs.peer));assert(connects==previous+1&&!s_reconnect_step);
+    assert(os_page_turner_disconnect());radio.phase=OS_BLE_IDLE;previous=connects;
+    os_page_turner_poll(failed_at+900000,true,true);assert(connects==previous);
     puts("BLE HID decoder, malformed input, persistence faults, learning, input gates and reconnect lifecycle: PASS");
 }

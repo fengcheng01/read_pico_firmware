@@ -82,6 +82,13 @@ static void start_sync(app_ctx_t* ctx) {
     s_sync_claimed = true;
     read_pico_transfer_status_t status;
     read_pico_transfer_get_status(&status);
+    // 上次对时或其他按需联网若留在 ERROR，先收拢共享 WiFi 会话再重启。
+    // If an earlier time sync or another on-demand client left ERROR behind, normalize the shared WiFi session before restarting it.
+    if (status.state == READ_PICO_TRANSFER_ERROR && !read_pico_transfer_try_stop_if_idle()) {
+        s_sync_note = "网络正忙，请稍后重试";
+        stop_sync(); return;
+    }
+    read_pico_transfer_get_status(&status);
     if (status.state != READ_PICO_TRANSFER_STOPPED) {
         s_sync_note = "网络正忙，请稍后重试";
         stop_sync(); return;
@@ -242,7 +249,7 @@ static app_redraw_t on_tick(app_ctx_t* ctx) {
             stop_sync(); return APP_REDRAW_PAGE;
         }
         if (status.state == READ_PICO_TRANSFER_ERROR || status.state == READ_PICO_TRANSFER_STOPPED ||
-            ctx->now_ms - s_sync_started >= 30000) {
+            ctx->now_ms - s_sync_started >= 55000) {
             s_sync_note = "对时失败，请检查网络后重试";
             stop_sync(); return APP_REDRAW_PAGE;
         }

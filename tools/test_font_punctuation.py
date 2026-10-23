@@ -170,10 +170,44 @@ static void check_curves(void) {
     assert(changed && total_new<total_old);
     printf("curve reference absolute coverage error: %u -> %u\n",total_old,total_new);
 }
+// 实际字形对照只改变目标灰码，不改变缓存/度量/满墨；切回原档逐字节恢复。
+// Real glyph comparison changes only gray codes, retaining cache/metrics/full ink; returning to original restores every byte.
+static void check_edge_styles(void) {
+    ttf_set_stroke(0);
+    ttf_set_precise_curves(true);
+    ttf_set_edge_style(0);
+    int advance = ttf_text_width_px(48, "S");
+    const glyph_entry_t* glyph = get_glyph('S', 48); assert(glyph);
+    draw(actual, "S", 48, 0, false); memcpy(light, actual, FB_BYTES);
+    ttf_set_edge_style(1);
+    draw(expected, "S", 48, 0, false);
+    ttf_set_edge_style(2);
+    draw(actual, "S", 48, 0, false);
+    assert(memcmp(actual, expected, FB_BYTES));
+    assert(memcmp(actual, light, FB_BYTES));
+    assert(cache_lookup('S',48)==glyph && ttf_text_width_px(48,"S")==advance);
+    memcpy(expected, actual, FB_BYTES);
+    draw(actual, "S", 48, 0, false); assert(!memcmp(actual, expected, FB_BYTES));
+    for (int gy=0;gy<glyph->height;++gy) for (int gx=0;gx<glyph->width;++gx) {
+        int x=120+glyph->left+gx, y=100-glyph->top+gy;
+        assert(x>=0 && x<FB_WIDTH && y>=0 && y<FB_HEIGHT);
+        int code=(actual[((size_t)y*FB_WIDTH+x)/2] >> ((x&1)?4:0))&15;
+        int alpha=glyph->bitmap[gy*glyph->width+gx];
+        if(alpha==0) assert(code==15);
+        if(alpha==255) assert(code==0);
+    }
+    ttf_set_edge_style(0); draw(actual,"S",48,0,false); assert(!memcmp(actual,light,FB_BYTES));
+    ttf_set_edge_style(255); assert(!ttf_get_edge_optimize());
+    ttf_set_edge_optimize(true); assert(current_edge_style==1);
+    ttf_set_edge_optimize(false); assert(current_edge_style==0);
+    ttf_set_precise_curves(false);
+}
+
 static void check_fixture(const char* path, int mode) {
     host_largest_block = 0;
     assert(ttf_font_open(path) == ESP_OK);
     check_curves();
+    check_edge_styles();
     int native = stbtt_FindGlyphIndex(&font_info, 0x22ef);
     int alias = stbtt_FindGlyphIndex(&font_info, 0x2026);
     assert((native != 0) == (mode == 0 || mode == 3));

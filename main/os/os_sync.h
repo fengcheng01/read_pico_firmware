@@ -36,6 +36,7 @@ typedef enum {
     OS_SYNC_EXISTS, ///< 402，注册时用户名已存在 / 402, username taken
     OS_SYNC_SERVER, ///< 其它非 2xx / Other non-2xx
     OS_SYNC_PARSE, ///< 响应或进度串解析失败 / Response or progress parse failure
+    OS_SYNC_VERIFY, ///< 上传后服务器回读未确认 / Server readback did not confirm a push
     OS_SYNC_IO, ///< 参数/文档哈希失败 / Bad arguments or hashing failure
 } os_sync_result_t;
 const char* os_sync_result_name(os_sync_result_t result);
@@ -91,9 +92,12 @@ typedef enum {
     OS_SYNC_JOB_REGISTER, ///< 注册账号 / Register credentials
     OS_SYNC_JOB_PUSH, ///< 上传快照 / Push a snapshot
     OS_SYNC_JOB_PULL, ///< 下载待确认位置 / Pull a position for confirmation
+    OS_SYNC_JOB_MERGE, ///< 首页先拉取并保留较大百分比 / Home pull-first, keep the larger percentage
 } os_sync_job_t;
 /// UI 任务准备快照，最多一个后台请求；note 给出启动结果。/ UI prepares a snapshot for at most one worker; note reports admission.
 bool os_sync_job_start(os_sync_job_t job, char* note, size_t cap);
+/// 首页对指定图书自动双向同步；远端较大时写回本机，其余情况上传本机。/ Auto-sync this book; apply a larger remote percentage or push local.
+bool os_sync_job_start_book(const char* path, char* note, size_t cap);
 /// UI 非阻塞接收结果；下载成功只准备待确认记录，不写 NVS。/ UI polls without blocking; successful pulls stage a record without NVS writes.
 bool os_sync_job_poll(char* note, size_t cap);
 /// 是否有正在执行的请求。/ Whether a request is running.

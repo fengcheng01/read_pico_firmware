@@ -18,6 +18,8 @@
  * periodic background polling; UI owns on-demand saved-WiFi sessions, the worker waits for STA and network-only sessions never start upload HTTP; the password persists only as MD5; pulls apply the exact
  * rp1 position only when file sizes match; for user-requested accuracy, the worker independently reads EPUB ancestry, text nodes and Unicode offsets, retaining legacy paragraphs and clearly approximating unsupported positions by percentage;
  * pulls apply positions only while font tiers stay local, never restoring remote or global defaults.
+ * 冻结修订：用户要求首页显式同步先查远端，按 0.01% 精度保留更远位置；远端无记录或不更远才上传，手动下载仍需确认。
+ * Frozen revision: Explicit home sync checks remote first and keeps the farther 0.01%-precision position; push only when remote is absent or not ahead, while manual pulls still require confirmation.
  */
 #include "os_sync.h"
 #include "os_page_turner.h"
@@ -27,6 +29,7 @@
 #include "book_epub.h"
 #include "esp_crt_bundle.h"
 #include "esp_http_client.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_rom_md5.h"
@@ -166,6 +169,10 @@ void os_sync_set_password(const char* plain) {
 
 /* ---- 单请求快照 / Single-request snapshot ---- */
 static SemaphoreHandle_t s_done;
+static TaskHandle_t s_worker_task;
+static StaticTask_t s_worker_tcb;
+static StackType_t* s_worker_stack;
+#define SYNC_STACK_BYTES 12288
 static bool s_running, s_pending, s_network_owned, s_claimed;
 static void release_session(void) {
     if (s_claimed) read_pico_transfer_release_sync();
@@ -175,6 +182,12 @@ static void release_session(void) {
 }
 static bool prepare_network(char* note, size_t cap) {
     if (!os_page_turner_pause()) { snprintf(note, cap, "请先关闭蓝牙再同步"); return false; }
+    char ssid[33];
+    bool configured = false;
+    if (read_pico_transfer_get_saved_wifi(ssid, &configured) != ESP_OK || !configured) {
+        snprintf(note, cap, "请先到设置配置 WiFi");
+        return false;
+    }
     if (!read_pico_transfer_claim_sync()) { snprintf(note, cap, "正在上传或删除，请完成后再同步"); return false; }
     s_claimed = true;
     read_pico_transfer_status_t status;
@@ -182,8 +195,11 @@ static bool prepare_network(char* note, size_t cap) {
     if (status.state != READ_PICO_TRANSFER_STOPPED && status.mode == READ_PICO_TRANSFER_MODE_STA &&
         status.state != READ_PICO_TRANSFER_ERROR) return true;
     if (!read_pico_transfer_try_stop_if_idle()) { release_session(); return false; }
-    if (read_pico_transfer_start_saved_network() != ESP_OK) {
-        snprintf(note, cap, "无法连接已保存 WiFi，请先到设置配置网络"); release_session(); return false;
+    esp_err_t err = read_pico_transfer_start_saved_network();
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "saved WiFi start failed: %s", esp_err_to_name(err));
+        snprintf(note, cap, "%s", err == ESP_ERR_NO_MEM ? "同步联网内存不足，请稍后重试" : "WiFi 启动失败，请稍后重试");
+        release_session(); return false;
     }
     s_network_owned = true;
     return true;
@@ -192,62 +208,148 @@ static atomic_bool s_cancel, s_link_ready;
 static os_sync_job_t s_job;
 static os_sync_config_t s_config;
 static char s_path[288], s_doc[33], s_position[OS_SYNC_PROGRESS_MAX];
+static char s_remote_position[OS_SYNC_PROGRESS_MAX];
 static book_progress_t s_local, s_remote;
 static bool s_has_local;
 static uint32_t s_size;
-static float s_percent;
+static float s_percent, s_remote_percent;
+static float s_confirmed_percent;
 static os_sync_result_t s_result;
+static bool s_remote_ahead, s_merge_apply;
 static bool s_paragraph;
 static uint16_t s_paragraph_chapter;
 static uint32_t s_paragraph_byte;
 static bool sync_cancelled(void) { return atomic_load(&s_cancel); }
+static unsigned percent_points(float value) {
+    unsigned points = (unsigned)(value * 10000 + 0.5f);
+    return points > 10000 ? 10000 : points;
+}
 
 static void sync_worker(void* arg) {
     (void)arg;
-    int64_t deadline = esp_timer_get_time() + 16000000;
-    read_pico_transfer_status_t status;
-    do {
-        read_pico_transfer_get_status(&status);
-        if (status.mode == READ_PICO_TRANSFER_MODE_STA && status.network_ready) break;
-        if (sync_cancelled() || status.state == READ_PICO_TRANSFER_ERROR ||
-            status.state == READ_PICO_TRANSFER_STOPPED || esp_timer_get_time() >= deadline) {
-            s_result = OS_SYNC_OFFLINE; goto done;
+    for (;;) {
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        // 关联路由器和 DHCP 各有独立时限；后台等待覆盖完整建链窗口。
+        // Router association and DHCP have separate deadlines; cover the complete link window here.
+        int64_t deadline = esp_timer_get_time() + 55000000;
+        read_pico_transfer_status_t status;
+        do {
+            read_pico_transfer_get_status(&status);
+            if (status.mode == READ_PICO_TRANSFER_MODE_STA && status.network_ready) break;
+            if (sync_cancelled() || status.state == READ_PICO_TRANSFER_ERROR ||
+                status.state == READ_PICO_TRANSFER_STOPPED || esp_timer_get_time() >= deadline) {
+                s_result = OS_SYNC_OFFLINE; goto done;
+            }
+            vTaskDelay(pdMS_TO_TICKS(100));
+        } while (true);
+        atomic_store(&s_link_ready, true);
+        if (sync_cancelled()) { s_result = OS_SYNC_OFFLINE; goto done; }
+        const char* ext = strrchr(s_path, '.');
+        bool epub = ext && !strcasecmp(ext, ".epub");
+        if ((s_job == OS_SYNC_JOB_PUSH || s_job == OS_SYNC_JOB_MERGE) &&
+            s_has_local && epub && !s_local.approximate) {
+            char position[OS_SYNC_PROGRESS_MAX];
+            if (book_epub_sync_encode(s_path, s_local.chapter, s_local.byte_off, position, sizeof(position)))
+                memcpy(s_position, position, strlen(position) + 1);
         }
-        vTaskDelay(pdMS_TO_TICKS(100));
-    } while (true);
-    atomic_store(&s_link_ready, true);
-    if (sync_cancelled()) { s_result = OS_SYNC_OFFLINE; goto done; }
-    const char* ext = strrchr(s_path, '.');
-    bool epub = ext && !strcasecmp(ext, ".epub");
-    if (s_job == OS_SYNC_JOB_PUSH && epub && !s_local.approximate) {
-        char position[OS_SYNC_PROGRESS_MAX];
-        if (book_epub_sync_encode(s_path, s_local.chapter, s_local.byte_off, position, sizeof(position)))
-            memcpy(s_position, position, strlen(position) + 1);
-    }
-    if (sync_cancelled()) { s_result = OS_SYNC_OFFLINE; goto done; }
-    if (s_job == OS_SYNC_JOB_AUTH) s_result = os_sync_auth(&s_config);
-    else if (s_job == OS_SYNC_JOB_REGISTER) s_result = os_sync_register(&s_config);
-    else if (s_job == OS_SYNC_JOB_PUSH) s_result = os_sync_push(&s_config, s_doc, s_position, s_percent);
-    else s_result = os_sync_pull(&s_config, s_doc, s_position, sizeof(s_position), &s_percent);
-    if (s_job == OS_SYNC_JOB_PULL && s_result == OS_SYNC_OK && epub && !sync_cancelled())
-        s_paragraph = book_epub_sync_decode(s_path, s_position, &s_paragraph_chapter, &s_paragraph_byte);
-    // 信号发出后不再访问快照，UI 可以安全接收或离页。/ After signaling, never access snapshots; UI may receive or exit safely.
+        if (sync_cancelled()) { s_result = OS_SYNC_OFFLINE; goto done; }
+        if (s_job == OS_SYNC_JOB_AUTH) s_result = os_sync_auth(&s_config);
+        else if (s_job == OS_SYNC_JOB_REGISTER) s_result = os_sync_register(&s_config);
+        else if (s_job == OS_SYNC_JOB_PUSH) {
+            s_result = os_sync_push(&s_config, s_doc, s_position, s_percent);
+            if (s_result == OS_SYNC_OK && !sync_cancelled()) {
+                char confirmed_position[OS_SYNC_PROGRESS_MAX];
+                float confirmed = 0;
+                os_sync_result_t readback = os_sync_pull(&s_config, s_doc, confirmed_position,
+                                                          sizeof(confirmed_position), &confirmed);
+                if (readback != OS_SYNC_OK || confirmed + 0.00005f < s_percent) {
+                    ESP_LOGW(TAG, "push readback failed result=%d sent=%.4f confirmed=%.4f",
+                             readback, (double)s_percent, (double)confirmed);
+                    s_result = OS_SYNC_VERIFY;
+                } else {
+                    s_confirmed_percent = confirmed;
+                    s_remote_ahead = confirmed > s_percent + 0.00005f;
+                    ESP_LOGI(TAG, "push confirmed doc=%s sent=%.4f remote=%.4f",
+                             s_doc, (double)s_percent, (double)confirmed);
+                }
+            }
+        }
+        else if (s_job == OS_SYNC_JOB_MERGE) {
+            s_result = os_sync_pull(&s_config, s_doc, s_remote_position,
+                                    sizeof(s_remote_position), &s_remote_percent);
+            if (s_result == OS_SYNC_OK) {
+                s_merge_apply = !s_has_local || percent_points(s_remote_percent) > percent_points(s_percent);
+            } else if (s_result != OS_SYNC_NOT_FOUND) goto done;
+            if (!s_merge_apply) {
+                if (!s_has_local) { s_result = OS_SYNC_NOT_FOUND; goto done; }
+                if (sync_cancelled()) { s_result = OS_SYNC_OFFLINE; goto done; }
+                s_result = os_sync_push(&s_config, s_doc, s_position, s_percent);
+                if (s_result != OS_SYNC_OK || sync_cancelled()) goto done;
+                s_result = os_sync_pull(&s_config, s_doc, s_remote_position,
+                                        sizeof(s_remote_position), &s_remote_percent);
+                if (s_result != OS_SYNC_OK || percent_points(s_remote_percent) < percent_points(s_percent)) {
+                    ESP_LOGW(TAG, "merge push readback failed result=%d sent=%.4f confirmed=%.4f",
+                             s_result, (double)s_percent, (double)s_remote_percent);
+                    s_result = OS_SYNC_VERIFY; goto done;
+                }
+                s_merge_apply = percent_points(s_remote_percent) > percent_points(s_percent);
+                s_confirmed_percent = s_remote_percent;
+            }
+            if (s_merge_apply && epub && !sync_cancelled())
+                s_paragraph = book_epub_sync_decode(s_path, s_remote_position,
+                                                    &s_paragraph_chapter, &s_paragraph_byte);
+        }
+        else s_result = os_sync_pull(&s_config, s_doc, s_position, sizeof(s_position), &s_percent);
+        if (s_job == OS_SYNC_JOB_PULL && s_result == OS_SYNC_OK && epub && !sync_cancelled())
+            s_paragraph = book_epub_sync_decode(s_path, s_position, &s_paragraph_chapter, &s_paragraph_byte);
+        // 信号发出后直到下次通知都不访问快照，UI 可以安全接收或离页。
+        // After signaling, snapshots stay untouched until the next notification so UI may receive or exit safely.
 done:
-    xSemaphoreGive(s_done);
-    vTaskDelete(NULL);
+        xSemaphoreGive(s_done);
+    }
+}
+
+static bool ensure_worker(char* note, size_t cap) {
+    if (s_worker_task) return true;
+    s_worker_stack = heap_caps_malloc(SYNC_STACK_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!s_worker_stack) { snprintf(note, cap, "同步任务内存不足，请重试"); return false; }
+    s_worker_task = xTaskCreateStatic(sync_worker, "progress_sync", SYNC_STACK_BYTES, NULL, 3,
+                                      s_worker_stack, &s_worker_tcb);
+    if (!s_worker_task) {
+        heap_caps_free(s_worker_stack);
+        s_worker_stack = NULL;
+        snprintf(note, cap, "无法启动同步，请重试");
+        return false;
+    }
+    return true;
 }
 bool os_sync_job_busy(void) { return s_running; }
 bool os_sync_pull_pending(void) { return s_pending; }
-bool os_sync_job_start(os_sync_job_t job, char* note, size_t cap) {
-    if (!note || !cap || s_running || s_pending || job < OS_SYNC_JOB_AUTH || job > OS_SYNC_JOB_PULL) return false;
+static bool start_job(os_sync_job_t job, const char* path, char* note, size_t cap) {
+    if (!note || !cap || s_running || s_pending || job < OS_SYNC_JOB_AUTH || job > OS_SYNC_JOB_MERGE) return false;
     load_config(&s_config);
     if (!os_sync_config_ready(&s_config)) { snprintf(note, cap, "请先设置同步账号"); return false; }
+    if (!s_done) s_done = xSemaphoreCreateBinary();
+    if (!s_done) { snprintf(note, cap, "内存不足，请重试"); return false; }
+    if (!ensure_worker(note, cap)) return false;
     if (!prepare_network(note, cap)) return false;
     s_job = job;
     s_paragraph = false;
-    if (job == OS_SYNC_JOB_PUSH || job == OS_SYNC_JOB_PULL) {
+    s_remote_ahead = false;
+    s_merge_apply = false;
+    s_remote_percent = 0;
+    s_confirmed_percent = 0;
+    if (job == OS_SYNC_JOB_PUSH || job == OS_SYNC_JOB_PULL || job == OS_SYNC_JOB_MERGE) {
         struct stat st;
-        if (!book_progress_last_path(s_path, sizeof(s_path)) || !s_path[0] ||
+        if (path) {
+            int copied = snprintf(s_path, sizeof(s_path), "%s", path);
+            if (!path[0] || copied < 0 || (size_t)copied >= sizeof(s_path)) {
+                snprintf(note, cap, "图书路径不可用"); release_session(); return false;
+            }
+        } else if (!book_progress_last_path(s_path, sizeof(s_path))) {
+            snprintf(note, cap, "图书文件或阅读记录不可用"); release_session(); return false;
+        }
+        if (!s_path[0] ||
             stat(s_path, &st) || st.st_size <= 0 || st.st_size > UINT32_MAX || !sync_doc_id(s_path, s_doc)) {
             snprintf(note, cap, "图书文件或阅读记录不可用"); release_session(); return false;
         }
@@ -255,24 +357,56 @@ bool os_sync_job_start(os_sync_job_t job, char* note, size_t cap) {
         memset(&s_local, 0, sizeof(s_local));
         s_has_local = book_progress_load(s_path, s_size, &s_local);
         if (job == OS_SYNC_JOB_PUSH && !s_has_local) { snprintf(note, cap, "还没有阅读记录"); release_session(); return false; }
-        if (job == OS_SYNC_JOB_PUSH) {
-            if (s_local.approximate) snprintf(s_position, sizeof(s_position), "percentage");
-            else if (!os_sync_progress_encode(s_position, sizeof(s_position), s_size, s_local.chapter, s_local.byte_off, s_local.px)) { release_session(); return false; }
-            s_percent = s_local.pct > 100 ? 1.0f : s_local.pct / 100.0f;
+        if (job == OS_SYNC_JOB_PUSH || job == OS_SYNC_JOB_MERGE) {
+            if (s_has_local && s_local.approximate) snprintf(s_position, sizeof(s_position), "percentage");
+            else if (s_has_local && !os_sync_progress_encode(s_position, sizeof(s_position), s_size, s_local.chapter, s_local.byte_off, s_local.px)) { release_session(); return false; }
+            unsigned basis_points = (unsigned)s_local.pct * 100 + s_local.pct_frac;
+            s_percent = basis_points > 10000 ? 1.0f : basis_points / 10000.0f;
         }
     }
-    if (!s_done) s_done = xSemaphoreCreateBinary();
-    if (!s_done) { snprintf(note, cap, "内存不足，请重试"); release_session(); return false; }
     s_transport_error[0] = 0;
     os_time_force_poll(); os_time_poll(esp_timer_get_time() / 1000);
     atomic_store(&s_cancel, false);
     atomic_store(&s_link_ready, false);
     s_running = true;
-    if (xTaskCreate(sync_worker, "progress_sync", 12288, NULL, 3, NULL) != pdPASS) {
-        s_running = false; release_session(); snprintf(note, cap, "无法启动同步，请重试"); return false;
-    }
+    xTaskNotifyGive(s_worker_task);
     snprintf(note, cap, "%s", "正在连接已保存 WiFi 并同步…");
     return true;
+}
+bool os_sync_job_start(os_sync_job_t job, char* note, size_t cap) {
+    return start_job(job, NULL, note, cap);
+}
+bool os_sync_job_start_book(const char* path, char* note, size_t cap) {
+    return start_job(OS_SYNC_JOB_MERGE, path, note, cap);
+}
+
+static void stage_remote(const char* position, float percent, bool preserve_local_stats) {
+    uint32_t size, off;
+    uint16_t chapter;
+    uint8_t px;
+    bool exact = os_sync_progress_decode(position, &size, &chapter, &off, &px) && size == s_size;
+    s_remote = preserve_local_stats && s_has_local ? s_local : (book_progress_t){0};
+    s_remote.file_size = s_size;
+    s_remote.approximate = !exact && !s_paragraph;
+    // 字号是本机排版参数，不随进度同步。/ Font size is local layout and never syncs.
+    s_remote.px = s_has_local ? s_local.px : app_settings_book_px();
+    s_remote.chapter = exact ? chapter : s_paragraph ? s_paragraph_chapter : 0;
+    s_remote.byte_off = exact ? off : s_paragraph ? s_paragraph_byte : 0;
+    unsigned points = percent_points(percent);
+    s_remote.pct = (uint8_t)(points / 100);
+    s_remote.pct_frac = (uint8_t)(points % 100);
+}
+
+static bool snapshot_unchanged(void) {
+    struct stat st;
+    char doc[33];
+    book_progress_t current = {0};
+    bool has = book_progress_load(s_path, s_size, &current);
+    bool unchanged = has == s_has_local && (!has || (current.last_open_s == s_local.last_open_s &&
+        current.chapter == s_local.chapter && current.byte_off == s_local.byte_off &&
+        current.pct == s_local.pct && current.pct_frac == s_local.pct_frac));
+    return !stat(s_path, &st) && st.st_size == s_size && sync_doc_id(s_path, doc) &&
+           !strcmp(doc, s_doc) && unchanged;
 }
 bool os_sync_job_poll(char* note, size_t cap) {
     if (!s_running) return false;
@@ -283,29 +417,44 @@ bool os_sync_job_poll(char* note, size_t cap) {
     if (xSemaphoreTake(s_done, 0) != pdTRUE) return false;
     s_running = false;
     if (sync_cancelled()) s_result = OS_SYNC_OFFLINE;
-    if (s_result != OS_SYNC_OK || s_job != OS_SYNC_JOB_PULL) {
+    if (s_result != OS_SYNC_OK || (s_job != OS_SYNC_JOB_PULL && s_job != OS_SYNC_JOB_MERGE)) {
         release_session();
         const char* result = s_result == OS_SYNC_OFFLINE ?
             (atomic_load(&s_link_ready) ? (s_transport_error[0] ? s_transport_error : "服务器连接未完成，请重试") : "WiFi 连接失败，请检查已保存网络") : os_sync_result_name(s_result);
-        snprintf(note, cap, "%s", result); return true;
+        if (s_result == OS_SYNC_OK && s_job == OS_SYNC_JOB_PUSH)
+            snprintf(note, cap, s_remote_ahead ? "服务器已保留较新进度 %.2f%%" : "服务器已确认上传 %.2f%%",
+                     (double)(s_confirmed_percent * 100));
+        else if (s_job == OS_SYNC_JOB_MERGE && s_result == OS_SYNC_NOT_FOUND && !s_has_local)
+            snprintf(note, cap, "远端暂无此书进度，本地也没有阅读记录");
+        else snprintf(note, cap, "%s", result);
+        return true;
     }
-    memset(&s_remote, 0, sizeof(s_remote));
+    const char* remote_position = s_job == OS_SYNC_JOB_MERGE ? s_remote_position : s_position;
+    float remote_percent = s_job == OS_SYNC_JOB_MERGE ? s_remote_percent : s_percent;
+    stage_remote(remote_position, remote_percent, s_job == OS_SYNC_JOB_MERGE);
+    if (s_job == OS_SYNC_JOB_MERGE) {
+        if (s_merge_apply) {
+            if (!snapshot_unchanged()) snprintf(note, cap, "图书或本地进度已变化，请重新同步");
+            else if (book_progress_save(s_path, &s_remote) != ESP_OK ||
+                     book_progress_set_last_path(s_path) != ESP_OK)
+                snprintf(note, cap, "进度保存失败，请重新同步");
+            else snprintf(note, cap, "已同步远端进度 %u.%02u%% 到本机",
+                          (unsigned)s_remote.pct, (unsigned)s_remote.pct_frac);
+        } else snprintf(note, cap, "已将本地进度同步到远端 %u.%02u%%",
+                        (unsigned)s_local.pct, (unsigned)s_local.pct_frac);
+        release_session();
+        return true;
+    }
     uint32_t size, off;
     uint16_t chapter;
     uint8_t px;
     bool exact = os_sync_progress_decode(s_position, &size, &chapter, &off, &px) && size == s_size;
-    s_remote.file_size = s_size;
-    s_remote.approximate = !exact && !s_paragraph;
-    // 字号是本机排版参数，不随进度同步：保留这本书本地记录的档位，rp1 里的远端档位仅作格式兼容。
-    // Font size is local layout and never syncs: keep this book's recorded tier; the rp1 tier stays for format compatibility only.
-    s_remote.px = s_has_local ? s_local.px : app_settings_book_px();
-    if (exact) { s_remote.chapter = chapter; s_remote.byte_off = off; }
-    if (s_paragraph) { s_remote.chapter = s_paragraph_chapter; s_remote.byte_off = s_paragraph_byte; }
-    s_remote.pct = (uint8_t)(s_percent * 100 + 0.5f);
     if (s_network_owned) { os_time_network(false); read_pico_transfer_stop(); }
     s_network_owned = false;
     s_pending = true;
-    snprintf(note, cap, "本地 %u%% → 远端 %u%% · %s", (unsigned)s_local.pct, (unsigned)s_remote.pct,
+    snprintf(note, cap, "本地 %u.%02u%% → 远端 %u.%02u%% · %s",
+             (unsigned)s_local.pct, (unsigned)s_local.pct_frac,
+             (unsigned)s_remote.pct, (unsigned)s_remote.pct_frac,
              exact ? "精确位置" : s_paragraph ? (strstr(s_position,"/text()")?"文本位置":"段落位置") : "近似位置");
     return true;
 }
@@ -313,19 +462,13 @@ static bool finish_pull_confirmation(bool apply, char* note, size_t cap) {
     if (!s_pending) return false;
     s_pending = false;
     if (!apply) { snprintf(note, cap, "已保留本地阅读位置"); return true; }
-    struct stat st;
-    char doc[33];
-    book_progress_t current = {0};
-    bool has = book_progress_load(s_path, s_size, &current);
-    bool unchanged = has == s_has_local && (!has || (current.last_open_s == s_local.last_open_s &&
-        current.chapter == s_local.chapter && current.byte_off == s_local.byte_off && current.pct == s_local.pct));
-    if (stat(s_path, &st) || st.st_size != s_size || !sync_doc_id(s_path, doc) || strcmp(doc, s_doc) || !unchanged) {
+    if (!snapshot_unchanged()) {
         snprintf(note, cap, "图书或本地进度已变化，请重新下载"); return false;
     }
     if (book_progress_save(s_path, &s_remote) != ESP_OK || book_progress_set_last_path(s_path) != ESP_OK) {
         snprintf(note, cap, "进度保存失败，请重新下载"); return false;
     }
-    snprintf(note, cap, "已应用远端位置 %u%%", (unsigned)s_remote.pct);
+    snprintf(note, cap, "已应用远端位置 %u.%02u%%", (unsigned)s_remote.pct, (unsigned)s_remote.pct_frac);
     return true;
 }
 bool os_sync_pull_confirm(bool apply, char* note, size_t cap) {

@@ -76,9 +76,12 @@ static void emit_dsc(uint16_t handle,uint16_t uuid){struct ble_gatt_dsc dsc={.ha
 static void attr_value(uint8_t* data,size_t n){struct os_mbuf om={.data=data,.len=n};struct ble_gatt_attr attr={.om=&om};attr_callback(7,&ok,&attr,callback_arg);}
 static void disconnect_event(void){struct ble_gap_event event={.type=BLE_GAP_EVENT_DISCONNECT};gap_callback(&event,NULL);}
 int main(void){
-    free_internal=1;assert(os_ble_radio_start()==ESP_ERR_NO_MEM&&init_count==0);free_internal=160*1024;
-    init_error=ESP_FAIL;assert(os_ble_radio_start()==ESP_FAIL);init_error=0;
-    task_error=1;assert(os_ble_radio_start()==ESP_ERR_NO_MEM&&deinit_count==1);task_error=0;
+    free_internal=1;assert(os_ble_radio_start()==ESP_ERR_NO_MEM&&init_count==0&&s_status.phase==OS_BLE_ERROR);
+    assert(os_ble_radio_stop()==ESP_OK&&s_status.phase==OS_BLE_OFF);free_internal=160*1024;
+    init_error=ESP_FAIL;assert(os_ble_radio_start()==ESP_FAIL&&s_status.phase==OS_BLE_ERROR);
+    assert(os_ble_radio_stop()==ESP_OK&&s_status.phase==OS_BLE_OFF);init_error=0;
+    task_error=1;assert(os_ble_radio_start()==ESP_ERR_NO_MEM&&deinit_count==1&&s_status.phase==OS_BLE_ERROR);
+    assert(os_ble_radio_stop()==ESP_OK&&s_status.phase==OS_BLE_OFF);task_error=0;
     assert(os_ble_radio_start()==ESP_OK&&s_status.phase==OS_BLE_STARTING);assert(os_ble_radio_scan()==ESP_ERR_INVALID_STATE);
     ble_hs_cfg.sync_cb();assert(s_status.phase==OS_BLE_IDLE&&ble_hs_cfg.sm_bonding&&ble_hs_cfg.sm_sc);
     assert(os_ble_radio_scan()==ESP_OK);run_command();assert(s_status.phase==OS_BLE_SCANNING);

@@ -234,7 +234,7 @@ def main() -> int:
         print("compressed subset too large", file=sys.stderr)
         return 1
     args.out.with_suffix(".pack").write_bytes(packed)
-    for name in ("lock_4bpp", "loading_4bpp"):
+    for name in ("loading_4bpp",):
         raw = (ROOT / f"main/assets/{name}.bin").read_bytes()
         (ROOT / f"main/assets/{name}.pack").write_bytes(b"RPFT" + struct.pack("<I", len(raw)) + zlib.compress(raw, 9))
     print(f"wrote {args.out} ({size} bytes, Regular); packed {len(packed)} bytes")

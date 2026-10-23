@@ -64,6 +64,13 @@ const ttf_font_item_t* ttf_font_item(int index);
 const char* ttf_font_path(void);
 const char* ttf_font_display_name(void);
 bool ttf_font_ready(void);
+/// 卡字体字形读取失败；由 UI 任务在绘制结束后切至内置字库。/ SD glyph I/O failed; the UI task falls back to built-in after painting.
+bool ttf_font_io_failed(void);
+/// 卡字体字形绘制持续失败（读取或内存），需在绘制结束后恢复。/ SD glyph rendering failed after retry (I/O or memory); recover after painting.
+bool ttf_font_render_failed(void);
+#ifdef TTF_TEST_HOOKS
+void ttf_font_test_fail_reads(bool fail);
+#endif
 /// 仅检查驻留 cmap，不读字形轮廓；输入长度有界。/ Check resident cmap only, without outline IO, over bounded input.
 /// 原字优先；缺失的 ⋯ 可借同字体 …，与测量、预热和绘制一致，不改输入文本。
 /// Prefer native glyphs; absent ⋯ may borrow the same font's … consistently with metrics, prewarm and drawing, without rewriting input.
@@ -98,6 +105,11 @@ int ttf_get_stroke(void);
 /// 控制曲线展平精度，仅影响新光栅与缓存身份，不改度量。/ Select curve flattening precision, affecting raster/cache identity only, never metrics.
 void ttf_set_precise_curves(bool precise);
 bool ttf_get_precise_curves(void);
+/// 灰字缘落点预矫正开关（实验）：绘制取码改经落点表反演，光栅/缓存/度量/波形均不变。/ Gray-edge landing precompensation toggle (experiment): code selection inverts the landing table at blit time only, leaving raster/cache/metrics/waveforms untouched.
+void ttf_set_edge_optimize(bool on);
+bool ttf_get_edge_optimize(void);
+/// 字缘0原始、1旧校正、2字形坐标空间平滑；仅改变取码，不改变缓存或波形。/ Edge0 original,1 legacy correction,2 glyph-local spatial smoothing; code selection only, with unchanged cache/waveforms.
+void ttf_set_edge_style(uint8_t style);
 void ttf_set_weight(int wght);
 int ttf_get_weight(void);
 

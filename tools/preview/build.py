@@ -13,7 +13,7 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / "build-host/desktop-preview"
-SUPPORTED = {"app_os_home", "app_os_today", "app_os_settings", "app_os_bluetooth", "app_os_time", "app_os_reading", "app_os_sleep", "app_os_pin", "app_os_storage", "app_os_tools", "app_transfer", "app_book", "app_reading", "app_refresh", "app_font_pick", "app_image"}
+SUPPORTED = {"app_os_history", "app_os_battery", "app_os_home", "app_os_today", "app_os_settings", "app_os_bluetooth", "app_os_time", "app_os_reading", "app_os_sleep", "app_os_pin", "app_os_storage", "app_os_tools", "app_transfer", "app_book", "app_reading", "app_refresh", "app_font_pick", "app_image"}
 
 
 def metadata():
@@ -150,7 +150,7 @@ def build(sanitize=False):
     # 样文转换成纯文本，避免把 Markdown 标记当作读者正文。/ Convert the sample to plaintext instead of showing Markdown marks as prose.
     sample = (ROOT / "main/assets/reading.md").read_text()
     (OUT / "sample.txt").write_text(re.sub(r"^#+[ \t]*", "", sample, flags=re.M).replace("**", ""))
-    for name, path in (("lock_4bpp_pack", "main/assets/lock_4bpp.pack"), ("builtin_pack", "main/assets/builtin.pack"), ("reading_md", "main/assets/reading.md"),
+    for name, path in (("loading_4bpp_pack", "main/assets/loading_4bpp.pack"), ("builtin_pack", "main/assets/builtin.pack"), ("reading_md", "main/assets/reading.md"),
                        ("preview_sample_txt", str(OUT / "sample.txt"))):
         assets += [f".globl _binary_{name}_start", f"_binary_{name}_start:",
                    f'.incbin "{path}"', f".globl _binary_{name}_end", f"_binary_{name}_end:", ".byte 0"]
@@ -169,6 +169,7 @@ def build(sanitize=False):
         f.write('\n#include "book_quotes.h"\n#include "book_stats.h"\n#include "ui_product.h"\n' +
                 excerpt.replace("static bool draw_lock_excerpt(", "bool preview_draw_lock_excerpt("))
     command = [os.environ.get("CC", "cc"), "-std=gnu11", "-O1" if sanitize else "-O2", "-g",
+               "-DTTF_TEST_HOOKS",
                '-DTTF_SD_ROOT="build-host/desktop-preview/sd"',
                '-DUI_IMAGE_MEDIA_ROOT="build-host/desktop-preview/sd"',
                "-Wall", "-Wextra", "-Wno-sign-compare", "-Wno-unused-variable", "-Wno-unused-function", "-Wno-unused-parameter",
@@ -182,7 +183,7 @@ def build(sanitize=False):
             command += ["-isysroot", str(sdk)]
     if sanitize:
         command += ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
-    command += ["tools/preview/native.c", "tools/preview/esp_host.c",
+    command += ["tools/preview/native.c", "tools/preview/esp_host.c", "tools/preview/history_port.c", "tools/preview/history_fixture.c", "main/os/os_battery_history.c", "main/os/os_history_service.c", "main/book/book_stats_archive.c",
                 "tools/preview/ble_port.c", "tools/preview/today_port.c", "tools/preview/transfer_port.c", "tools/preview/device_port.c", "tools/preview/miniz_host.c", "tools/jpegdec_host_stub.c",
                 "main/asset_pack.c", "main/display_pixels.c", "main/settings.c", "main/book/book_progress.c", "main/book/book_stats.c", "main/book/book_stats_store.c",
                 "main/book/book_entry.c", "main/book/book_layout.c", "main/book/book_source.c", "main/book/book_home.c", "main/book/book_cover.c", "main/book/book_cover_auto.c", "main/book/book_cover_job.c", "main/book/book_marks.c", "main/book/book_quotes.c",

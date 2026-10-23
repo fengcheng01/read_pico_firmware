@@ -3,8 +3,193 @@
 按日期和作者简述对用户可见的功能变化；详细实现历史见 Git。使用方法见 [README](../README.zh-CN.md)。
 User-visible changes by date and author; Git retains implementation history. See [README](../README.md) for usage.
 
+## 0.7.1 · 2026-10-22
+
+- 修复“连接与传书”网页服务已启动、却挤占WiFi启动内存而报`ESP_ERR_NO_MEM`的情况：WiFi尚未启动且余量不足时，将网页服务从12KiB内部任务栈安全重建为已有8KiB档，仅回退一次，再检查原内部/DMA总量和连续块安全阈值。已使用小栈者不重复重建，停止/注册/内存失败保留真实资源并走原清理，仍不足则明确报错，不强行启动。保留快速/细腻灰阶、原始字缘及其它阅读和网络设置，不自动刷写或发布。
+  Fix transfer HTTP startup starving WiFi and reporting`ESP_ERR_NO_MEM`: before WiFi starts, insufficient headroom rebuilds the HTTP server once from a12KiB internal stack to the existing8KiB profile, then rechecks unchanged internal/DMA total/contiguous-block floors. Do not rebuild an already-small server. Stop/registration/allocation failures retain real ownership and use normal cleanup; continued shortages report errors rather than forcing startup. Retain Fast/Fine Gray, original edges and other reading/network preferences, without automatic flashing or publishing.
+
+## 0.7.0 · 2026-10-22
+
+- 简化灰阶字缘设置：移除“原始／旧校正／平滑对照”三档选择，统一原始字缘；旧偏好不再读取或生效。保留快速／细腻灰阶与灰阶／黑白开关，后者改为整行按钮，删除旧选项的触摸与按下入口，不留禁用空壳。两档刷新波形、字号、字重与清理策略不变。
+  Simplify gray-edge settings by removing Original/Legacy Correction/Smooth Comparison choices and always using original edges, ignoring legacy preferences. Retain Fast/Fine Gray and the gray/binary toggle, expand the latter to a full-row button and remove old option hits/press states instead of leaving disabled shells. Refresh waveforms, size, stroke and cleanup stay unchanged.
+
+- 阅读显示正式采用“快速灰阶”和“细腻灰阶”两档易懂名称，分别保留已选用的速度21相、原均衡28相效果，界面不再展示相数或灰阶刷新对照档。快速档偏重响应，细腻档偏重字缘平滑但翻页闪动可能更明显；字体、字重、分页和清理周期不变。撤下分区、交错及短程刷新实验，旧实验选择自动兼容到细腻灰阶，原两档选择和其他设置保持；删除无收益的短程派生表。提供同次构建的完整与增量固件。
+  Ship intuitive Fast Gray/Fine Gray names while retaining the selected Speed21/original Balanced28 effects, without phase counts or gray-refresh comparisons in UI. Fast favors response; Fine favors smoother edges but may flash more. Fonts, stroke, pagination and cleanup stay unchanged. Withdraw banded/interleaved/short-excursion gray refresh, mapping old experiments to Fine while retaining the original two choices and other settings; remove the ineffective short-excursion table. Deliver same-build full and incremental firmware.
+
+## 0.6.41 · 2026-10-22
+
+- 针对轻度减闪翻页时字缘“抖一下”的实机反馈，撤下交错档，旧选择2/3/4回原均衡。新增手动选择的“灰阶刷新：短程对照”：仅对白底到部分灰缘将10黑+N白改为9黑+(N−1)白，成形后连续回拉、不再中途补黑，相关字缘提前两相结束；整页仍同步单次28相，无分区或补刷。实际驱动量改变，净动作相同不代表灰阶等价，可能变淡/变深或损失平滑度，待实机比较；原均衡28相、速度21相、字体与周期清理保留。
+  Withdraw interleaving after device feedback found transient edge jitter; stored2/3/4 return to original balance. Add explicit Short Excursion Comparison: only selected white-to-gray rows change10 black+N white to9 black+(N−1) white, forming then continuously pulling back without intermediate black reinforcement and ending two phases earlier. Keep one synchronous28-phase page scan without bands/post-refresh. Actual drive doses change; equal net counts do not establish equal grays, with possible light/dark shifts or lost smoothness requiring hardware comparison. Retain original Balanced28, Speed21, fonts and cleanup.
+
+## 0.6.40 · 2026-10-22
+
+- 根据“同步减闪损失平滑度、仅略减闪”的实机反馈，撤回强交错档，旧选择2/3回原均衡28相。新增显式选择的“灰阶刷新：轻度减闪”，保留前9个黑色成形动作，只交换第10黑与首白，保留末白/动作数量/全部中性槽及其它迁移；仍是整页同步单次28相，无分区、动画或补刷。原均衡、21相、字体和周期清理不变。减闪可能很小，平滑度/灰阶/残影仍需实机比较，不宣称光学校准。
+  Withdraw strong interleaving after device feedback found lost smoothness with little flicker benefit; stored2/3 return to original Balanced28. Add explicit Mild Comparison: retain nine leading black formation actions, swap only the tenth black/first white and retain final white/counts/holds/other rows. Keep one synchronous28-phase scan without bands, animation or post-refresh, retaining original balance, Speed21, fonts and cleanup. Flicker improvement may be small; smoothness/grays/ghosts still require hardware comparison, not optical calibration.
+
+## 0.6.39 · 2026-10-22
+
+- 根据实机反馈撤下分区扫动档，旧选择2回原均衡28相，不自动启用新实验。新增独立“灰阶刷新：同步减闪”：整页同步、一次28相扫描，不使用分区引擎/动画或追加补刷；仅对白底到灰缘提前交错回拉，保留动作数量、所有保持槽与首末动作，黑白端点、其它迁移、字体及周期清理不变。数字净动作峰值降低不保证光学灰阶不变，可能变淡/变深或仍有闪动，需同板比较；原21相和均衡28相保留。
+  Withdraw spatial sweep after device rejection, mapping stored2 back to original Balanced28 without enabling the new experiment. Add independent Synchronous Comparison: one whole-page28-phase scan, without bands, animation or post-refresh. Interleave white-to-gray pull-back earlier while retaining action counts, holds and first/final actions; retain endpoints, other transitions, fonts and cleanup. Lower digital net-action peaks do not guarantee identical optical grays; lighter/darker edges or flicker remain possible and need same-board comparison. Preserve Speed21 and original Balanced28.
+
+## 0.6.38 · 2026-10-22
+
+- 在用户确认28相字缘更平滑的基础上新增“灰阶刷新：减闪对照”，保留速度21相和原均衡28相。新档对整页含页脚分8区错开启动，每个像素仍走原28相，合计35拍、一次差分，不追加定稿补刷；保持FULL扫描且不加动画软件补等。临时相位表每次释放，缺内存回普通28相，扫描失败沿用完整目标恢复。旧选择不自动升级；可能更慢或有扫动感，不能保证局部无闪、平滑度或能耗，待实机比较。
+  Add an opt-in staggered comparison after the user's report of smoother28-phase edges, preserving Speed21 and original Balanced28. Eight bands cover the whole page/footer; every pixel retains28 phases across35 ticks from one difference pass, without post-settling. Keep FULL scan timing with no animation padding. Release phase tables per turn, fall back to synchronous28 on allocation failure and retain complete-target recovery on scan errors. Do not upgrade preferences automatically; slower completion, sweeping motion and local flicker remain possible, with optics/energy awaiting hardware comparison.
+
+## 0.6.37 · 2026-10-22
+
+- 阅读显示新增可选“灰阶刷新：均衡28相”，与速度21相切换，独立默认关、不迁移旧设置。均衡保留厂家灰8/黑白DU有效动作与内部顺序，统一收尾后补一个中性相，普通翻页只刷新一次、不追加补刷，周期清理和故障恢复不变。仅日间速度灰阶纯文字正文生效；21相专用字缘校正暂不参与且保留选择。可能更慢、出现灰缘过冲闪动；实际平滑度、残影和能耗待实机对比，保存失败保持原档位。
+  Add opt-in Balanced28-phase gray refresh beside Speed21, independently default-off without migrating preferences. Preserve effective vendor gray8/DU actions and internal ordering, align their finish and add a neutral tail. Ordinary turns scan once without post-refresh, retaining cleanup/recovery. Apply only to daytime gray-speed text, bypassing but retaining21-phase edge corrections. Slower turns and gray-edge overshoot flicker are possible; optics, ghosts and energy need hardware comparison, with failed saves retaining the prior mode.
+
+## 0.6.36 · 2026-10-22
+
+- 速度灰阶字缘新增“平滑对照”，与原始、旧校正三档切换，旧选择不自动升级。实验在字形固定2×2坐标间分配相邻可分灰码，不加粗/模糊文字、不改分页、21相波形或清理周期，不追加补刷。不是新增物理灰阶，可能有颗粒感；实际平滑度、残影与耗时待同板比较。保存失败保持原档位并提示。
+  Add a spatial-smoothing comparison beside Original/Legacy Correction for gray-speed edges, without automatically upgrading saved choices. Stable glyph-local2x2 allocation selects adjacent distinguishable gray codes, retaining coverage, layout,21-phase waveforms and cleanup without added scans. This is not extra physical grayscale and may look grainy; optics, ghosts and latency require same-board comparison. Failed saves retain the prior mode and show a warning.
+
+## 0.6.35 · 2026-10-22
+
+- 翻页动画增加“关闭／原有动画／柔化对照”。借鉴if-ink/kiikoread灰阶脉冲交错，独立适配本地49相；只在日间前后纯文字且画质档的动画中调整少量白到灰脉冲顺序，动作数、首尾/保持相、16条带及14ms目标节拍不变。旧偏好原样保留，不默认启用，不改插图、速度档、普通翻页和清理；低内存回原动画，失败沿用完整目标恢复。实际观感与速度仍待真机验证。
+  Add Off/Original/Soft comparison to page-turn animation, independently adapting if-ink/kiikoread pulse-interleaving ideas to local49 phases. Only daytime quality-mode text-to-text animation reorders a few white-to-gray pulses, retaining action counts, endpoints/holds,16 bands and14ms target pacing. Preserve preferences/default-off and other paths; low memory retains the original and failed scans use existing full-target recovery. Optical quality and latency require hardware validation.
+
+## 0.6.34 · 2026-10-22
+
+- 自动联网按信号排序附近已保存且认证兼容的网络，同名去重，手动选择不被改选；保留关联/DHCP分段超时。
+  Automatic WiFi ranks nearby remembered, authentication-compatible networks by signal, deduplicates SSIDs and respects explicit selection, retaining association/DHCP deadlines.
+- 存储页新增24小时/七天电量历史：清醒时每15分钟记录真实快照，不额外唤醒设备；缺卡仅保留本次运行，TF双槽校验与失败重试，休眠空档不补曲线。
+  Storage adds 24-hour/seven-day battery history from awake fifteen-minute snapshots, session-only without a card, with checked dual-slot files and retries; no extra wakeups or fabricated sleep curves.
+- 手帐新增按日/周阅读记录，按年归档到TF卡；同日取较大累计避免重复，近期30个日期留NVS，未确认归档的旧记录不删除。缺卡/读取失败明确提示不完整，旧版已淘汰的数据无法恢复。
+  Journal adds daily/weekly reading history with yearly TF archives, max-per-day merges and30 recent NVS dates; older records remain until archiving is confirmed. Missing-card/read errors mark totals incomplete; previously evicted history cannot be recovered.
+
+## 0.6.33 · 2026-10-22
+
+- 根据实机反馈重绘首页电池：黑色填充随剩余电量等比例变化，数字在黑色区域显示白色、空白区域显示黑色；保留原顶栏尺寸，0%与未知状态不填充，不改变电量读数或省电策略。
+  Redraw Home's battery from device feedback: a proportional black fill shows remaining charge, with white digits over the fill and black digits over empty space. Keep header dimensions; 0% and unknown states remain unfilled, without changing battery readings or power policy.
+
+## 0.6.32 · 2026-10-22
+
+- 第二批省电：正文静止且排版/预绘完成后降低空闲心跳频率，触摸可提前唤醒；暂停的触摸采样任务不再反复轮询。蓝牙开启主晶振事件间省电，持续失联后按10秒至5分钟逐级重连退避，手动连接立即生效。屏幕和存储时序保持不变，实际电流收益待真机测量。
+  Second power batch lowers the idle heartbeat after body layout/prefetch settles, with early touch wake; a paused sampler blocks instead of polling. Bluetooth uses main-crystal modem sleep and progressively backs off failed reconnects from 10 seconds to 5 minutes; manual connection remains immediate. Display/storage timings stay unchanged; current savings await hardware measurement.
+- 修复剩余阅读时间长期显示“999分”：改用本次开书后最近32次有效向前阅读速度，至少8次有效翻页后显示，长书以小时/天表示；快速翻页、回翻、跳转及挂机不作为速度样本，不修改已有累计统计。首页电量改为电池图标内显示百分比，包括0%和未知状态。
+  Fix remaining time sticking at 999 minutes: estimate from the latest 32 effective forward turns in the current opening, requiring eight samples and using hours/days for long books. Quick flips, backward turns, jumps and idle hangs do not train the estimate; cumulative statistics remain unchanged. Home now shows the percentage inside a battery icon, including 0% and unknown states.
+
+## 0.6.31 · 2026-10-22
+
+- 第一批睡眠功耗优化：睡前停用触摸、蜂鸣及非唤醒外设，整理面板/TF与扩展器引脚；浅睡按需准备CPU保存区，唤醒立即释放，保留拿起唤醒与摘录分钟时钟。PMU下电失败或应答后仍未断电时恢复外设并回退浅睡，继续执行原PIN校验；实际电流与续航收益待真机测量。
+  First sleep-power batch parks touch, buzzer and non-wake peripherals plus panel/TF/expander pins. CPU retention is prepared only for light sleep and released on wake, retaining pickup and minute excerpt clocks. Failed PMU power-down or an ACK without power loss restores peripherals and falls back to light sleep with the original PIN gate. Current and battery-life gains await device measurement.
+
+## 0.6.30 · 2026-10-21
+
+- “正在读”首本书的按钮改为“同步进度”：先拉取远端，按 0.01% 精度比较；远端更远就自动更新本机，远端没有或不更远才上传本地并回读确认。远端请求失败不盲传，本地记录变化不覆盖；阅读设置的手动下载确认保持不变。
+  The first book on Now Reading uses a Sync Progress action: pull first and compare to 0.01%; apply a farther remote position, otherwise push and verify local progress. Remote failures never trigger a blind upload, changed local records are not overwritten, and manual downloads still require confirmation.
+
+## 0.6.29 · 2026-10-20
+
+- 修复 TF 卡字体偶发读取或切换失败后，目录、导航及其他页面只剩线框而无文字：字体切换失败时保留原字库，单次读取失败不再清空全部已缓存字形；若卡字体确实无法继续读取，自动切回内置字体并重绘，稍后再尝试恢复已选字体。
+  Fix text disappearing across TOC, navigation and other pages after a transient SD-font read or switch failure: keep the previous font on failed switches, preserve cached glyphs on I/O failure, and automatically repaint with the built-in font when the SD source remains unreadable before retrying the saved choice later.
+
+## 0.6.28 · 2026-10-19
+
+- 已有 WiFi 连接会保留驱动返回的认证失败原因，不再在重试结束后统一显示超时；密码错误会明确提示并提供“重新输入”，新密码保存成功后覆盖该网络的旧凭据。网络不可见仍可继续尝试其他已记住网络，认证失败则停在当前网络等待用户处理。
+  Preserve the driver's authentication failure instead of flattening it into a timeout after retries. A wrong WiFi password now shows an explicit message and a Re-enter action, replacing that network's old credential after a successful save. Invisible networks may still fall through to other remembered profiles, while authentication failure stops on the selected network for user action.
+- 传书首页改为统一连接主卡：网络名称、连接阶段、地址/二维码和失败恢复集中展示；联网中明确区分路由器关联、获取地址与准备网页，失败后可就地重试或重选网络，上传状态独立成卡避免信息冲突。
+  Redesign Transfer Home around one connection card for network identity, connection phases, URL/QR and recovery. Router association, address acquisition and page preparation are now explicit, failures can retry or reselect in place, and upload status has a separate card to avoid conflicting messages.
+- 修复联网对时失败后再进入传书可能无法重连：新会话会先收拢上次的错误状态；WiFi 关联与 DHCP 分开限时，慢路由不再被统一 15 秒过早中断。传书页在等待地址或连接失败时也会同步刷新上方连接状态。
+  Fix reconnecting after a failed online time sync: a new session first cleans up the previous error state, while WiFi association and DHCP now have separate deadlines instead of one premature 15-second cutoff. The transfer page also refreshes its upper connection state when awaiting an address or reporting failure.
+- EPUB 标题在页尾只容得下标题、容不下下一段首行时，会把完整标题移到下一页；标题过长、标题后紧接插图或后续仍是标题时保持原分页，阅读进度仍使用原文字节锚点。
+  Move an EPUB heading to the next page when the current page tail fits only the heading but not the following paragraph's first line. Oversized headings, headings followed by an illustration, and consecutive headings retain existing pagination; progress keeps the original source-byte anchor.
+- WiFi 凭据从单网络升级为最多六个网络：旧配置自动兼容迁移，新配网不再覆盖家里/公司的其他密码；已记住网络在扫描列表中可直接连接，遗忘只删除当前首选项。
+  Upgrade WiFi credentials from one network to six: legacy settings migrate automatically, provisioning no longer overwrites other home/office passwords, remembered scan entries reconnect directly, and Forget removes only the current preferred entry.
+- 传书、进度同步、联网对时等按需联网启动时会先扫描现场，按最近使用顺序选择可见的已记住网络；当前候选连续失败后自动尝试其他可见配置，连接成功的网络升为下次首选。扫描失败时仍回退原首选配置，兼容隐藏 SSID。
+  On-demand networking for transfer, progress sync and time sync now scans the current location and chooses a visible remembered network in recent-use order. It falls through to other visible profiles after repeated failure and promotes the successful profile; scan failures still fall back to the preferred profile for hidden SSIDs.
+
+## 0.6.27 · 2026-10-19
+
+- 修复阅读设置与首页进度同步的两种内存失败：12 KiB 同步任务栈改为常驻 PSRAM 并复用，把内部内存留给 WiFi/TLS/PSA；不再因内部连续块不足提示“无法启动同步”，也修复握手阶段的 `connect E7002 TLS8d/0 net0`。
+  Fix both progress-sync memory failures from reader settings and Home: keep and reuse the 12 KiB sync worker stack in PSRAM, reserving internal memory for WiFi/TLS/PSA. This removes the contiguous-internal-memory startup failure and the handshake-time `connect E7002 TLS8d/0 net0` error.
+- 进度记录从整数百分比提高到 0.01% 精度，上传后立即回读同一 KOReader 文档记录；只有服务器返回不早于本次上传的位置才显示确认，并区分“已确认上传”“服务器保留较新进度”和“服务器未确认”。旧进度记录兼容读取。
+  Raise stored progress from whole percentages to 0.01% precision and immediately read back the same KOReader document record after a push. Confirmation now requires the server position to be at least the sent position, distinguishing confirmed upload, a newer retained remote position and missing confirmation; old records remain readable.
+
+## 0.6.26 · 2026-10-18
+
+- 针对“上传当前进度”的 `connect E7002 TLS7f80/0 net0`，同步客户端改用服务器同样支持的 P-256 + AES-GCM 并保留 HTTPS 证书校验；后续 0.6.27 实机反馈确认曲线切换没有消除共同的内部内存根因。
+  In response to `connect E7002 TLS7f80/0 net0` from Upload Progress, switch the client to the server-supported P-256 + AES-GCM path while retaining HTTPS verification. Later 0.6.27 device feedback confirmed that changing curves did not remove the shared internal-memory root cause.
+- 摘录锁屏在竖排出处与摘录正文之间增加明确留白，短摘录不再显得拥挤；整体仍保持居中，长摘录空间不足时继续使用横排出处。
+  Add clear spacing between the vertical source and excerpt body on the quote lock screen, keeping short excerpts from feeling cramped while retaining centered composition and the horizontal-source fallback for long text.
+- 修复 TXT 目录标题超过 40 个 UTF-8 字节时被过早截断：保存上限与扫描窗口统一提高到 96 字节；“洪武大帝 第八章 可怕的陈友谅”等标题不再丢失末字。TXT 目录缓存版本升级，旧缓存会在下次开书时自动重建。
+  Fix TXT chapter titles being truncated after 40 UTF-8 bytes: the stored limit now matches the 96-byte scan window, preserving the final character in titles such as “洪武大帝 第八章 可怕的陈友谅”. The TXT index cache version is bumped so old caches rebuild on the next open.
+
+## 0.6.24 · 2026-10-18
+
+- 修复进度同步后立即打开蓝牙翻页器仍报内存不足：同步结束只解除正文预绘暂停，预绘任务延迟到下一次真实翻页再创建，保留刚释放的连续内部内存供蓝牙启动。
+  Fix the Bluetooth page turner still reporting low memory immediately after progress sync: sync completion now only lifts body-prefetch suspension, delaying worker recreation until the next real page turn so the newly reclaimed contiguous internal block remains available for Bluetooth startup.
+- 修复蓝牙在创建协议栈前因内存不足失败后，退出重进仍显示“蓝牙忙或未就绪”：无运行实例的停止流程也会回到关闭态，干净退出会清除本次启动计数；操作失败同时保留实际内存/启动原因。
+  Fix re-entering Bluetooth after a pre-stack low-memory failure still reporting “busy or not ready”: stopping without a running instance now returns the radio to Off, a clean exit clears the current startup count, and action failures retain the actual memory/startup reason.
+
+## 0.6.23 · 2026-10-18
+
+- 修复阅读设置“进度同步”无法使用已保存 WiFi 的问题：同步启动前暂时释放正文预绘任务的 12 KiB 内部栈，联网结束后自动恢复；未配置网络与内存/启动失败分别提示，不再把所有启动错误误报为“请先配置网络”。
+  Fix progress sync in reader settings failing to use saved WiFi: temporarily release the body-prefetch task's 12 KiB internal stack before networking and restore it afterwards; missing credentials and memory/startup failures now report separately instead of all being misreported as unconfigured WiFi.
+
+## 0.6.22 · 2026-10-18
+
+- 网页刷机恢复完整包的增量回退：连接握手后先读设备 0x10000 应用描述，识别为 Read_Pico/PageRest 时自动改为只写应用分区，保留设置与阅读记录；识别不到（空片、其它固件或读取失败）才按完整安装写 0x0；选择全片擦除时不做识别、保持整包行为。
+  The web flasher restores the full-image upgrade fallback: after the serial handshake it reads the on-device app description at 0x10000, and a device identified as Read_Pico/PageRest upgrades in place at the app partition only, keeping settings and records; unidentified devices take the full 0x0 install, and an explicit full erase keeps the whole-image behaviour without probing.
+
+- 新刷固件默认使用浅睡，清残影周期默认 10 页；已有设备保存的睡眠和清理选择保持不变。
+  Fresh firmware defaults to light sleep and a 10-page cleanup interval, preserving saved choices on existing devices.
+- TXT 连续换行归一为一个段落边界，站点导出的段间空行不再与排版段距重复叠加；原文和阅读锚点不改。
+  Collapse consecutive TXT newlines into one paragraph boundary so exported blank lines no longer stack with layout paragraph spacing; source bytes and reading anchors stay unchanged.
+- 阅读设置里的枚举项统一使用底部选择面板；首行缩进、段落间距、晃动翻页和翻页动画不再点击后直接切换。
+  Enumerated reader settings now share the bottom choice sheet; indentation, paragraph spacing, shake turning and turn animation no longer toggle immediately on row taps.
+- 书架在空闲时预取相邻页封面，翻页首帧直接恢复已缓存结果；三页 18 张封面及索引放在 PSRAM，不占用 WiFi 内部内存余量。
+  Prefetch adjacent shelf pages while idle and restore cached covers before the first paging frame; three pages/18 covers and their index live in PSRAM without consuming WiFi internal-memory margin.
+
+## 0.6.21 · 2026-10-17
+
+- 修复 0.6.20 固定封面任务栈占用内部内存后，连接已有 WiFi 报 `ESP_ERR_NO_MEM`：封面任务改为15KiB按需创建，进入传书、开书、睡眠等汇合边界时销毁并归还内存；传书返回后的15,872B连续块仍可重建任务。
+  Fix saved-WiFi connections failing with `ESP_ERR_NO_MEM` after 0.6.20 permanently reserved the cover-worker stack: create its15KiB stack on demand and release it at transfer, reading and sleep join boundaries; the observed15,872-byte post-transfer block can still recreate it.
+- 图片锁屏没有自定义TF壁纸或壁纸读取失败时，默认使用与开机画面相同的 PageRest 小朋友读书插画；已选壁纸保持不变。
+  Use the PageRest child-reading boot artwork as the default image lock when no readable custom TF wallpaper exists; existing wallpaper selections remain unchanged.
+
+## 0.6.20 · 2026-10-17
+
+- 修复进入“连接与传书”后返回书架，翻页时封面因内部内存碎片而无法加载；封面任务保留16KiB安全栈并复用，保留传书启动的内存保护。
+- Fix shelf covers failing to load after returning from transfer and paging: reserve and reuse the cover worker's 16KiB safe stack, retaining WiFi startup memory guards.
+
+## 0.6.19 · 2026-10-17
+
+- 修复低内部内存进入“连接与传书”时热点启动崩溃：初始化前按余量缩减 WiFi 缓冲，并在热点/已有 WiFi/扫描启动前检查内部及 DMA 可用总量与连续块；不足时停止并显示内存错误，可释放资源后重试。
+  Prevent low-internal-memory crashes when entering Connection & Transfer: reduce WiFi buffers before initialization and check total/contiguous internal and DMA headroom before AP, saved-network or scan startup; insufficient memory tears down with a visible error and permits retry.
+- 修正复位原因编号错位：PANIC 不再误报 INT_WDT，正常软件重启不再记为崩溃，深睡唤醒与掉电原因正确区分；旧日志不回写。
+  Correct shifted reset-reason codes: PANIC no longer appears as INT_WDT, software restarts are not logged as crashes, and deep-sleep wakes and brownouts are distinguished. Existing logs remain unchanged.
+
+## 0.6.18 · 2026-10-17
+
+- 修复百分比跳转、页脚定位条与断电续读落在目标章第 2 页附近的问题：增量分页此前只覆盖入口页，跳转目标远在其后时页码被钳到已知首页；现在先补齐分页到目标字节再取页，跳转后同时刷新剩余时间估算。
+  Fix percent jumps, footer-scrub commits and power-cut resume landing near page two of the target chapter: incremental pagination only covered the entry pages, so distant targets clamped to the first known page; coverage now extends to the target byte before resolving the page, with the time-left estimate refreshed on jumps.
+- 修复开机后台扫描书架期间阅读输入全部冻结：点击、滑动与三键此前被扫描整体封锁，页脚分钟刷新、字号定稿与预绘也停摆；现在封锁只作用于书架/批量视图，阅读在后台扫描下照常翻页与维护。
+  Fix all reading input freezing while the boot shelf scan ran in the background: taps, swipes and keys were globally gated by the scan, stalling the minute footer, size settling and prefetch; the freeze now applies only to the shelf views while reading keeps turning and maintaining behind the scan.
+- 修复翻页器与晃动在页脚定位条拖动、摘录确认卡和读完面板期间仍会翻页的问题：远程输入按冻结规则丢弃，翻页入口对全部覆盖层加护栏，定位条状态在退出阅读/媒体丢失时复位。
+  Fix remote turners and shake still turning during footer-scrub drags, excerpt confirmation and the end panel: remote input is discarded per the frozen rule, the turn entry guards every overlay, and scrub state resets on exit or media loss.
+- 交互清理：批量/单本管理的空操作不再整页闪刷；设置面板与点击分区页按上下页键不再挪动隐形书架页；蓝牙搜索页翻页键到界置灰不再闪刷、学习中三个学习键标签如实显示“取消学习”；锁屏密码改为 NVS 写入成功后才生效；设置根页卡片间隙不再误触上一行；存储页与摘录列表返回键补按下反馈；选择单折行省略号不再切断多字节字符。
+  Interaction cleanup: no-op taps in batch/single-book management stop flashing pages; page keys no longer move an invisible shelf page under settings/tap-zone views; the Bluetooth search pager greys out at bounds and all learn labels honestly read Cancel while learning; the lock PIN takes effect only after a successful NVS write; settings-root gaps no longer trigger the row above; storage/excerpt back keys gain press feedback; sheet ellipses never cut multi-byte characters.
+- 随版交付 0.6.17 后半的改进：电源保活扩展到所有推屏（书架/菜单翻页不再逐屏上下电，静置 8 秒仍断电）；封面复用槽 8→14；灰缘“字缘优化”实验开关与“灰缘直刷阶梯”校准页。
+  Shipping the late-0.6.17 improvements with this release: the rail keepalive covers every refresh (shelf/menu paging stops cycling rails, idling still cuts them after 8 s); cover reuse slots grow 8→14; the gray-edge optimization experiment and landing-ladder calibration page.
+
 ## 0.6.17 · 2026-10-17
 
+- 实机日志定位翻页迟滞主因：每次翻屏完整走一遍面板上电+断电，断电序列含 500ms 阻塞保持，翻页 display≈950ms 中约 590ms 是纯电源时序（扫描仅约 240ms）。所有推屏（正文翻页、书架与菜单翻页、触摸跟手）统一改为 8 秒闲置保活——连续交互不再逐屏上下电，静置到期仍按原序列断电防静态电压漂移；睡眠、锁屏、关机与上电失败保持立即断电。
+  Device logs pinpointed the sluggish refreshes: every screen update cycled the panel rails, and the power-off sequence carries a blocking 500ms hold, so ~590ms of each ~950ms refresh was pure power sequencing against a ~240ms scan. All updates (body turns, shelf/menu paging, touch tracking) now share one 8-second idle keepalive — continuous interaction stops cycling rails, while the idle deadline still runs the full off sequence against static drift; sleep, lock, shutdown and failed power-on keep cutting rails immediately.
+- 封面复用槽 8→14：一页书架占 6 张封面，8 槽翻页往返必触发重载；14 槽让相邻页往返即时命中，更远的页由 SD 封面缓存兜底（只读文件、不再解码）。
+  Cover reuse slots 8→14: one shelf page holds six covers, so eight slots forced reloads on page round trips; fourteen cover adjacent round trips instantly, with the SD cover cache (file reads only, no decode) covering the rest.
+- 实机反馈修订：大书打开恢复“正在解析图书…”提示——命中缓存仍要整本读指纹，静默数秒会被当成点按失效；刷新演示页新增“灰缘直刷阶梯”，从白基准逐级走正文灰缘波形，供拍摄对照校准落点表；封面提取任务新增一行结果日志（cover: extract … status/gray），配合串口定位封面缺失。
+  Device-feedback revision: big-book opens show the "parsing" notice again — cache hits still fingerprint the whole file, and silent seconds read as ignored taps; the refresh demo gains a gray-direct landing ladder driven from a white baseline through the body gray-edge waveform for same-board calibration.
+- 速度档灰缘新增“字缘优化”实验开关（显示设置，默认关）：绘制取码按灰缘 21 相阶梯的落点表反演，浅端两个同落灰码不再均分覆盖率；波形、相数、剂量与翻页观感不变，落点数值待同板对比校准后可再调。
+  Gray-edge speed mode gains a "字缘优化" experiment toggle (display settings, off by default): code selection now inverts the 21-phase ladder's landing table, so the two lightest codes sharing one landing no longer split coverage; waveforms, phases, doses and turn behavior stay unchanged, with landing values tunable after same-board comparison.
+- 阅读页脚进度显示重做：横线加竖刻度改为章节分段胶囊条——章节起点成为分段缝，已读段纯黑、未读段浅灰、当前章内按比例填充；过密章节自动并入邻段。
+  The reader footer progress is redesigned: the line-and-ticks track becomes chapter-segmented pills — chapter starts turn into gaps, read segments solid black, unread light gray and the current chapter filling proportionally; dense chapters merge into neighbours.
+- TXT 打开提速：无章节/超限兜底切分不再整本二次读盘（首遍扫描顺手记录分段点，边界逐字节不变）。
+  TXT opens get faster: the no-heading/oversize fallback chunking no longer re-reads the whole file (the first scan records split points in passing with byte-identical boundaries).
 - 修复 TXT 章节解析两类漏检（“明朝那些事儿”“橙红年代”实测）：章号前带部名的行（“洪武大帝 第一章 童年”）现在按“干净前缀+空白+第N章”识别；17k 等站点导出的“N-M 标题　[本章字数：…]”长行不再因超长被否决，标题截到标记前。两本书分别从 Part 兜底恢复为 159/860 章。
   Fix two TXT chapter-detection misses (verified against “明朝那些事儿” and “橙红年代”): lines carrying a part name before the chapter number (“洪武大帝 第一章 童年”) now match as a clean prefix plus whitespace plus 第N章, and long site-export lines (“N-M title　[本章字数：…]”, as exported by 17k and friends) are no longer rejected for overlength, with titles cut before the marker. The two books restore to 159/860 chapters from the Part fallback.
 - TXT 解析合并参考仓库 RickyOS 的增强：中文数字补 〇/亿/廿（“第一百〇八章”不再漏）；“第 1 章”式空格容忍；英文题头支持 book/part 前缀与罗马数字（Chapter IV）；Markdown # 标题识别（代码围栏内跳过）；编码改为严格 UTF-8→GBK 双验证，UTF-8 文件单字节损坏不再整本误判 GBK 出乱码。TXT 目录缓存版本升级，旧缓存自动重建。

@@ -11,6 +11,8 @@
  * Incremental pagination enables early reading; inline images load before pagination; failed images show retry placeholders; never read or decode resources while drawing.
  * 用户确认旧线仅在转场穿字，修订辅助线只绘制的决定：纯文字开线时统一行网格、段距按整槽，关闭恢复原排版。
  * The user confirmed turn-only rule crossings, revising draw-only guides: text-only guides use one row grid and whole-slot paragraph gaps; disabling restores original layout.
+ * 用户修订：TXT 连续换行只算一个段落边界，保留原始字节与进度锚点；EPUB 块排版不受影响。
+ * User revision: consecutive TXT line breaks count as one paragraph boundary while preserving source bytes and progress anchors; EPUB block layout is unchanged.
  * 冻结：构建、绘制与命中共用同一网格；不得只固定辅助线而让文字跨线。图片章节保留原图文布局，不承诺跨页线位兼容。
  * Frozen: Build, drawing and hits share the grid; never fix rules while letting text cross them. Image chapters retain their original layout without cross-page rule compatibility.
  * 实机修订：槽底辅助线离本行文字过远（整段行距悬空），改为统一贴近文字——行底下方四分之一
@@ -576,9 +578,48 @@ static bool take_line(size_t off, size_t* next, bool* paragraph_end, int* px, bo
     if (!word_broken && end < s_len && (s_text[end] == '\r' || s_text[end] == '\n')) {
         *next = end + 1;
         if (s_text[end] == '\r' && *next < s_len && s_text[*next] == '\n') (*next)++;
+        // TXT 导出常用空行分段；把连续 CR/LF 归成一个段落边界，避免空行高度和段距重复叠加。
+        // TXT exports often separate paragraphs with a blank line; collapse consecutive
+        // CR/LF boundaries so an empty row is not added on top of paragraph spacing.
+        if (!s_block_count) while (*next < s_len && (s_text[*next] == '\r' || s_text[*next] == '\n')) {
+            char newline = s_text[(*next)++];
+            if (newline == '\r' && *next < s_len && s_text[*next] == '\n') (*next)++;
+        }
         *paragraph_end = true;
     }
     return *next > off;
+}
+
+// 标题从块首开始时，测出“完整标题 + 下一段首行”的高度；只有整组能在空白页放下才要求同页。
+// At the start of a heading block, measure the whole heading plus the next paragraph's first
+// line; keep them together only when the group fits on an otherwise empty page.
+static bool heading_keep_height(size_t off, int64_t* height) {
+    const blk_t* heading_block = block_at(off);
+    if (!height || !heading_block || !heading_block->heading || off != heading_block->offset) return false;
+    size_t at = off;
+    int64_t total = 0;
+    while (at < s_len) {
+        const blk_t* block = block_at(at);
+        if (block != heading_block && (block->heading || block->image || block->image_src)) return false;
+        size_t next;
+        bool paragraph_end, heading;
+        int line_px;
+        if (!take_line(at, &next, &paragraph_end, &line_px, &heading)) return false;
+        int line_height = row_height(block, line_px);
+        if (line_height > s_rect.height || total > s_rect.height - line_height) return false;
+        total += line_height;
+        if (paragraph_end) {
+            int gap = para_gap(line_height, heading);
+            if (gap > s_rect.height || total > s_rect.height - gap) return false;
+            total += gap;
+        }
+        at = next;
+        if (block != heading_block) {
+            *height = total;
+            return true;
+        }
+    }
+    return false;
 }
 
 bool book_layout_build(const char* utf8, size_t len, EpdRect rect, int px) {
@@ -643,6 +684,13 @@ bool book_layout_extend(size_t pages) {
     if (!pages || s_complete) return true;
     size_t target = pages > PAGE_MAX - book_layout_page_count() ? PAGE_MAX : book_layout_page_count() + pages;
     while (s_scan < s_len) {
+        int64_t keep_height = 0;
+        if (s_used > s_grid_padding && heading_keep_height(s_scan, &keep_height) &&
+            keep_height <= s_rect.height - s_grid_padding && s_used + keep_height > s_rect.height) {
+            if (!append_page(s_scan)) goto fail;
+            s_used = s_grid_padding;
+            if (book_layout_page_count() >= target) return true;
+        }
         size_t next;
         bool paragraph_end, heading;
         int line_px;

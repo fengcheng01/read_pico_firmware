@@ -22,9 +22,11 @@ ROOT = Path(__file__).resolve().parents[2]
 # Device-boundary files excluded from the preview: drivers, factory wiring, the
 # real loop assembly and ESP-only bridges.
 DEVICE_ONLY = {
+    "os/os_history_pico.c", # PMU缓存只读边界 / read-only PMU snapshot boundary
     "os/os_ble_radio_pico.c", # 无线硬件，独立 API 故障回归 / radio hardware with independent API fault regression
     "app_main.c",          # 板级装配与真机引导 / board assembly and boot
     "display.c",           # 波形/推屏驱动 / waveform and present driver
+    "display_animation.c", # 真实波形派生，独立逐相宿主回归 / physical waveform derivation with phase-by-phase host regression
     "sleep.c",             # PMU/GPIO 睡眠路径 / PMU/GPIO sleep path
     "app/app_touch_input.c", # RTOS触摸采样，独立pthread回归 / RTOS touch sampler with independent pthread regression
     "app/app_loop.c",      # 真机事件循环 / the real event loop

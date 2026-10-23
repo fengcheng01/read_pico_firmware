@@ -44,8 +44,6 @@
 
 static const char* TAG = "read_pico";
 
-extern const uint8_t lock_4bpp_pack_start[] asm("_binary_lock_4bpp_pack_start");
-extern const uint8_t lock_4bpp_pack_end[] asm("_binary_lock_4bpp_pack_end");
 extern const uint8_t loading_4bpp_pack_start[] asm("_binary_loading_4bpp_pack_start");
 extern const uint8_t loading_4bpp_pack_end[] asm("_binary_loading_4bpp_pack_end");
 
@@ -65,18 +63,13 @@ static bool resolve_vcom_at_boot(void) {
     return false;
 }
 
-// 开机图和锁屏图是预先转好的 4bpp 全屏位图，尺寸对不上说明资源和面板不匹配。
-// Splash and lock images are pre-baked 4bpp full-frames. A size mismatch
-// means the assets do not match the panel.
+// 开机与默认锁屏共用预先转好的4bpp全屏位图，尺寸对不上说明资源和面板不匹配。
+// Boot and the default lock share one pre-baked4bpp full-frame; a size mismatch means the asset does not match the panel.
 static bool images_match_panel(void) {
-    size_t lock_size = asset_pack_size(lock_4bpp_pack_start, (size_t)(lock_4bpp_pack_end - lock_4bpp_pack_start));
     size_t loading_size = asset_pack_size(loading_4bpp_pack_start, (size_t)(loading_4bpp_pack_end - loading_4bpp_pack_start));
     size_t expected = (size_t)epd_width() * epd_height() / 2;
-    if (lock_size == expected && loading_size == expected) return true;
-    ESP_LOGE(
-        TAG, "Image size mismatch: lock %u loading %u expected %u",
-        (unsigned)lock_size, (unsigned)loading_size, (unsigned)expected
-    );
+    if (loading_size == expected) return true;
+    ESP_LOGE(TAG, "Image size mismatch: loading %u expected %u", (unsigned)loading_size, (unsigned)expected);
     return false;
 }
 
@@ -95,6 +88,7 @@ void app_main(void) {
     if (!usb_requested) usb_disk_restore_serial();
     read_pico_handle_t hw;
     if (read_pico_init_with_sd(&hw, !usb_requested) != ESP_OK) return;
+    app_sleep_bind(hw.touch, hw.sensor);
     // 产品扫描余量统一来自 display 配置。/ Product scan margin follows the display configuration.
     read_pico_epd_set_pclk(DISPLAY_PCLK_DEFAULT_MHZ);
     // 先记上次复位原因；异常复位在锁屏挑战前写入内置存储日志。
@@ -160,7 +154,13 @@ void app_main(void) {
     // With a lock PIN armed, block here first; the loop, menus and pages stay unreachable until it passes.
     // 密码页按电源键＝不开了，转软睡（短按再开机）。
     // A power key on the boot PIN page means "not now": drop into soft sleep (short press re-powers).
-    if (!app_lock_pin_challenge(&hl, hw.touch)) app_enter_host_sleep(APP_SLEEP_DEEP);
+    while (!app_lock_pin_challenge(&hl, hw.touch)) {
+        (void)app_enter_host_sleep(APP_SLEEP_DEEP);
+        // 下电失败也不能越过开机PIN；浅睡按键唤醒后重新校验。
+        // A failed power cut never bypasses the boot PIN; retry verification after a light-sleep key wake.
+        app_lock_wait_key_idle(800);
+        app_light_sleep_wait(NULL);
+    }
 
     // 用户请求 USB 独占卡盘：通过工厂/PIN 检查后，不启动普通页面或后台消费者。
     // User-requested exclusive USB disk: after factory/PIN gates, never start normal pages or background consumers.

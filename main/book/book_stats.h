@@ -22,13 +22,15 @@
 #define BOOK_STATS_IDLE_MS (5LL * 60LL * 1000LL)
 /// 单次采样最多计入的间隔，防扫描/卡顿一次性灌入。/ Per-sample cap so scans or stalls cannot dump time at once.
 #define BOOK_STATS_SAMPLE_MAX_MS 60000LL
-/// 保留最近 30 天。/ Keep the most recent 30 days.
+/// NVS近期恢复窗口；未经归档确认的旧记录不删除。/ Recent NVS recovery window; unconfirmed older records are never deleted.
 #define BOOK_STATS_KEEP_DAYS 30
 
 /// 每轮 tick 调用；reading 表示当前处于正文阅读视图。/ Call every tick; reading means the reader view is active.
 void book_stats_observe(int64_t now_ms, bool reading, bool date_valid, uint32_t yyyymmdd);
 /// 立即落盘当前累计；离页、睡眠前调用。/ Flush accumulated time now; call on page exit and before sleep.
 void book_stats_flush(void);
+/// 合并插卡后发现的较大持久化累计。/ Reconcile larger persisted totals discovered after insertion.
+void book_stats_reconcile(void);
 /// 某日分钟数；当日含未落盘累计。/ Minutes for a date; today includes unflushed time.
 uint16_t book_stats_minutes(uint32_t yyyymmdd);
 /// 闭区间日期范围内的总分钟数。/ Total minutes within the inclusive date range.
@@ -40,7 +42,11 @@ uint32_t book_stats_total_minutes(uint32_t from_yyyymmdd, uint32_t to_yyyymmdd);
 bool book_stats_store_get(uint32_t yyyymmdd, uint16_t* minutes);
 /// 写某日分钟；失败返回 false。/ Write a day's minutes; false on failure.
 bool book_stats_store_put(uint32_t yyyymmdd, uint16_t minutes);
-/// 只保留最近 BOOK_STATS_KEEP_DAYS 个日期记录。/ Keep only the newest BOOK_STATS_KEEP_DAYS dated records.
+/// 保留最近记录，旧记录必须先归档回读。/ Keep recent records; older ones require archive readback first.
 void book_stats_store_prune(void);
+/// 清醒时低频幂等归档并安全清理。/ Low-rate idempotent archiving and safe pruning while awake.
+void book_stats_store_maintain(void);
+/// 合并NVS/TF的区间总量，同日取较大值。/ Merged NVS/TF range total, taking the larger value per day.
+uint32_t book_stats_store_total(uint32_t from, uint32_t to);
 /// 遍历全部记录，fn 返回 false 提前结束。/ Visit all records; fn returning false stops early.
 void book_stats_store_visit(bool (*fn)(uint32_t yyyymmdd, uint16_t minutes, void* ctx), void* ctx);

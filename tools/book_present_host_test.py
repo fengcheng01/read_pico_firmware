@@ -15,7 +15,7 @@ def production_function(name):
     assert match, name
     end = source.index('\n}', match.end()) + 2
     return source[match.start():end]
-production = '\n'.join(production_function(name) for name in ('finish_reader_frame', 'reader_direct_enabled', 'reader_gray_direct_enabled', 'reader_white_repaint_enabled', 'present'))
+production = '\n'.join(production_function(name) for name in ('finish_reader_frame', 'reader_direct_enabled', 'reader_gray_direct_enabled', 'reader_gray_balanced_enabled', 'reader_white_repaint_enabled', 'present'))
 reader_mode = (ROOT / 'main/display_reader_modes.h').read_text().replace('#pragma once', '')
 harness = reader_mode + r'''
 #include <assert.h>
@@ -38,6 +38,9 @@ typedef struct { bool image; } blk_t;
 static book_view_t s_view,s_presented_view;
 static bool s_presented_valid,s_presented_reading_overlay,s_text_turn,s_image_open,s_toolbar,s_clear_confirm,direct,anim_enabled,s_full_settle;
 static int s_turn_dir;
+static bool s_soft_turn_eligible;
+static uint8_t animation_style=1;
+static uint8_t app_settings_book_turn_style(void){return animation_style;}
 static bool s_quote_selecting,s_ended;
 static bool s_reader_target_night,s_reader_target_binary;
 static bool s_search_dirty,s_search_fast;
@@ -55,6 +58,8 @@ typedef enum {DISPLAY_NIGHT_TURN,DISPLAY_NIGHT_ENTRY,DISPLAY_NIGHT_CLEAN,DISPLAY
 #define BOOK_NIGHT_PROFILE_CURRENT 0
 #define BOOK_NIGHT_PROFILE_WHITE_REPAINT 3
 static bool gray_edges;
+static bool gray_balanced;
+static unsigned balanced_calls;
 static unsigned gray_calls,white_calls,white_actions[4];
 static uint8_t night_profile;
 static int E0470_WAVEFORM,E0470_NAVIGATION_WAVEFORM,E0470_TEXTTURN_WAVEFORM,E0470_TEXTTURN_NIGHT_WAVEFORM,E0470_DIRECT_WAVEFORM;
@@ -89,6 +94,7 @@ __attribute__((unused)) static void app_settings_set_lock_reading(bool on){(void
 __attribute__((unused)) static bool app_settings_take_lock_reading(void){bool r=test_lock_reading_armed;test_lock_reading_armed=false;return r;}
 static bool app_settings_book_direct(void) {return direct;}
 static bool app_settings_book_edge_gray(void) {return gray_edges;}
+static bool app_settings_book_gray_balanced(void) {return gray_balanced;}
 static bool app_settings_book_night(void) {return night_setting;}
 static uint8_t app_settings_book_night_profile(void) {return night_profile;}
 static enum EpdDrawError result(void) {last_draw_serial=++serial;return fail?EPD_DRAW_FAILURE:EPD_DRAW_SUCCESS;}
@@ -122,6 +128,7 @@ static enum EpdDrawError update_display_reader_turn(void* h,display_reader_mode_
  case DISPLAY_READER_STANDARD:return update_display_text_turn(h,false);
  case DISPLAY_READER_BINARY:return update_display_text_direct(h,false);
  case DISPLAY_READER_GRAY:return update_display_text_gray_direct(h,false);
+ case DISPLAY_READER_GRAY_BALANCED:assert(gray_balanced&&gray_edges&&direct&&!night_setting);++balanced_calls;return update_display_text_gray_direct(h,false);
  default:return update_display_page_turn(h,area,forward);
  }
 }
@@ -312,6 +319,24 @@ int main(void) {
    fail=false;present(&ctx,APP_REDRAW_PAGE);assert(!s_presented_reading_overlay&&white_calls==before+6);
  }
  for(unsigned i=0;i<4;++i)assert(white_actions[i]>=4);
+ s_view=s_presented_view=READING;s_presented_valid=true;s_presented_reading_overlay=false;
+ s_image_open=s_toolbar=s_clear_confirm=s_quote_selecting=s_ended=false;
+ s_reader_target_night=night_setting=direct=gray_edges=false;s_block_count=0;night_profile=0;
+ anim_enabled=true;animation_style=2;s_soft_turn_eligible=false;
+ unsigned before_anim=anim_turns,before_standard=turns;
+ s_text_turn=true;present(&ctx,APP_REDRAW_AREA);assert(anim_turns==before_anim&&turns==before_standard+1);
+ s_soft_turn_eligible=true;s_text_turn=true;present(&ctx,APP_REDRAW_AREA);assert(anim_turns==before_anim+1);
+ direct=true;s_text_turn=true;present(&ctx,APP_REDRAW_AREA);assert(anim_turns==before_anim+1);
+ direct=false;night_setting=s_reader_target_night=true;s_text_turn=true;present(&ctx,APP_REDRAW_AREA);assert(anim_turns==before_anim+1);
+ s_reader_target_night=night_setting=false;direct=gray_edges=gray_balanced=true;
+ s_text_turn=true;present(&ctx,APP_REDRAW_AREA);assert(balanced_calls==1);
+ s_text_turn=true;present(&ctx,APP_REDRAW_AREA);assert(balanced_calls==2);
+ gray_edges=false;s_text_turn=true;present(&ctx,APP_REDRAW_AREA);assert(balanced_calls==2);
+ gray_edges=true;direct=false;s_text_turn=true;present(&ctx,APP_REDRAW_AREA);assert(balanced_calls==2);
+ blk_t balanced_image={.image=true};direct=true;s_blocks=&balanced_image;s_block_count=1;s_text_turn=true;present(&ctx,APP_REDRAW_AREA);assert(balanced_calls==2);
+ s_blocks=NULL;s_block_count=0;s_reader_target_night=night_setting=true;s_text_turn=true;present(&ctx,APP_REDRAW_AREA);assert(balanced_calls==2);
+ puts("Balanced-gray reader: daytime pure text only; binary, quality, images and night retain prior routes PASS");
+ puts("Soft-animation reader routing: text-to-text only, image transitions fall back, binary/gray/night/overlay paths remain separate PASS");
  puts("reader present: real gray target, removed Crossmux value 1 falling back to standard/direct, white clear four actions, overlay failure retries/control exclusions PASS");
  puts("reader present: view/overlay-entry requests and failed retry, manual cleanup, preparation join, day/night binary direct frames before entry/redraw/turn, grayscale image fallback and ordinary-turn preservation PASS");
  puts("reader present: night ENTRY/TURN/CLEAN/REDRAW routing for white-repaint text, both page effects, binary frames, overlay retry, control/image/day exclusions and profile switching PASS");

@@ -2,6 +2,14 @@
 
 **Languages:** [English](./README.md) | [简体中文](./README.zh-CN.md) | [日本語](./README.ja-JP.md)
 
+**PageRest 0.7.1** fixes the low-memory transfer-startup path reporting`ESP_ERR_NO_MEM`: before WiFi starts, rebuild HTTP with its existing smaller stack when needed, retaining safety headroom checks and rejecting continued shortages. Keep0.7.0 reading effects/preferences and deliver same-build full/incremental firmware. [Changelog](docs/CHANGELOG.md) · [Startup memory contract](docs/READING_HOME.md#联网启动内存回退--network-startup-memory-fallback).
+
+Edges now always use the original rendering, without Original/Legacy Correction/Smooth Comparison choices or legacy preference effects. Keep the gray/binary toggle as a full-row button and retain Fast/Fine Gray selection.
+
+**PageRest 0.7.0** offers **Fast Gray** for quicker turns and **Fine Gray** for smoother edges, retaining the current effects without phase-count labels. Fine may flash more during turns. Select Reader → More Settings → Display → Speed Priority → Gray Edges → Gray Refresh. Withdrawn gray-refresh experiments return to Fine; other preferences stay unchanged. Full and incremental BINs are built together; use incremental for routine upgrades with chip erase disabled. See [gray refresh](docs/READING_HOME.md#灰阶刷新--gray-refresh) and [changelog](docs/CHANGELOG.md).
+
+Sleep parks always-powered peripherals and prepares CPU retention only while sleeping. Failed power-down falls back to light sleep while preserving PIN protection, pickup wake and live excerpt clocks. Battery-current savings still need device measurement; see the [sleep contract](docs/READING_HOME.md#动态锁屏--dynamic-lock-faces).
+
 This branch's firmware is named **PageRest**, currently shown beside the version in Settings; **Read Pico** remains the hardware brand. Home uses a separate wide primary action, one stats row and recent reads, retaining direct progress upload.
 
 [Contributing](CONTRIBUTING.md) · [Support](SUPPORT.md) · [Security](SECURITY.md) · [Code of Conduct](CODE_OF_CONDUCT.md)

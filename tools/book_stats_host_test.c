@@ -39,6 +39,11 @@ bool book_stats_store_put(uint32_t date, uint16_t minutes) {
     return true;
 }
 void book_stats_store_prune(void) { ++s_prunes; }
+uint32_t book_stats_store_total(uint32_t from,uint32_t to) {
+    uint32_t total=0;for(unsigned i=0;i<64;++i)
+        if(s_slots[i].used&&s_slots[i].date>=from&&s_slots[i].date<=to)total+=s_slots[i].minutes;
+    return total;
+}
 void book_stats_store_visit(bool (*fn)(uint32_t, uint16_t, void*), void* ctx) {
     for (unsigned i = 0; i < sizeof(s_slots) / sizeof(s_slots[0]); ++i)
         if (s_slots[i].used && !fn(s_slots[i].date, s_slots[i].minutes, ctx)) return;

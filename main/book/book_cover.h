@@ -36,9 +36,9 @@ book_cover_status_t book_cover_read(const char* path, uint8_t** gray_out);
 /// / Extract and scale a cover; success yields a W×H grayscale buffer (caller frees), failure returns false with empty output.
 bool book_cover_load(const char* path, uint8_t** gray_out);
 
-/// 非阻塞领取成品封面（含无封面书的生成图），最多复用八张；true 表示完成，输出由调用方 free。
-/// Poll prepared covers including generated artwork; reuse at most eight; true means complete, with caller-owned output.
+/// 非阻塞领取成品封面（含无封面书的生成图），最多复用十四张；true 表示完成，输出由调用方 free。
+/// Poll prepared covers including generated artwork; reuse at most fourteen; true means complete, with caller-owned output.
 bool book_cover_poll(const char* path, uint8_t** gray);
-/// 等待唯一提取任务释放文件并丢弃结果；仅在读写/卸载/睡眠边界使用。
-/// Join the sole extractor and discard its result at file mutation, unmount, reading or sleep boundaries.
+/// 等待唯一提取任务、丢弃结果并释放任务栈；仅在读写/卸载/睡眠边界使用。
+/// Join the sole extractor, discard its result and release its stack at file mutation, unmount, reading or sleep boundaries.
 void book_cover_join(void);

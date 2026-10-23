@@ -7,21 +7,23 @@
  * English: NVS persistence for reading stats. Keys are st_YYYYMMDD holding
  * minutes; pruning stays bounded and never touches other namespaces.
  *
- * 冻结：读写失败静默返回，统计是尽力而为的数据；不擦除命名空间。
- * Frozen: Failures return quietly since stats are best-effort; never erase the namespace.
+ * 冻结修订：用户授权长期归档；NVS保留最近30个记录，旧记录只有归档确认后才可删。
+ * Frozen revision: User authorizes long-term archives; keep 30 recent NVS records and prune older ones only after archive confirmation.
  */
 #include "book_stats.h"
+#include "book_stats_archive.h"
 #include "nvs.h"
 #include <stdio.h>
 
 #define BOOK_STATS_NS "rp_stats"
 #define BOOK_STATS_KEY_MAX 16
+static unsigned s_write_revision, s_archived_revision=~0u, s_archived_media=~0u;
 
 static void key_of(uint32_t yyyymmdd, char* out) {
     snprintf(out, BOOK_STATS_KEY_MAX, "st_%lu", (unsigned long)yyyymmdd);
 }
 
-bool book_stats_store_get(uint32_t yyyymmdd, uint16_t* minutes) {
+static bool nvs_minutes(uint32_t yyyymmdd, uint16_t* minutes) {
     if (!minutes) return false;
     char key[BOOK_STATS_KEY_MAX];
     key_of(yyyymmdd, key);
@@ -32,6 +34,14 @@ bool book_stats_store_get(uint32_t yyyymmdd, uint16_t* minutes) {
     return ok;
 }
 
+bool book_stats_store_get(uint32_t date, uint16_t* minutes) {
+    if (!minutes) return false;
+    uint16_t local=0, archived=0;
+    bool a=nvs_minutes(date,&local), b=book_stats_archive_get(date,&archived);
+    *minutes=local>archived?local:archived;
+    return a||b;
+}
+
 bool book_stats_store_put(uint32_t yyyymmdd, uint16_t minutes) {
     char key[BOOK_STATS_KEY_MAX];
     key_of(yyyymmdd, key);
@@ -40,6 +50,7 @@ bool book_stats_store_put(uint32_t yyyymmdd, uint16_t minutes) {
     esp_err_t err = nvs_set_u16(h, key, minutes);
     if (err == ESP_OK) err = nvs_commit(h);
     nvs_close(h);
+    if(err==ESP_OK)++s_write_revision;
     return err == ESP_OK;
 }
 
@@ -57,6 +68,7 @@ static bool collect(uint32_t yyyymmdd, uint16_t minutes, void* ctx) {
 }
 
 void book_stats_store_prune(void) {
+    if (!book_stats_archive_ready()) return;
     collect_ctx_t found = {0};
     book_stats_store_visit(collect, &found);
     if (found.count <= BOOK_STATS_KEEP_DAYS) return;
@@ -73,11 +85,42 @@ void book_stats_store_prune(void) {
     if (nvs_open(BOOK_STATS_NS, NVS_READWRITE, &h) != ESP_OK) return;
     for (size_t i = 0; i < found.count - BOOK_STATS_KEEP_DAYS; ++i) {
         char key[BOOK_STATS_KEY_MAX];
+        uint16_t minutes=0;
+        if (!nvs_minutes(found.dates[i],&minutes) || !book_stats_archive_merge(found.dates[i],minutes)) continue;
         key_of(found.dates[i], key);
         nvs_erase_key(h, key);
     }
     nvs_commit(h);
     nvs_close(h);
+}
+
+static bool migrate(uint32_t date, uint16_t minutes, void* ctx) {
+    bool* ok=ctx;
+    uint16_t archived=0;
+    if (book_stats_archive_get(date,&archived) && archived>=minutes) return true;
+    if (!book_stats_archive_merge(date,minutes)) { *ok=false; return false; }
+    return true;
+}
+void book_stats_store_maintain(void) {
+    if (!book_stats_archive_ready()) return;
+    unsigned media=book_stats_archive_generation();
+    if(s_archived_revision==s_write_revision&&s_archived_media==media)return;
+    book_stats_archive_clear_error();
+    bool ok=true; book_stats_store_visit(migrate,&ok);
+    if (ok) { book_stats_store_prune();s_archived_revision=s_write_revision;s_archived_media=media; }
+}
+typedef struct {uint32_t from,to,total;} range_t;
+static bool range_extra(uint32_t date,uint16_t minutes,void* ctx) {
+    range_t* r=ctx;
+    if (date>=r->from&&date<=r->to) {
+        uint16_t archived=0;book_stats_archive_get(date,&archived);
+        if (minutes>archived)r->total+=minutes-archived;
+    }
+    return true;
+}
+uint32_t book_stats_store_total(uint32_t from,uint32_t to) {
+    range_t r={from,to,book_stats_archive_total(from,to)};
+    book_stats_store_visit(range_extra,&r);return r.total;
 }
 
 void book_stats_store_visit(bool (*fn)(uint32_t yyyymmdd, uint16_t minutes, void* ctx), void* ctx) {

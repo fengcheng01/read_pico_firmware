@@ -7,6 +7,8 @@
  * Frozen: Use pthread tasks to verify cover/prepaint lifecycles; never simulate physical refresh timing or power.
  */
 #pragma once
+/// 电量快照夹具，不访问PMU。/ Battery snapshot fixture without PMU access.
+void preview_battery_fixture(int permille);
 #include <stdbool.h>
 #include <stdint.h>
 #include <stddef.h>
@@ -24,6 +26,7 @@ typedef int esp_err_t;
 #define ESP_ERR_INVALID_SIZE 0x104
 #define ESP_ERR_NOT_FINISHED 0x109
 #define ESP_ERR_NOT_SUPPORTED 0x106
+#define ESP_ERR_WIFI_PASSWORD 0x300b
 const char* esp_err_to_name(esp_err_t err);
 int64_t esp_timer_get_time(void);
 #define ESP_LOGI(tag, ...) do { (void)(tag); } while (0)
@@ -54,6 +57,7 @@ extern const EpdWaveform E0470_FOLLOW_WAVEFORM;
 extern const EpdWaveform E0470_NAVIGATION_WAVEFORM;
 extern const EpdWaveform E0470_TEXTTURN_WAVEFORM, E0470_TEXTTURN_NIGHT_WAVEFORM;
 extern const EpdWaveform E0470_DIRECT_WAVEFORM, E0470_GRAY_DIRECT_WAVEFORM;
+extern const EpdWaveform E0470_GRAY_BALANCED_WAVEFORM;
 int epd_width(void);
 int epd_height(void);
 int epd_rotated_display_width(void);
@@ -149,6 +153,7 @@ void vSemaphoreDelete(void* semaphore);
 int xTaskCreatePinnedToCore(void (*entry)(void*), const char* name, int stack, void* arg,
                             int priority, void** handle, int core);
 void vTaskDelete(void* handle);
+unsigned uxTaskGetStackHighWaterMark(TaskHandle_t task);
 unsigned ulTaskNotifyTake(int clear, int wait);
 void xTaskNotifyGive(void* handle);
 void* heap_caps_malloc(size_t size, uint32_t caps);

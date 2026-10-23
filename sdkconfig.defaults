@@ -23,6 +23,9 @@ CONFIG_SPI_FLASH_HPM_DC_DISABLE=y
 CONFIG_SPIRAM_SPEED_120M=y
 CONFIG_SPIRAM_TIMING_TUNING_POINT_VIA_TEMPERATURE_SENSOR=n
 CONFIG_SPIRAM_USE_MALLOC=y
+# 同步任务静态栈明确放在 PSRAM；没有此项 FreeRTOS 会拒绝外部栈。
+# The sync worker explicitly uses a PSRAM static stack; FreeRTOS rejects external stacks without this option.
+CONFIG_FREERTOS_TASK_CREATE_ALLOW_EXT_MEM=y
 CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=32768
 CONFIG_ESP32S3_DATA_CACHE_LINE_64B=y
 # 渲染线程逐行流式读 PSRAM 里的 framebuffer，cache 越大预取越不容易失效
@@ -31,6 +34,9 @@ CONFIG_ESP32S3_DATA_CACHE_64KB=y
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=16384
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
 CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+# 显式浅睡准备CPU保存区，唤醒即释放；无需启用自动调频或自动浅睡。
+# Explicit light sleep prepares CPU retention and releases it on wake, without automatic DFS or light sleep.
+CONFIG_PM_POWER_DOWN_CPU_IN_LIGHT_SLEEP=y
 CONFIG_COMPILER_OPTIMIZATION_PERF=y
 # 1ms tick：EPD 上电流程里按毫秒轮询 PGOOD，100Hz 的 tick 会把每次等待放大到 10ms
 CONFIG_FREERTOS_HZ=1000
@@ -61,6 +67,12 @@ CONFIG_TINYUSB_DESC_MANUFACTURER_STRING="mindreset"
 # 同步 TLS 握手使用 PSRAM，避免显示 DMA 常驻后内部连续堆不足。
 # TLS handshake allocations use PSRAM to avoid internal-heap pressure from display DMA.
 CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
+# kosync 服务支持 P-256；产品与 CI 只保留这条已测曲线，使 TLS 协商确定并缩小代码面。
+# 内存不足由同步任务栈迁入 PSRAM 解决，不再把 PSA 包装错误归因于某条曲线。
+# kosync servers support P-256; product and CI retain this tested curve for deterministic negotiation and a smaller code surface.
+# The sync worker's PSRAM stack fixes memory pressure without attributing PSA wrapper errors to a curve.
+CONFIG_MBEDTLS_ECP_DP_SECP256R1_ENABLED=y
+CONFIG_MBEDTLS_ECP_DP_CURVE25519_ENABLED=n
 
 # 锁屏浅睡使用较稳定的分频快 RC，避免低频 RC 随温度走快。/ Use divided fast RC for steadier lock sleep timing.
 CONFIG_RTC_CLK_SRC_INT_8MD256=y
@@ -70,6 +82,10 @@ CONFIG_RTC_CLK_CAL_CYCLES=3000
 # BLE page-turner: central only, one connection; host heap in PSRAM, reclaimed on stop.
 CONFIG_BT_ENABLED=y
 CONFIG_BT_NIMBLE_ENABLED=y
+# 蓝牙事件之间关射频，沿用板上主晶振，不依赖外部32k晶振。/ Sleep between BLE events using the board main crystal, not an external 32k crystal.
+CONFIG_BT_CTRL_MODEM_SLEEP=y
+CONFIG_BT_CTRL_MODEM_SLEEP_MODE_1=y
+CONFIG_BT_CTRL_LPCLK_SEL_MAIN_XTAL=y
 CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_EXTERNAL=y
 CONFIG_BT_NIMBLE_ROLE_CENTRAL=y
 CONFIG_BT_NIMBLE_ROLE_OBSERVER=y

@@ -19,6 +19,7 @@
 #include "e0470_epaper_waveform.h"
 #include "du.h"
 #include "gl16.h"
+#include "gray8_gl16.h"
 
 // 独立按源packed字节解码，不复用被测装配器的lut_get/lut_set。
 // Decode source packed bytes independently without reusing the tested assembler's lut_get/lut_set.
@@ -28,9 +29,36 @@ static int source_action(const uint8_t* source, int phase, int to, int from) {
 
 int main(void) {
     uint8_t saved[E0470_GRAY_DIRECT_FRAMES * 64];
+    uint8_t balanced_saved[E0470_GRAY_BALANCED_FRAMES * 64];
     unsigned checked = 0;
     for (int run = 0; run < 3; ++run) {
         e0470_waveform_init();
+        const EpdWaveformPhases* balanced = e0470_waveform_phases(&E0470_GRAY_BALANCED_WAVEFORM, 5);
+        assert(balanced && balanced->phases == 28 && balanced->phase_times == NULL);
+        if (run == 0) memcpy(balanced_saved, balanced->luts, sizeof(balanced_saved));
+        else assert(!memcmp(balanced_saved, balanced->luts, sizeof(balanced_saved)));
+        for (int to=0;to<16;++to) for(int from=0;from<16;++from) {
+            const bool endpoint=to==0||to==15;
+            const uint8_t* original=endpoint?(const uint8_t*)e0470_full_du_data:(const uint8_t*)e0470_gray8_gl16_data;
+            const int total=endpoint?20:30;
+            int first=total,last=-1;
+            for(int p=0;p<total;++p) if(source_action(original,p,to,from)) {
+                if(first==total) first=p;
+                last=p;
+            }
+            int active[3]={0},expected[3]={0};
+            for(int p=0;p<28;++p) {
+                int actual=e0470_phase_action(balanced,p,to,from);
+                assert(actual>=0&&actual<=2); ++active[actual];
+                int src=p-(26-last);
+                int value=to!=from&&last>=0&&src>=first&&src<=last?source_action(original,src,to,from):0;
+                assert(actual==value);
+                if(to==from||p==27) assert(actual==0);
+                if(p==26&&to!=from&&last>=0) assert(actual!=0);
+            }
+            if(to!=from) for(int p=0;p<total;++p) ++expected[source_action(original,p,to,from)];
+            assert(active[1]==expected[1]&&active[2]==expected[2]);
+        }
         const EpdWaveform* waveform = &E0470_GRAY_DIRECT_WAVEFORM;
         assert(waveform->num_modes == 1 && waveform->num_temp_ranges == 1);
         assert(waveform->temp_intervals[0].min == 0 && waveform->temp_intervals[0].max == 50);

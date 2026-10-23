@@ -14,18 +14,23 @@
 
 int main(void) {
     // 命名与分类。/ Naming and classification.
-    assert(strcmp(os_crash_reset_name(3), "PANIC") == 0);
-    assert(strcmp(os_crash_reset_name(1), "POWERON") == 0);
+    static const char* names[] = {"UNKNOWN", "POWERON", "EXT", "SW", "PANIC", "INT_WDT",
+        "TASK_WDT", "WDT", "DEEPSLEEP", "BROWNOUT", "SDIO", "USB", "JTAG", "EFUSE", "PWR_GLITCH", "CPU_LOCKUP"};
+    for (unsigned i = 0; i < sizeof(names) / sizeof(*names); ++i)
+        assert(strcmp(os_crash_reset_name((int)i), names[i]) == 0);
     assert(strcmp(os_crash_reset_name(99), "RST?") == 0);
     assert(!os_crash_reason_abnormal(0) && !os_crash_reason_abnormal(1) && !os_crash_reason_abnormal(2));
-    assert(os_crash_reason_abnormal(3) && os_crash_reason_abnormal(5) && os_crash_reason_abnormal(7));
-    assert(!os_crash_reason_abnormal(8));
+    for (int i = 0; i < 16; ++i) {
+        bool abnormal = (i >= 4 && i <= 7) || i == 9 || i >= 13;
+        assert(os_crash_reason_abnormal(i) == abnormal);
+    }
+    assert(!os_crash_reason_abnormal(-1) && !os_crash_reason_abnormal(99));
 
     // 一行记录。/ The record line.
     char line[32];
-    assert(os_crash_format_record(line, sizeof(line), 1790000000U, 3) == strlen("1790000000 PANIC\n"));
+    assert(os_crash_format_record(line, sizeof(line), 1790000000U, 4) == strlen("1790000000 PANIC\n"));
     assert(strcmp(line, "1790000000 PANIC\n") == 0);
-    assert(os_crash_format_record(line, sizeof(line), 0, 5) == strlen("0 TASK_WDT\n"));
+    assert(os_crash_format_record(line, sizeof(line), 0, 6) == strlen("0 TASK_WDT\n"));
 
     // 汇总。/ Summary.
     char summary[64];

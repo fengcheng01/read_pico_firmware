@@ -171,10 +171,10 @@ esp_err_t nvs_get_str(nvs_handle_t h, const char* key, char* out, size_t* cap) {
 }
 static unsigned s_style_save_failures, s_goal_save_failures;
 void preview_goal_save_fail(unsigned count) { s_goal_save_failures=count; }
-// 启用锁屏样式的独立写失败边界。/ Independent failed-write boundary for lock-style activation.
+// 锁屏样式/动画档位的独立写失败边界。/ Independent failed-write boundary for lock styles and animation modes.
 void preview_style_save_fail(unsigned count) { s_style_save_failures=count; }
 esp_err_t nvs_set_u8(nvs_handle_t h, const char* key, uint8_t value) {
-    if(!strcmp(h,"read_pico")&&!strcmp(key,"lk_style")&&s_style_save_failures){--s_style_save_failures;return ESP_ERR_NO_MEM;}
+    if(!strcmp(h,"read_pico")&&(!strcmp(key,"lk_style")||!strcmp(key,"bk_tanim"))&&s_style_save_failures){--s_style_save_failures;return ESP_ERR_NO_MEM;}
     if(!strcmp(h,"read_pico")&&!strcmp(key,"daily_goal")&&s_goal_save_failures){--s_goal_save_failures;return ESP_ERR_NO_MEM;}
     pthread_mutex_lock(&s_nvs_lock);
     nvs_upsert(h, key, NVS_KIND_U8)->u8 = value;
@@ -320,58 +320,75 @@ void vSemaphoreDelete(void* semaphore) {
 typedef struct {
     void (*entry)(void*);
     void* arg;
-} task_spawn_t;
+    pthread_t thread;
+    pthread_mutex_t lock;
+    pthread_cond_t changed;
+    unsigned notifications;
+    bool detached;
+} host_task_t;
+static _Thread_local host_task_t* s_current_task;
+static void task_cleanup(void* raw) {
+    host_task_t* task = raw;
+    if (!task->detached) return;
+    pthread_cond_destroy(&task->changed);
+    pthread_mutex_destroy(&task->lock);
+    free(task);
+}
 static void* task_trampoline(void* raw) {
-    task_spawn_t spawn = *(task_spawn_t*)raw;
-    free(raw);
-    spawn.entry(spawn.arg);
+    host_task_t* task = raw;
+    s_current_task = task;
+    pthread_cleanup_push(task_cleanup, task);
+    task->entry(task->arg);
+    pthread_cleanup_pop(1);
     return NULL;
 }
 int xTaskCreatePinnedToCore(void (*entry)(void*), const char* name, int stack, void* arg,
                             int priority, void** handle, int core) {
     (void)name; (void)stack; (void)priority; (void)core;
-    task_spawn_t* spawn = malloc(sizeof(*spawn));
-    if (!spawn) return -1;
-    spawn->entry = entry;
-    spawn->arg = arg;
-    pthread_t thread;
+    host_task_t* task = calloc(1, sizeof(*task));
+    if (!task) return -1;
+    task->entry = entry; task->arg = arg; task->detached = !handle;
+    pthread_mutex_init(&task->lock, NULL);
+    pthread_cond_init(&task->changed, NULL);
     pthread_attr_t attr;
     pthread_attr_init(&attr);
     if (!handle) pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-    int err = pthread_create(&thread, &attr, task_trampoline, spawn);
+    int err = pthread_create(&task->thread, &attr, task_trampoline, task);
     pthread_attr_destroy(&attr);
     if (err) {
-        free(spawn);
+        pthread_cond_destroy(&task->changed); pthread_mutex_destroy(&task->lock); free(task);
         return -1;
     }
-    // 预览句柄只作非空标记；vTaskDelete 通过取消线程实现。
-    // The preview handle is a non-null marker; vTaskDelete cancels the thread.
-    if (handle) *handle = (void*)thread;
+    if (handle) *handle = task;
     return pdPASS;
 }
 void vTaskDelete(void* handle) {
-    if (handle) { pthread_cancel((pthread_t)handle); pthread_join((pthread_t)handle, NULL); }
+    if (!handle) pthread_exit(NULL);
+    host_task_t* task = handle;
+    pthread_cancel(task->thread); pthread_join(task->thread, NULL);
+    pthread_cond_destroy(&task->changed); pthread_mutex_destroy(&task->lock); free(task);
 }
-// 任务通知映射进程级条件变量：预渲染任务是唯一的等待者。
-// Task notifications map to a process-wide condvar: the prep task is the only waiter.
-static pthread_mutex_t s_notify_lock = PTHREAD_MUTEX_INITIALIZER;
-static pthread_cond_t s_notify_cond = PTHREAD_COND_INITIALIZER;
-static atomic_uint s_notify_pending;
+unsigned uxTaskGetStackHighWaterMark(TaskHandle_t task) { (void)task; return 4096; }
+// 每个任务独立计数通知，封面与阅读预绘不能互相抢走唤醒。
+// Count notifications per task so cover and reader preparation cannot consume each other's wakeups.
 unsigned ulTaskNotifyTake(int clear, int wait) {
-    (void)clear; (void)wait;
-    pthread_mutex_lock(&s_notify_lock);
-    pthread_cleanup_push(cleanup_unlock, &s_notify_lock);
-    while (!s_notify_pending) pthread_cond_wait(&s_notify_cond, &s_notify_lock);
-    s_notify_pending = 0;
+    (void)wait;
+    host_task_t* task = s_current_task;
+    unsigned count;
+    pthread_mutex_lock(&task->lock);
+    pthread_cleanup_push(cleanup_unlock, &task->lock);
+    while (!task->notifications) pthread_cond_wait(&task->changed, &task->lock);
+    count = task->notifications;
+    if (clear) task->notifications = 0; else --task->notifications;
     pthread_cleanup_pop(1);
-    return 1;
+    return count;
 }
 void xTaskNotifyGive(void* handle) {
-    (void)handle;
-    pthread_mutex_lock(&s_notify_lock);
-    s_notify_pending = 1;
-    pthread_cond_signal(&s_notify_cond);
-    pthread_mutex_unlock(&s_notify_lock);
+    host_task_t* task = handle;
+    pthread_mutex_lock(&task->lock);
+    ++task->notifications;
+    pthread_cond_signal(&task->changed);
+    pthread_mutex_unlock(&task->lock);
 }
 
 /* ---- 内存堆与杂项 / Heap and misc ---- */

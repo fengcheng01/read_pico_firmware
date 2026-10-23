@@ -166,7 +166,7 @@ int main(void) {
     assert(book_layout_build("a\r\n\r\nb", 6, (EpdRect){0,0,20,100}, 10));
     drawn[0] = 0;
     book_layout_draw_page(&fb, 0, (EpdRect){0,0,20,100}, 10);
-    assert(strcmp(drawn, "ab") == 0);
+    assert(strcmp(drawn, "ab") == 0 && first_draw_y == 10 && last_draw_y == 30);
     char long_line[1024];
     memset(long_line, 'z', sizeof(long_line));
     r = (EpdRect){0,0,10000,30};
@@ -203,7 +203,24 @@ int main(void) {
     book_layout_draw_page(&fb, 0, r, 10);
     book_layout_draw_page(&fb, 1, r, 10);
     assert(!strcmp(drawn, "Titlebody") && first_draw_px == 18 && last_draw_px == 10);
-    r.width = 20;
+    // 页尾能放标题却放不下下一段首行时，标题整体移到下一页；原文字节锚点保持不变。
+    // When a page tail fits the heading but not the next paragraph's first line, move the
+    // whole heading to the next page while preserving source-byte anchors.
+    const char kept[] = "a\nb\nc\nTitle\nbody";
+    blk_t kept_blocks[] = {
+        {.offset=0,.len=1}, {.offset=2,.len=1}, {.offset=4,.len=1},
+        {.offset=6,.len=5,.heading=true}, {.offset=12,.len=4},
+    };
+    r = (EpdRect){0,0,100,100};
+    assert(book_layout_build_blocks(kept, strlen(kept), kept_blocks, 5, r, 10));
+    assert(book_layout_page_count() == 2 && book_layout_page_start_offset(1) == 6);
+    drawn[0] = 0;
+    book_layout_draw_page(&fb, 0, r, 10);
+    assert(!strcmp(drawn, "abc"));
+    drawn[0] = 0;
+    book_layout_draw_page(&fb, 1, r, 10);
+    assert(!strcmp(drawn, "Titlebody"));
+    r = (EpdRect){0,0,20,45};
     assert(book_layout_build_blocks(styled, strlen(styled), blocks, 2, r, 10));
     assert(book_layout_page_count() == 6);
     assert(book_layout_page_start_offset(5) == 6);

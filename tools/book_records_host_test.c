@@ -6,11 +6,14 @@
  */
 #include "book_quotes.h"
 #include "book_stats.h"
+#include "book_stats_archive.h"
+#include "os_time.h"
 #include "nvs.h"
 #include <assert.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <unistd.h>
 typedef struct {char ns[16],key[16];uint8_t bytes[1024];size_t len;uint16_t value;bool used,blob;} cell_t;
 static cell_t cells[128];
 static char handles[64][16];static int nh, fail_save, iter_live;
@@ -31,7 +34,48 @@ esp_err_t nvs_entry_find(const char* part,const char* ns,int type,nvs_iterator_t
 void nvs_entry_info(nvs_iterator_t it,nvs_entry_info_t* out){cell_t*c=&cells[it->at];snprintf(out->namespace_name,16,"%s",c->ns);snprintf(out->key,16,"%s",c->key);}
 static unsigned visits;
 static bool one(uint32_t d,uint16_t m,void*ctx){(void)d;(void)m;(void)ctx;++visits;return false;}
-int main(void){
+static void archive_test(const char* root) {
+    char path[384],directory[320];snprintf(directory,sizeof(directory),"%s/reading-history",root);
+    uint32_t dates[65];
+    for(unsigned i=0;i<65;++i){dates[i]=os_time_date_shift(20260601,(int)i);assert(book_stats_store_put(dates[i],(uint16_t)(i+1)));}
+    book_stats_store_prune();
+    uint16_t m=0;assert(book_stats_store_get(dates[0],&m)&&m==1);
+    book_stats_archive_media(directory);book_stats_store_maintain();
+    unsigned count=0;for(unsigned i=0;i<128;++i)if(cells[i].used&&!strcmp(cells[i].ns,"rp_stats"))++count;
+    assert(count==30&&!iter_live);
+    for(unsigned i=0;i<65;++i)assert(book_stats_store_get(dates[i],&m)&&m==i+1);
+    assert(book_stats_total_minutes(dates[0],dates[64])==2145);
+    book_stats_store_maintain();assert(book_stats_total_minutes(dates[0],dates[64])==2145);
+    assert(book_stats_archive_merge(20240229,17));assert(!book_stats_archive_merge(20230229,2));
+    assert(book_stats_archive_merge(20241231,22)&&book_stats_archive_merge(20250101,23));
+    assert(book_stats_archive_total(20241231,20250101)==45);
+    assert(book_stats_archive_merge(20240229,19)&&book_stats_archive_merge(20240229,18));
+    assert(book_stats_archive_get(20240229,&m)&&m==19);
+    // 第二份损坏，第一份17分钟仍可恢复，未读到的数据不清零覆盖。
+    // Corrupt the second copy: recover the first 17 minutes and never overwrite unknown data with zero.
+    snprintf(path,sizeof(path),"%s/reading/2024.bin",directory);FILE*f=fopen(path,"r+b");assert(f);
+    assert(!fseek(f,59*32+16,SEEK_SET));fputc(0,f);fclose(f);
+    book_stats_archive_media(directory);assert(book_stats_archive_get(20240229,&m)&&m==17);
+    f=fopen(path,"r+b");assert(f);assert(!fseek(f,59*32,SEEK_SET));fputc(0,f);fclose(f);
+    book_stats_archive_media(directory);assert(!book_stats_archive_get(20240229,&m)&&!book_stats_archive_merge(20240229,30));
+    // 缺卡期间保留未归档旧记录；再次插卡按max合并，不重复累计。
+    // Retain unarchived older records without a card; reinsertion merges by max, never double counts.
+    book_stats_archive_media(NULL);
+    for(unsigned i=0;i<35;i++)assert(book_stats_store_put(os_time_date_shift(20260701,(int)i),100));
+    book_stats_store_prune();assert(book_stats_store_get(20260701,&m)&&m==100);
+    book_stats_archive_media("/nonexistent-pico-history-parent-86/archive");book_stats_store_maintain();
+    assert(book_stats_store_get(20260701,&m)&&m==100&&book_stats_archive_error());
+    book_stats_archive_media(directory);book_stats_store_maintain();assert(book_stats_store_get(20260701,&m)&&m==100);
+    // 当前日在换卡后发现更大累计：保留未满分钟部分，下一分钟继续向上。
+    // A higher current-day total on insertion retains the sub-minute remainder and continues upward.
+    book_stats_observe(0,true,true,20261022);book_stats_observe(30000,true,true,20261022);
+    assert(book_stats_archive_merge(20261022,50));book_stats_reconcile();
+    book_stats_observe(60000,true,true,20261022);assert(book_stats_minutes(20261022)==51);
+    assert(book_stats_total_minutes(20261022,20261022)==51);
+    puts("Reading archive: 65-day migration/30-record window/idempotence/max merge/leap/year/dual-copy corruption/no-card/no-prune/live reconciliation PASS");
+}
+int main(int argc,char**argv){
+    assert(argc==2);
     const uint32_t dates[]={20260928,20260929,20260930,20261001,20261002,20261003,20261004};
     for(unsigned i=0;i<7;++i)assert(book_stats_store_put(dates[i],i==6?8:1));
     assert(book_stats_minutes(20261004)==8 && book_stats_total_minutes(20260928,20261004)==14 && !iter_live);
@@ -86,4 +130,5 @@ int main(void){
     assert(!book_quote_sentence(t,strlen(t),strlen(t),&a,&b));
     assert(book_quote_sentence(" title\r\nnext",12,2,&a,&b)&&a==1&&b==6);
     puts("book_records: real NVS seven-day totals, iterator lifetime, excerpts, anchors, capacity and save failure PASS");
+    archive_test(argv[1]);
 }

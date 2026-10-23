@@ -13,6 +13,15 @@ static uint32_t s_date;
 static uint32_t s_pending_ms;
 static uint16_t s_stored_minutes;
 
+void book_stats_reconcile(void) {
+    uint16_t minutes=0;
+    if (s_date && book_stats_store_get(s_date,&minutes) && minutes>s_stored_minutes) {
+        uint32_t live=s_pending_ms/60000;
+        if(minutes>live)s_pending_ms=(uint32_t)minutes*60000+s_pending_ms%60000;
+        s_stored_minutes=minutes;
+    }
+}
+
 static void store_date(uint32_t yyyymmdd) {
     uint16_t minutes = (uint16_t)(s_pending_ms / 60000);
     if (minutes == s_stored_minutes) return;
@@ -62,25 +71,14 @@ uint16_t book_stats_minutes(uint32_t yyyymmdd) {
     return book_stats_store_get(yyyymmdd, &minutes) ? minutes : 0;
 }
 
-typedef struct {
-    uint32_t from, to;
-    uint32_t total;
-} range_ctx_t;
-
-static bool range_add(uint32_t yyyymmdd, uint16_t minutes, void* ctx) {
-    range_ctx_t* range = ctx;
-    if (yyyymmdd >= range->from && yyyymmdd <= range->to) range->total += minutes;
-    return true;
-}
-
 uint32_t book_stats_total_minutes(uint32_t from_yyyymmdd, uint32_t to_yyyymmdd) {
     if (from_yyyymmdd > to_yyyymmdd) return 0;
-    range_ctx_t range = {.from = from_yyyymmdd, .to = to_yyyymmdd};
-    book_stats_store_visit(range_add, &range);
+    uint32_t total = book_stats_store_total(from_yyyymmdd,to_yyyymmdd);
     if (s_date >= from_yyyymmdd && s_date <= to_yyyymmdd) {
         // 存储里已含今日落盘部分，这里只补未落盘的差值。/ The store already holds today's flushed minutes; add only the unflushed remainder.
         uint32_t live = s_pending_ms / 60000;
-        range.total += live > s_stored_minutes ? live - s_stored_minutes : 0;
+        uint16_t persisted=0;book_stats_store_get(s_date,&persisted);
+        total += live > persisted ? live - persisted : 0;
     }
-    return range.total;
+    return total;
 }

@@ -24,6 +24,7 @@ const char* os_sync_result_name(os_sync_result_t result) {
         case OS_SYNC_EXISTS: return "用户名已存在";
         case OS_SYNC_SERVER: return "服务器错误";
         case OS_SYNC_PARSE: return "响应解析失败";
+        case OS_SYNC_VERIFY: return "已上传，但服务器未确认进度";
         default: return "参数错误";
     }
 }

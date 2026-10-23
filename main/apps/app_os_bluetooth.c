@@ -84,7 +84,11 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
             ui_text(fb, r.x + 16, r.y + 72, 24, detail, EPD_DRAW_ALIGN_LEFT, false);
         }
         if (!s_info.radio.count) ui_text(fb, 40, 440, 30, "请让翻页器进入配对模式", EPD_DRAW_ALIGN_LEFT, false);
-        draw_button(fb, 24, "上一页", false); draw_button(fb, 25, "重新搜索", false); draw_button(fb, 26, "下一页", false);
+        // 越界的翻页键不画也不命中，避免点击后无变化整页闪刷。
+        // Out-of-range pagers stay undrawn and unhittable so taps never flash a no-op page.
+        if (s_page) draw_button(fb, 24, "上一页", false);
+        draw_button(fb, 25, "重新搜索", false);
+        if ((s_page + 1) * 4 < s_info.radio.count) draw_button(fb, 26, "下一页", false);
         ui_product_title(fb, (EpdRect){40, 1020, 604, 80}, "只选择你认识的翻页器；没有找到时，先断开它与手机的连接。", 26, 2);
     } else if (s_view == 2) {
         ui_text(fb, 40, 264, 36, "连接此设备？", EPD_DRAW_ALIGN_LEFT, false);
@@ -105,9 +109,12 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
             ui_text(fb, 58, 516, 24, "已保存设备 · 点按重新连接", EPD_DRAW_ALIGN_LEFT, false);
         } else ui_text(fb, 40, 486, 30, "还没有保存翻页器", EPD_DRAW_ALIGN_LEFT, false);
         draw_button(fb, 3, "搜索翻页器", false); draw_button(fb, 4, "断开连接", false);
-        draw_button(fb, 5, s_info.learning == -1 ? "取消学习" : s_info.bound_prev ? "上一页 · 已学习" : "学习上一页", s_info.learning == -1);
-        draw_button(fb, 6, s_info.learning == 1 ? "取消学习" : s_info.bound_next ? "下一页 · 已学习" : "学习下一页", s_info.learning == 1);
-        draw_button(fb, 12, s_info.learning == OS_PAGE_TURNER_LOCK ? "取消学习" : s_info.bound_lock ? "锁屏 · 已学习" : "学习锁屏", s_info.learning == OS_PAGE_TURNER_LOCK);
+        // 学习是单槽：任一方向进行中，点任何学习键都是取消，标签如实显示。
+        // Learning is single-slot: while any direction is learning, every learn key
+        // cancels, and the labels say so.
+        draw_button(fb, 5, s_info.learning ? "取消学习" : s_info.bound_prev ? "上一页 · 已学习" : "学习上一页", s_info.learning == -1);
+        draw_button(fb, 6, s_info.learning ? "取消学习" : s_info.bound_next ? "下一页 · 已学习" : "学习下一页", s_info.learning == 1);
+        draw_button(fb, 12, s_info.learning ? "取消学习" : s_info.bound_lock ? "锁屏 · 已学习" : "学习锁屏", s_info.learning == OS_PAGE_TURNER_LOCK);
         draw_button(fb, 7, s_info.reversed ? "方向反转：开" : "方向反转：关", s_info.reversed);
         draw_button(fb, 8, "恢复标准按键", false); draw_button(fb, 9, "遗忘此设备", false);
         if (s_forget) {
@@ -127,7 +134,12 @@ static int hit(uint16_t x, uint16_t y) {
     }
     if (s_view == 2) return ui_rect_hit(button(30), x, y) ? 30 : -1;
     if (s_view == 1) {
-        for (int id = 20; id <= 26; ++id) if ((id >= 24 || (s_page * 4 + id - 20) < s_info.radio.count) && ui_rect_hit(button(id), x, y)) return id;
+        for (int id = 20; id <= 26; ++id) {
+            if (id < 24 && (s_page * 4 + id - 20) >= s_info.radio.count) continue;
+            if (id == 24 && !s_page) continue;
+            if (id == 26 && (s_page + 1) * 4 >= s_info.radio.count) continue;
+            if (ui_rect_hit(button(id), x, y)) return id;
+        }
         return -1;
     }
     if (!s_view && !s_forget && ui_rect_hit(button(12), x, y)) return 12;
@@ -148,8 +160,8 @@ static app_redraw_t action(app_ctx_t* ctx, int id) {
     else if (id == 10) s_forget = false;
     else if (id == 11) { os_page_turner_forget(); s_forget = false; }
     else if (id >= 20 && id < 24) { s_candidate = s_info.radio.peers[s_page * 4 + id - 20]; s_view = 2; }
-    else if (id == 24 && s_page) --s_page;
-    else if (id == 26 && (s_page + 1) * 4 < s_info.radio.count) ++s_page;
+    else if (id == 24) { if (!s_page) return APP_REDRAW_NONE; --s_page; }
+    else if (id == 26) { if ((s_page + 1) * 4 >= s_info.radio.count) return APP_REDRAW_NONE; ++s_page; }
     else if (id == 30) { if (os_page_turner_connect(&s_candidate)) s_view = 0; }
     os_page_turner_poll(ctx->now_ms, false, true); s_info = *os_page_turner_info();
     return APP_REDRAW_PAGE;

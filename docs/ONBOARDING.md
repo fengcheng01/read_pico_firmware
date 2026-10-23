@@ -27,6 +27,9 @@ This document is for **first-time human developers and AI agents**. After readin
 
 ## 1. 项目定位 / What this is
 
+运行期历史统一由`os_history_service`消费已有卡状态/PMU缓存维护，不新增唤醒/I2C；电量双槽与按年阅读归档的边界、缺卡和故障语义见[历史记录](READING_HOME.md#历史记录--history)。新增页面仍只登记到registry，不在主循环解释页面业务。
+Runtime `os_history_service` consumes existing media/PMU caches without extra wakeups/I2C; see the linked History contract for battery slots, yearly reading archives and missing-card/failure semantics. Register pages in the catalog rather than interpreting page actions in the loop.
+
 - **产品**：小纸 Pico（英文/日文文案：Read Pico；型号 RDP-G01-W；内部代号 Read/0，仅限内部使用，不得出现在对外文案）。深圳 MindReset 出品的 4.7 英寸墨水屏开发板。
 - **本分支**：以随板出厂的官方演示固件为基线，增量开发阅读优先产品；普通开机入口为“正在读”，见 [阅读首页契约](READING_HOME.md)。原有基础仍有两个角色：
   1. 用户通过功能菜单逐项检查硬件（屏、触摸、传感器、电源、TF 卡、蜂鸣器）。
@@ -257,7 +260,8 @@ flowchart TD
 
 ### 6.2 主循环（[main/app/app_loop.c](../main/app/app_loop.c)）——不要改它来加功能
 
-每 5 ms 一轮（`LOOP_TICK_MS`）：
+默认每5ms一轮（`LOOP_TICK_MS`）；页面可通过`idle_wait_ms`声明最多50ms静止心跳，新触摸提前唤醒，菜单/活动手势/按键保持5ms。正文仅在排版和预绘就绪后启用，不改变采样、刷屏或CPU/存储时序。
+The default tick is 5ms; pages may declare an idle heartbeat up to 50ms through `idle_wait_ms`, with early touch wake and 5ms retained for menus/active gestures/keys. Body reading opts in only after layout/prefetch settles; sampling, display and CPU/storage timings stay unchanged.
 
 1. 读 CST836U → 去抖 → 区分屏内触摸 / 屏下三键区（`ui_menu.h`：`UI_KEY_AREA_TOP` 1300，pitch 160，中心 x=80/240/400）。
 2. 按键路由（全局，不交给页面）：
@@ -305,7 +309,8 @@ flowchart TD
 
 - 模式 `app_sleep_mode_t`：LIGHT 0 / DEEP 1（默认）/ OFF 2。
 - 浅睡：`app_light_sleep_wait()`，唤醒源 IOE INT（GPIO41 低电平）+ 可选拿起（SC7A20H，350 mg / 3 拍，带静默窗口）。
-- 软睡/关机：`app_enter_host_sleep()` 经 PMU 执行，**不返回**。
+- 软睡/关机：`app_enter_host_sleep()` 经 PMU 执行，成功断电不返回；命令失败或ACK后1500ms仍在运行则恢复外围并返回错误，各入口回退浅睡且保留PIN校验。/ Successful PMU power loss never returns; errors or execution1500ms after ACK restore peripherals and return for light-sleep/PIN fallback.
+- 睡前关闭面板轨，停放触摸、非唤醒传感器、扩展器和睡眠GPIO；拿起唤醒照旧。CPU保存区仅浅睡期间分配，唤醒归还内部内存。/ Park touch, non-wake sensors, expander and sleep GPIOs after panel rails are off; retain pickup. CPU retention is allocated only during light sleep and released on wake.
 - NVS 键（命名空间 `read_pico`）：`sleep`(u8)、`font`(str，空 = 内置)、`lwake`、`lboot`、`pickup`。自检结果在命名空间 `pmu_st` 键 `blob`（magic 0xAA）。
 
 ### 6.6 PMU 协议要点（[components/read_pico_pmu](../components/read_pico_pmu/)）

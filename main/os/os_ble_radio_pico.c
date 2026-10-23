@@ -5,6 +5,8 @@
  * English: ESP-IDF NimBLE central. Commands and discovery run serially on the host queue; UI reads copies.
  * 冻结：只订阅 HID 输入；描述符限定到对应特征；断链清输入，关闭完整释放协议栈。
  * Frozen: Subscribe to HID inputs only, bound descriptor walks to each characteristic, clear input on disconnect, and release the stack on stop.
+ * 冻结修订：启动前余量/初始化失败没有活动无线对象，停止仍将状态归OFF，下一次进页可立即重试。
+ * Frozen revision: Pre-start headroom/init failures own no active radio objects, yet stop still returns their state to OFF so the next page entry can retry immediately.
  * 修订：NimBLE主动取消扫描不发完成事件，命令同步取消后直接推进，所有连接等待均有期限。
  * Revision: NimBLE active scan cancellation emits no completion event; advance immediately after cancellation and bound every connection wait.
  * 参考：KiikoRead 4bd2b9e 的扫描/订阅边界与 RickyOS ecfc977 的按键映射流程；本文件独立实现。
@@ -483,7 +485,11 @@ esp_err_t os_ble_radio_start(void) {
     atomic_store(&s_running, true); return ESP_OK;
 }
 esp_err_t os_ble_radio_stop(void) {
-    if (!atomic_load(&s_running)) return ESP_OK;
+    if (!atomic_load(&s_running)) {
+        // 启动前余量检查或初始化失败没有无线对象可释放，但必须清掉ERROR，允许下一次进页立即重试。
+        // A pre-start headroom/init failure owns no live radio objects, but its ERROR must be cleared so the next page entry can retry immediately.
+        os_ble_radio_clear(); phase(OS_BLE_OFF, NULL); return ESP_OK;
+    }
     // deinit 可能已部分释放，失败后不能再次释放同一组对象。
     // A failed deinit may have partially freed objects; never deinitialise them twice.
     if (s_deinit_failed) return ESP_FAIL;

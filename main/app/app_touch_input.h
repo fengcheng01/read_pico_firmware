@@ -19,3 +19,6 @@ esp_err_t app_touch_input_read(cst836u_handle_t tp, cst836u_touch_t* out, int64_
 void app_touch_input_enable(bool enabled);
 /// 丢弃旧页输入，原手指须松开才能操作新页。/ Drop old-page input and require the original finger to lift before operating the new page.
 void app_touch_input_reset(void);
+/// 静止页等候新输入或有界心跳；任务/信号不可用时保持5ms兜底。
+/// Wait for fresh input or a bounded idle heartbeat; retain a 5ms fallback without the sampler/signal.
+void app_touch_input_wait(uint32_t timeout_ms);

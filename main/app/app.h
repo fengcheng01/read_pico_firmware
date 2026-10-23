@@ -134,6 +134,9 @@ struct app_desc_s {
     /// 每轮都调，页面自己判断到不到刷新间隔。
     /// / Called every tick; the page decides if its interval has elapsed.
     app_redraw_t (*on_tick)(app_ctx_t* ctx);
+    /// 可选静止心跳间隔（最多50ms）；触摸事件提前唤醒，手势/菜单中不启用。0保持5ms。
+    /// Optional idle heartbeat (at most 50ms); touch wakes early, disabled during gestures/menus. Zero retains 5ms.
+    uint32_t (*idle_wait_ms)(app_ctx_t* ctx);
     /// APP_REDRAW_AREA 要刷的区域。/ Area for APP_REDRAW_AREA.
     EpdRect (*area_hint)(app_ctx_t* ctx);
     /// 同一份实现挂多个 app 时用来区分（加速度计的读数页与诊断页共享绘制代码）。

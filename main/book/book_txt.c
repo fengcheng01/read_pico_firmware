@@ -212,7 +212,7 @@ static bool add(book_txt_t *b, uint32_t offset, const char *title) {
     book_entry_t *e = &b->entries[b->count++]; e->offset = offset;
     if (title) {
         size_t n = strlen(title);
-        if (n > 40) n = 40;
+        if (n > BOOK_CHAPTER_TITLE_MAX) n = BOOK_CHAPTER_TITLE_MAX;
         while (n && ((unsigned char)title[n] & 0xc0) == 0x80) --n;  // 不截半个码点。/ Never cut mid-codepoint.
         memcpy(e->title, title, n); e->title[n] = 0;
     }
@@ -224,12 +224,19 @@ static esp_err_t index_book(reader_t *r, book_txt_t *b, book_cache_identity_t* i
     book_cache_fingerprint_begin(identity);
     if (b->bom) book_cache_fingerprint_update(identity, "\xef\xbb\xbf", b->bom);
     r->fingerprint = identity;
-    // 96 字节检测窗覆盖 17k 导出行的“标题+[本章字数”前段；标题本体仍在 40 字节内截断。
+    // 96 字节检测窗覆盖 17k 导出行的“标题+[本章字数”前段，也作为目录标题的保存上限。
     // The 96-byte window covers the title-plus-marker prefix of 17k export lines;
-    // stored titles still truncate within 40 bytes.
+    // it is also the stored-title limit.
     char line[97] = {0}, title[97];
     size_t len = 0; bool overflow = false, too_many = false, fence = false;
     uint32_t start = b->bom, cp;
+    // 首扫顺手记录回退分段点（目标后首个换行或硬上限前按字符），免回退时整本二次读盘；
+    // 判定与旧二次扫描同刻同序，分段边界逐字节一致。
+    // The first scan records fallback split points in passing (first newline past the
+    // target or the hard-cap character), avoiding a second full read on fallback; the
+    // rule matches the former second scan tick for tick with byte-identical boundaries.
+    uint32_t* splits = heap_caps_malloc((BOOK_CHAPTER_MAX - 1) * sizeof(uint32_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    size_t split_count = 0; bool split_overflow = false; uint32_t part = 0;
     while (next(r, &cp)) {
         if (cp == '\n') {
             if (md_fence_line(line)) fence = !fence;
@@ -246,8 +253,14 @@ static esp_err_t index_book(reader_t *r, book_txt_t *b, book_cache_identity_t* i
             // Site marker lines carry long metadata tails: once the marker is inside
             // the window, an overlong tail no longer rejects the line.
         }
+        if (splits && r->offset < b->total && ((r->offset - part >= PART_TARGET && cp == '\n') ||
+                                               r->offset - part >= BOOK_CHAPTER_BYTES_MAX - 4)) {
+            if (split_count < (size_t)BOOK_CHAPTER_MAX - 1) splits[split_count++] = r->offset;
+            else split_overflow = true;
+            part = r->offset;
+        }
     }
-    if (ferror(b->file)) return ESP_FAIL;
+    if (ferror(b->file)) { free(splits); return ESP_FAIL; }
     if (!fence && !overflow && heading(line)) {
         clean_title(line, title, sizeof(title));
         if (!add(b, start, title)) too_many = true;
@@ -258,9 +271,18 @@ static esp_err_t index_book(reader_t *r, book_txt_t *b, book_cache_identity_t* i
         uint32_t end = i + 1 < b->count ? b->entries[i + 1].offset : b->total;
         if (end - b->entries[i].offset > BOOK_CHAPTER_BYTES_MAX) fallback = true;
     }
-    if (!fallback) return ESP_OK;
-    b->count = 0; add(b, 0, NULL); err = reset(r, b, b->bom); if (err) return err;
-    uint32_t part = 0;
+    if (!fallback) { free(splits); return ESP_OK; }
+    b->count = 0; add(b, 0, NULL);
+    if (splits) {
+        for (size_t i = 0; i < split_count; ++i)
+            if (!add(b, splits[i], NULL)) { free(splits); return ESP_ERR_INVALID_SIZE; }
+        free(splits);
+        return split_overflow ? ESP_ERR_INVALID_SIZE : ESP_OK;
+    }
+    // 分段点缓冲分配失败时退回旧二次扫描，边界规则不变。
+    // Without the split buffer, fall back to the former second scan with the same boundary rule.
+    err = reset(r, b, b->bom); if (err) return err;
+    part = 0;
     while (next(r, &cp)) {
         uint32_t size = r->offset - part;
         // 目标后首个换行切段；无换行时在硬上限前按字符切。/ Split at the first newline after the target, or before the hard cap at a character boundary.
@@ -274,12 +296,12 @@ static esp_err_t index_book(reader_t *r, book_txt_t *b, book_cache_identity_t* i
 
 // 显式小端格式不保存 ABI padding；加载时检查源范围和每个标题的终止符。
 // Explicit little-endian records exclude ABI padding; validate source bounds and every title terminator.
-#define TOC_RECORD_BYTES 45U
+#define TOC_RECORD_BYTES (4U + BOOK_CHAPTER_TITLE_MAX + 1U)
 #define TOC_HEADER_BYTES 12U
 static uint32_t toc_get32(const uint8_t* p) { return p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24); }
 static void toc_put32(uint8_t* p, uint32_t v) { for (unsigned n = 0; n < 4; ++n) p[n] = v >> (8 * n); }
 static bool toc_load(book_txt_t* b, const char* path, book_cache_identity_t* identity) {
-    identity->variant = 3;
+    identity->variant = 4;
     uint8_t* data = NULL; size_t bytes = 0;
     if (!book_cache_load(path, BOOK_CACHE_TXT_TOC, identity, TOC_HEADER_BYTES + TOC_RECORD_BYTES * BOOK_CHAPTER_MAX,
                          (void**)&data, &bytes)) return false;
@@ -293,16 +315,16 @@ static bool toc_load(book_txt_t* b, const char* path, book_cache_identity_t* ide
         uint32_t offset = toc_get32(entry);
         uint32_t end = i + 1 < count ? toc_get32(entry + TOC_RECORD_BYTES) : b->total;
         if ((!i && offset) || offset > end || end > b->total || (i && offset <= b->entries[i - 1].offset) ||
-            end - offset > BOOK_CHAPTER_BYTES_MAX || !memchr(entry + 4, 0, 41)) goto done;
+            end - offset > BOOK_CHAPTER_BYTES_MAX || !memchr(entry + 4, 0, sizeof(b->entries[i].title))) goto done;
         b->entries[i].offset = offset;
-        memcpy(b->entries[i].title, entry + 4, 41);
+        memcpy(b->entries[i].title, entry + 4, sizeof(b->entries[i].title));
     }
     b->gbk = gbk; b->bom = bom; b->count = count; ok = true;
 done:
     free(data); return ok;
 }
 static void toc_save(const book_txt_t* b, const char* path, book_cache_identity_t* identity) {
-    identity->variant = 3;
+    identity->variant = 4;
     size_t bytes = TOC_HEADER_BYTES + b->count * TOC_RECORD_BYTES;
     uint8_t* data = heap_caps_calloc(1, bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!data) return;

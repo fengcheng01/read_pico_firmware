@@ -24,6 +24,9 @@ static int s_width;
 static bool s_footer_capture;
 static struct { int x, y, px, width; enum EpdFontFlags align; char text[260]; } s_footer[4];
 static unsigned s_footer_count;
+int epd_width(void) { return 684; }
+int epd_height(void) { return 1216; }
+EpdRect ui_rotate_rect_to_fb(EpdRect r) { return r; }
 const app_desc_t* app_by_id(os_app_id_t id) {
     if (id == OS_APP_LIBRARY) return &s_library;
     if (id == OS_APP_TRANSFER && s_has_transfer) return &s_transfer;
@@ -46,7 +49,7 @@ static struct {int x,y,px;char text[5];} s_quote_glyphs[384];
 static unsigned s_quote_glyph_count;
 // 来源列走灰色墨 4；单独捕获以断言“出自-书名·章节名”确实落在侧栏。/ The source column
 // uses gray ink 4; capture it separately to assert “出自-书名·章节名” lands in the side strip.
-static struct {int x,y;char text[5];} s_source_glyphs[48];
+static struct {int x,y,px;char text[5];} s_source_glyphs[48];
 static unsigned s_source_glyph_count;
 void ui_text(uint8_t* fb, int x, int y, int px, const char* text, enum EpdFontFlags align, bool inverted) {
     (void)fb; (void)x; (void)y; (void)align; (void)inverted;
@@ -90,7 +93,7 @@ void ttf_draw_text_px(uint8_t* fb,int x,int y,int px,const char* text,enum EpdFo
     if (s_lock_capture && fg == 4) {
         assert(s_source_glyph_count < 48);
         unsigned i = s_source_glyph_count++;
-        s_source_glyphs[i].x=x;s_source_glyphs[i].y=y;
+        s_source_glyphs[i].x=x;s_source_glyphs[i].y=y;s_source_glyphs[i].px=px;
         snprintf(s_source_glyphs[i].text,sizeof(s_source_glyphs[i].text),"%s",text);
     }
 }
@@ -108,6 +111,26 @@ void ui_fill_round_rect(uint8_t* fb, EpdRect r, int radius, uint8_t c) { (void)f
 void epd_draw_pixel(int x, int y, uint8_t c, uint8_t* fb) { (void)x; (void)y; (void)c; (void)fb; }
 void ui_draw_menu_handle(uint8_t* fb, bool open) { (void)fb; (void)open; }
 int main(void) {
+    s_width = 60;
+    ui_product_battery(NULL,568,6,0);assert(!strcmp(s_line,"0%"));
+    ui_product_battery(NULL,568,6,550);assert(!strcmp(s_line,"55%"));
+    ui_product_battery(NULL,568,6,1000);assert(!strcmp(s_line,"100%"));
+    ui_product_battery(NULL,568,6,-1);assert(!strcmp(s_line,"--"));
+    ui_product_battery(NULL,568,6,2000);assert(!strcmp(s_line,"100%"));
+    static uint8_t battery_frame[684 * 1216 / 2];
+    const int charges[] = {-1, 0, 1, 100, 500, 860, 1000, 2000};
+    for (unsigned i=0;i<sizeof(charges)/sizeof(charges[0]);++i) {
+        memset(battery_frame,255,sizeof(battery_frame));
+        ui_product_battery(battery_frame,568,6,charges[i]);
+        int charge=charges[i]>1000?1000:charges[i];
+        int filled=charge>=10?(64*(charge/10)+50)/100:0;
+        for(int y=0;y<1216;++y)for(int x=0;x<684;++x){
+            unsigned gray=(battery_frame[y*342+x/2]>>(x&1?4:0))&15;
+            bool inside=x>=571&&x<571+filled&&y>=9&&y<31;
+            assert(gray==(inside?0u:15u));
+        }
+    }
+    s_lines = 0;
     s_width = 120;
     ui_product_title(NULL, (EpdRect){0, 0, s_width, 100}, "中文长标题测试", 30, 2);
     assert(s_lines == 2 && !strcmp(s_line, "题测试"));
@@ -155,7 +178,7 @@ int main(void) {
     ui_product_reader_chrome(NULL, "这是一个很长很长的中文书名用于检查省略", 125, 2048, 67, false, "10:13 · 78%", true, NULL, 0);
     assert(s_footer_count == 3);
     assert(s_footer[0].y == 1104 && s_footer[0].px == 28 && strstr(s_footer[0].text, "…"));
-    assert(s_footer[1].y == 1150 && s_footer[2].y == 1150);
+    assert(s_footer[1].y == 1160 && s_footer[2].y == 1160);
     assert(s_footer[1].x + s_footer[1].width + 20 <= s_footer[2].x - s_footer[2].width);
     assert(!strcmp(s_footer[2].text, "125/2048 · 67%"));
     s_footer_count = 0;
@@ -204,6 +227,10 @@ int main(void) {
         assert(!strcmp(s_source_glyphs[0].text,"出")&&!strcmp(s_source_glyphs[1].text,"自")&&!strcmp(s_source_glyphs[2].text,"-"));
         assert(!strcmp(s_source_glyphs[3].text,"短")&&!strcmp(s_source_glyphs[5].text,"·"));
         for(unsigned i=0;i<s_source_glyph_count;++i)assert(s_source_glyphs[i].x>=40&&s_source_glyphs[i].y>=224&&s_source_glyphs[i].y<1036);
+        int source_right=0,quote_left=684;
+        for(unsigned i=0;i<s_source_glyph_count;++i)if(s_source_glyphs[i].x+s_source_glyphs[i].px/2>source_right)source_right=s_source_glyphs[i].x+s_source_glyphs[i].px/2;
+        for(unsigned i=0;i<s_quote_glyph_count;++i)if(s_quote_glyphs[i].x-s_quote_glyphs[i].px/2<quote_left)quote_left=s_quote_glyphs[i].x-s_quote_glyphs[i].px/2;
+        assert(quote_left-source_right>=24);
     }
     s_lock_capture=false;
     puts("excerpt typography: no stamp, punctuation-aware balanced columns, attached source and 127-glyph preview/device bounds PASS");

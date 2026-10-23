@@ -102,7 +102,7 @@
     document.querySelector('#refresh-mode').textContent=next.asset>=0?'静态资源':({1:'DU',2:'GC16',5:'GL16'}[next.refresh_mode]||'—');
     document.querySelector('#leaf').textContent=next.asset>=0?'原始 4bpp 图片':next.menu?'四个产品入口':next.reading?`正文第 ${next.reader_page+1} 页 · ${next.reader_px} px`:`页内索引 ${next.leaf+1}`;
     const source=document.querySelector('#source');
-    source.textContent='绘图源码 · '+(next.asset>=0?['main/assets/loading_4bpp.bin','main/assets/lock_4bpp.bin'][next.asset]:next.menu?'main/ui/ui_menu.c':page.symbol==='app_book'?'main/ui/product/ui_product.c + main/book/book_layout.c（宿主书籍状态）':page.source);
+    source.textContent='绘图源码 · '+(next.asset>=0?'main/assets/loading_4bpp.bin':next.menu?'main/ui/ui_menu.c':page.symbol==='app_book'?'main/ui/product/ui_product.c + main/book/book_layout.c（宿主书籍状态）':page.source);
     const download=document.querySelector('#download'); download.href=next.image; download.hidden=false;
     status.classList.toggle('error',next.unsupported>=0);
     status.textContent=next.unsupported>=0?`${next.pages[next.unsupported].title} 当前未适配电脑预览，请在真机验证。`:'已连接 · 点击可交互';

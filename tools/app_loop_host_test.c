@@ -18,6 +18,7 @@ static sample_t samples[32];
 static int sample_count, step, ticks, enters, exits, touch_calls, keys[3], events[8];
 static int menus, highlights, restores, fulls, mode, tick_consumed[32];
 static int long_keys, input_resets;
+static unsigned idle_waits;
 static app_redraw_t long_key(app_ctx_t* c, int k) { assert(k==UI_KEY_2); ++long_keys; c->request_menu=true; return APP_REDRAW_NONE; }
 static app_redraw_t response;
 static bool request_on_touch, request_on_tick, menu_on_tick, menu_on_touch, cancel_clobber;
@@ -31,8 +32,9 @@ static int lock_calls;
 static int64_t time_offset, time_step;
 static int du_areas, gl_areas;
 static bool media_test, sd_font, saved_sd_font;
+static bool font_io_failure, font_ready_state, builtin_fail_once;
 static bool mounted_steps[32];
-static int media_lost, builtin_opens, font_opens, probes, loss_step;
+static int media_lost, builtin_opens, font_opens, font_unloads, probes, loss_step;
 int E0470_WAVEFORM, E0470_NAVIGATION_WAVEFORM;
 static unsigned navigation_refreshes, navigation_entries;
 void display_request_navigation_settle(void) { ++navigation_entries; }
@@ -48,6 +50,7 @@ int cst836u_read(void* h, cst836u_touch_t* t) {
 void app_touch_input_init(cst836u_handle_t tp) {(void)tp;}
 void app_touch_input_enable(bool enabled) {(void)enabled;}
 void app_touch_input_reset(void) { ++input_resets; }
+void app_touch_input_wait(uint32_t ms) { assert(ms > 5 && ms <= 50); ++idle_waits; vTaskDelay((int)ms); }
 esp_err_t app_touch_input_read(cst836u_handle_t tp, cst836u_touch_t* out, int64_t* ms) {
     int err = cst836u_read(tp, out); *ms = esp_timer_get_time() / 1000; return err;
 }
@@ -64,6 +67,7 @@ enum EpdDrawError update_display_with(EpdiyHighlevelState*h,const void*w,int m) 
 enum EpdDrawError update_display_white(EpdiyHighlevelState*h) {(void)h;return 0;}
 bool display_take_white_exit(void) {return false;}
 void rails_idle_check(int64_t n) {(void)n;}
+void os_history_service_poll(int64_t n, bool mounted) {(void)n;(void)mounted;}
 bool read_pico_pmu_ready(void) {return lock_due || remote_ready;}
 bool read_pico_pmu_take_key_short(void) {return lock_due;}
 void enter_lock_and_sleep(EpdiyHighlevelState*h,int64_t*t,void*a,void*tp,unsigned char origin) {(void)h;(void)t;(void)a;(void)tp;(void)origin;++lock_calls;lock_due=false;time_offset+=1000000;}
@@ -71,11 +75,21 @@ void os_time_rtc_reanchor(void) {}
 const char* app_settings_font_path(void) {return "builtin";}
 uint8_t app_settings_idle_lock_min(void) {return 0;}
 bool ttf_font_path_is_builtin(const char*p) {(void)p;return !font_due&&!saved_sd_font;}
-bool ttf_font_ready(void) {return true;}
+bool ttf_font_ready(void) {return font_ready_state;}
+bool ttf_font_io_failed(void) {return font_io_failure;}
+bool ttf_font_render_failed(void) {return font_io_failure;}
 bool ttf_font_is_builtin(void) {return !font_due&&!sd_font;}
 const char* ttf_font_path(void) {return "other";}
-int ttf_font_open(const char*p) {(void)p;font_opens++;sd_font=true;return 0;}
-int ttf_font_open_builtin(void) {assert(media_lost>0);builtin_opens++;sd_font=font_due=false;return 0;}
+int ttf_font_open(const char*p) {(void)p;font_opens++;sd_font=font_ready_state=true;return 0;}
+int ttf_font_open_builtin(void) {
+    assert(media_lost>0 || font_io_failure || !font_ready_state);
+    builtin_opens++;
+    if (builtin_fail_once) {builtin_fail_once=false;return 4;}
+    sd_font=font_due=font_io_failure=false;
+    font_ready_state=true;
+    return 0;
+}
+void ttf_font_unload(void) {font_unloads++;font_ready_state=false;font_io_failure=false;}
 int read_pico_sd_get_info(read_pico_sd_info_t*i) {i->mounted=media_test?mounted_steps[step]:font_due;return media_test&&!i->mounted?ESP_ERR_INVALID_STATE:0;}
 void read_pico_sd_start_probe(void) {probes++;}
 static void lost(app_ctx_t*c) {(void)c;media_lost++;loss_step=step;}
@@ -121,7 +135,10 @@ static app_redraw_t tick(app_ctx_t*c) {
     return full_tick ? APP_REDRAW_FULL : APP_REDRAW_NONE;
 }
 static void reset(void) {
-    media_test=sd_font=saved_sd_font=false;media_lost=builtin_opens=font_opens=probes=0;loss_step=-1;
+    idle_waits = 0;
+    media_test=sd_font=saved_sd_font=font_io_failure=builtin_fail_once=false;
+    font_ready_state=true;
+    media_lost=builtin_opens=font_opens=font_unloads=probes=0;loss_step=-1;
     memset(mounted_steps,0,sizeof(mounted_steps));
     long_keys=0; input_resets=0; navigation_refreshes=navigation_entries=0;
     home_on_touch=home_on_tick=home_on_key=start_second=false;
@@ -144,7 +161,17 @@ static void home_case(void) {
     second=first;second.title="transfer";
     first.on_enter=home_enter;first.render=home_render;first.on_tick=NULL;first.on_touch=NULL;
 }
+static uint32_t idle_heartbeat(app_ctx_t* c) { (void)c; return 200; }
 int main(void) {
+    // 仅静止手势页可放宽心跳；触摸/菜单仍快调度，超过上限钳到50ms。
+    // Only settled gesture pages relax their heartbeat; touch/menu stay fast and requests are capped at50ms.
+    reset();first.on_gesture=gesture;first.idle_wait_ms=idle_heartbeat;
+    for(int i=0;i<3;++i)add(0,0,0,0);run();assert(idle_waits==3);
+    reset();first.on_gesture=gesture;first.idle_wait_ms=idle_heartbeat;
+    add(400,400,1,0);add(410,400,1,0);run();assert(!idle_waits);
+    reset();first.on_gesture=gesture;first.idle_wait_ms=idle_heartbeat;
+    add(650,1150,1,0);add(0,0,0,0);run();assert(!idle_waits);
+    reset();first.idle_wait_ms=idle_heartbeat;add(0,0,0,0);run();assert(!idle_waits);
     reset();remote_ready=remote_once=true;
     for(int i=0;i<5;i++)add(0,0,0,0);
     run();assert(lock_calls==1 && enters==1 && exits==0);
@@ -336,7 +363,18 @@ int main(void) {
     reset();media_test=sd_font=saved_sd_font=true;mounted_steps[0]=mounted_steps[2]=true;time_step=4000000;first.on_media_lost=lost;
     add(0,0,0,0);add(0,0,0,0);add(0,0,0,0);add(0,0,0,0);run();
     assert(media_lost==2&&builtin_opens==2&&!probes&&font_opens==2);
-    puts("app_loop: 62 scheduler scenarios passed");
+    // 卡仍挂载但字体读失败时，丢弃旧触摸并回退内置；内存紧时释放坏字体再试。
+    // If the card remains mounted but its font read fails, discard stale touch and fall back;
+    // when memory is tight, release the broken font and retry once.
+    reset();media_test=sd_font=saved_sd_font=font_io_failure=true;
+    mounted_steps[0]=mounted_steps[1]=true;time_step=600000;first.owns_keys=true;
+    add(80,1500,1,0);add(0,0,0,0);run();
+    assert(builtin_opens==1&&!font_unloads&&!font_opens&&!keys[0]&&fulls==2&&font_ready_state);
+    reset();media_test=sd_font=saved_sd_font=font_io_failure=builtin_fail_once=true;
+    mounted_steps[0]=mounted_steps[1]=true;time_step=600000;
+    add(0,0,0,0);add(0,0,0,0);run();
+    assert(builtin_opens==2&&font_unloads==1&&font_ready_state&&!font_io_failure);
+    puts("app_loop: 68 scheduler scenarios passed (including idle heartbeat gates)");
     return 0;
 }
 

@@ -42,6 +42,13 @@ static bool fail_style_save, has_stroke, fail_stroke_save, fail_stroke_commit;
 static uint8_t stored_stroke;
 static bool has_goal, fail_goal_save, fail_goal_commit;
 static uint8_t stored_goal, pending_goal;
+static bool has_animation, fail_animation_save, fail_animation_commit;
+static uint8_t stored_animation, pending_animation;
+static bool has_edge_style, fail_edge_save, fail_edge_commit;
+static unsigned edge_reads;
+static uint8_t stored_edge_style, pending_edge_style;
+static bool has_balanced, fail_balanced_save, fail_balanced_commit;
+static uint8_t stored_balanced, pending_balanced;
 static int init_error, open_error;
 static size_t host_strlcpy(char* dst,const char* src,size_t cap) {
     size_t n=strlen(src);
@@ -56,9 +63,12 @@ static esp_err_t nvs_open(const char* ns,int mode,nvs_handle_t* out) {
     *out=1;return open_error;
 }
 static void nvs_close(nvs_handle_t h){assert(h==1);}
-static esp_err_t nvs_commit(nvs_handle_t h){assert(h==1);++commits;if(fail_stroke_commit || fail_goal_commit)return 1; if(has_goal)stored_goal=pending_goal; return ESP_OK;}
+static esp_err_t nvs_commit(nvs_handle_t h){assert(h==1);++commits;if(fail_stroke_commit || fail_goal_commit || fail_animation_commit || fail_edge_commit || fail_balanced_commit)return 1; if(has_goal)stored_goal=pending_goal; if(has_animation)stored_animation=pending_animation; if(has_edge_style)stored_edge_style=pending_edge_style; if(has_balanced)stored_balanced=pending_balanced; return ESP_OK;}
 static esp_err_t nvs_erase_key(nvs_handle_t h,const char* key){assert(h==1);(void)key;++erases;return ESP_OK;}
 static esp_err_t nvs_get_u8(nvs_handle_t h,const char* key,uint8_t* out) {
+    if(!strcmp(key,"bk_gbalance")&&has_balanced){*out=stored_balanced;return ESP_OK;}
+    if(!strcmp(key,"bk_edgeopt")){++edge_reads;if(has_edge_style){*out=stored_edge_style;return ESP_OK;}}
+    if(!strcmp(key,"bk_tanim")&&has_animation){*out=stored_animation;return ESP_OK;}
     assert(h==1);
     if(!strcmp(key,"bk_ngclean")) {
         ++legacy_reads;
@@ -88,6 +98,9 @@ static esp_err_t nvs_get_blob(nvs_handle_t h,const char* key,void* out,size_t* c
 static esp_err_t nvs_get_str(nvs_handle_t h,const char* key,char* out,size_t* cap){(void)h;(void)key;(void)out;(void)cap;return ESP_ERR_NVS_NOT_FOUND;}
 static esp_err_t nvs_set_u8(nvs_handle_t h,const char* key,uint8_t value) {
     assert(h==1);
+    if(!strcmp(key,"bk_gbalance")){if(fail_balanced_save)return 1;has_balanced=true;pending_balanced=value;++writes;return ESP_OK;}
+    if(!strcmp(key,"bk_edgeopt")){if(fail_edge_save)return 1;has_edge_style=true;pending_edge_style=value;++writes;return ESP_OK;}
+    if(!strcmp(key,"bk_tanim")){if(fail_animation_save)return 1;has_animation=true;pending_animation=value;++writes;return ESP_OK;}
     if(!strcmp(key,"daily_goal")){if(fail_goal_save)return 1; has_goal=true; pending_goal=value; ++writes;return ESP_OK;}
     if(!strcmp(key,"lk_style")&&fail_style_save)return 1;
     if(!strcmp(key,"bk_stroke")){if(fail_stroke_save)return 1;has_stroke=true;stored_stroke=value;}
@@ -115,6 +128,67 @@ static void check_existing_choices(void) {
 }
 // 新键与旧字体及刷新设置独立，所有原始值和写失败均走真实设置代码。
 // The new key is independent of legacy fonts/refresh; exercise every raw value and write failure through real settings.
+static void check_animation_settings(void) {
+    unsigned before=writes, erased=erases;
+    for(unsigned raw=0;raw<256;++raw){
+        has_balanced=true;stored_balanced=pending_balanced=(uint8_t)raw;app_settings_init();
+        assert(app_settings_book_gray_balanced()==(raw>=1&&raw<=5));
+        assert(app_settings_book_gray_profile()==(raw>=1&&raw<=5?1:0));
+    }
+    assert(writes==before&&erases==erased);
+    has_balanced=false;app_settings_init();assert(!app_settings_book_gray_balanced());
+    fail_balanced_save=true;assert(!app_settings_set_book_gray_balanced(true)&&!app_settings_book_gray_balanced());fail_balanced_save=false;
+    fail_balanced_commit=true;assert(!app_settings_set_book_gray_balanced(true)&&!app_settings_book_gray_balanced());fail_balanced_commit=false;
+    app_settings_init();assert(!app_settings_book_gray_balanced());
+    open_error=1;assert(!app_settings_set_book_gray_balanced(true));open_error=0;
+    assert(app_settings_set_book_gray_balanced(true));app_settings_init();assert(app_settings_book_gray_balanced());
+    fail_balanced_save=true;assert(!app_settings_set_book_gray_profile(0)&&app_settings_book_gray_profile()==1);fail_balanced_save=false;
+    fail_balanced_commit=true;assert(!app_settings_set_book_gray_profile(0)&&app_settings_book_gray_profile()==1);fail_balanced_commit=false;
+    open_error=1;assert(!app_settings_set_book_gray_profile(0)&&app_settings_book_gray_profile()==1);open_error=0;
+    app_settings_init();assert(app_settings_book_gray_profile()==1);
+    assert(app_settings_set_book_gray_profile(0));app_settings_init();assert(app_settings_book_gray_profile()==0);
+    before=writes;
+    for(unsigned raw=2;raw<256;++raw)assert(!app_settings_set_book_gray_profile((uint8_t)raw)&&writes==before);
+    assert(app_settings_set_book_gray_balanced(true));assert(app_settings_book_gray_profile()==1);
+    before=writes;assert(app_settings_set_book_gray_balanced(true)&&writes==before);
+    assert(app_settings_set_book_gray_balanced(false));app_settings_init();assert(!app_settings_book_gray_balanced());
+    before=writes;
+    puts("Balanced gray: independent default-off key,256 stored values, write/commit/open failures, no-op/reload and no migration PASS");
+    for(unsigned raw=0;raw<256;++raw){
+        has_edge_style=true;stored_edge_style=pending_edge_style=(uint8_t)raw;app_settings_init();
+        assert(app_settings_book_edge_style()==0&&!app_settings_book_edge_opt());
+        assert(app_settings_set_book_edge_style((uint8_t)raw)==(raw==0));
+    }
+    assert(writes==before&&erases==erased);
+    has_edge_style=false;app_settings_init();assert(app_settings_book_edge_style()==0);
+    unsigned edge_commits=commits;
+    fail_edge_save=fail_edge_commit=true;open_error=1;
+    assert(app_settings_set_book_edge_style(0));
+    assert(!app_settings_set_book_edge_style(1)&&!app_settings_set_book_edge_style(2));
+    app_settings_set_book_edge_opt(true);assert(app_settings_book_edge_style()==0);
+    app_settings_set_book_edge_opt(false);assert(app_settings_book_edge_style()==0);
+    fail_edge_save=fail_edge_commit=false;open_error=0;
+    app_settings_init();assert(!app_settings_book_edge_opt());
+    assert(edge_reads==0&&writes==before&&commits==edge_commits&&erases==erased);
+    before=writes;
+    puts("Edge withdrawal: all256 legacy values ignored without reads/writes/commits/erase; original0 only, other setters rejected and unavailable NVS irrelevant PASS");
+    for(unsigned raw=0;raw<256;++raw){
+        has_animation=true;stored_animation=pending_animation=(uint8_t)raw;app_settings_init();
+        assert(app_settings_book_turn_style()==(raw<=2?raw:0));
+        assert(app_settings_book_turn_anim()==(raw==1||raw==2));
+    }
+    assert(writes==before&&erases==erased);
+    has_animation=false;app_settings_init();assert(app_settings_book_turn_style()==0);
+    assert(app_settings_set_book_turn_style(1));
+    fail_animation_save=true;assert(!app_settings_set_book_turn_style(2)&&app_settings_book_turn_style()==1);fail_animation_save=false;
+    fail_animation_commit=true;assert(!app_settings_set_book_turn_style(2)&&app_settings_book_turn_style()==1);fail_animation_commit=false;
+    app_settings_init();assert(app_settings_book_turn_style()==1);
+    assert(app_settings_set_book_turn_style(2));app_settings_init();assert(app_settings_book_turn_style()==2);
+    before=writes;assert(!app_settings_set_book_turn_style(3)&&writes==before);
+    app_settings_set_book_turn_anim(true);assert(app_settings_book_turn_style()==1);
+    app_settings_set_book_turn_anim(false);assert(app_settings_book_turn_style()==0&&erases==erased);
+    puts("Animation settings: all256 legacy values, default off,0/1 compatibility,2 opt-in and failed write/commit preserve mode PASS");
+}
 static void check_stroke_settings(void) {
     unsigned before=writes;
     has_stroke=false;app_settings_init();assert(app_settings_book_stroke()==0);
@@ -139,10 +213,12 @@ int main(int argc,char** argv) {
     if(argc>1) {
         // 启动存储不可用仍使用静态默认，不擦分区。/ An unavailable store at startup retains the static default without erasing the partition.
         init_error=5;app_settings_init();
-        assert(!app_settings_book_night()&&!app_settings_book_direct()&&app_settings_gc_every()==5);
+        assert(!app_settings_book_night()&&!app_settings_book_direct()&&app_settings_gc_every()==10);
+        assert(app_settings_sleep_mode()==APP_SLEEP_LIGHT);
         assert(app_settings_book_night_profile()==BOOK_NIGHT_PROFILE_CURRENT);
         init_error=0;open_error=5;app_settings_init();
-        assert(!app_settings_book_night()&&!app_settings_book_direct()&&app_settings_gc_every()==5);
+        assert(!app_settings_book_night()&&!app_settings_book_direct()&&app_settings_gc_every()==10);
+        assert(app_settings_sleep_mode()==APP_SLEEP_LIGHT);
         assert(app_settings_book_night_profile()==BOOK_NIGHT_PROFILE_CURRENT);
         assert(!legacy_reads&&!writes&&!commits&&!erases);
         puts("night settings withdrawal: unavailable NVS retains existing defaults without reading legacy keys or erasing PASS");
@@ -268,6 +344,7 @@ int main(int argc,char** argv) {
     puts("0.5.29 withdrawal: saved black profile returns CURRENT without repair writes, all legacy fine values ignored, night/direct/10-page choices retained PASS");
     puts("night profile: distinct bk_ngprofile defaults CURRENT, the two tiers persist/reload, repeated saves skip, invalid setter/stored values including removed Crossmux 1 fall back safely PASS");
     check_stroke_settings();
+    check_animation_settings();
     assert(app_settings_daily_goal()==0);
     for(unsigned raw=0;raw<256;++raw){has_goal=true;stored_goal=pending_goal=raw;app_settings_init();assert(app_settings_daily_goal()==(raw<=72 ? raw*5u : 0));}
     stored_goal=pending_goal=6;app_settings_init();assert(app_settings_daily_goal()==30);

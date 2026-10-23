@@ -16,6 +16,100 @@ from serve import Preview, action_command, png_from_pgm
 
 
 class PreviewTests(unittest.TestCase):
+    def test_soft_animation_three_choices_persist_and_restore_original(self):
+        self.open_fixture_reader()
+        self.reader_display_settings()
+        self.preview.command("tap 180 340")
+        self.preview.command("tap 260 224")
+        self.preview.command("tap 300 564")
+        off=self.preview.png
+        self.preview.command("tap 300 452")
+        choices=self.preview.png
+        self.preview.command("tap 390 1000")
+        soft=self.preview.png
+        self.assertNotEqual(off,soft)
+        self.assertNotEqual(choices,soft)
+        self.preview.command("tap 424 1140")
+        self.preview.command("tap 600 500")
+        self.reader_display_settings()
+        self.preview.command("tap 260 224")
+        self.preview.command("tap 300 564")
+        self.assertEqual(soft,self.preview.png,"Soft comparison is retained after reading/navigation")
+        self.preview.command("tap 300 452")
+        self.preview.command("style_fail 1")
+        self.preview.command("tap 250 1000")
+        self.assertNotEqual(soft,self.preview.png,"Failed save is visible, not silently reported as enabled")
+        self.preview.command("tap 300 452")
+        self.preview.command("tap 250 1000")
+        original=self.preview.png
+        self.assertNotEqual(original,soft)
+        self.preview.command("tap 300 452")
+        self.preview.command("tap 110 1000")
+        self.assertEqual(off,self.preview.png)
+
+    def test_battery_history_entry_tabs_gaps_and_return(self):
+        self.preview.command("history_fixture")
+        self.page("app_os_storage")
+        state=self.preview.command("tap 330 1020")
+        self.assertEqual(state["page"],self.indices["app_os_battery"])
+        pixels=self.reader_pixels()
+        self.assertTrue(any(v==0 for y in range(490,600) for v in pixels[y*684+95:y*684+255]))
+        self.assertFalse(any(v==0 for y in range(490,600) for v in pixels[y*684+265:y*684+310]),"Sleep gap is not interpolated")
+        day=self.preview.png
+        self.preview.command("tap 490 380")
+        self.assertNotEqual(day,self.preview.png)
+        self.preview.command("tap 550 100")
+        self.assertEqual(self.state()["page"],self.indices["app_os_storage"])
+        self.assertTrue((self.preview.frame.parent/"history/battery-0.bin").exists())
+
+    def test_reading_archive_daily_weekly_paging_and_card_removal(self):
+        self.preview.command("history_fixture")
+        self.page("app_os_today")
+        self.preview.command("tap 550 100")
+        self.assertEqual(self.state()["page"],self.indices["app_os_history"])
+        day=self.preview.png
+        self.preview.command("tap 180 1030")
+        self.assertNotEqual(day,self.preview.png)
+        self.preview.command("tap 490 1030")
+        self.assertEqual(day,self.preview.png)
+        self.preview.command("tap 490 240")
+        self.assertNotEqual(day,self.preview.png)
+        self.assertTrue((self.preview.frame.parent/"history/reading/2026.bin").exists())
+        week=self.preview.png
+        self.preview.command("history_media 0")
+        self.assertNotEqual(week,self.preview.png)
+        self.preview.command("tap 550 100")
+        self.assertEqual(self.state()["page"],self.indices["app_os_today"])
+
+    def test_history_uncalibrated_and_empty_states(self):
+        self.preview.command("time_valid 0")
+        self.page("app_os_battery")
+        self.preview.command("tap 490 380")
+        self.page("app_os_history")
+        first=self.preview.png
+        self.preview.command("tap 180 1030")
+        self.assertEqual(first,self.preview.png,"Uncalibrated histories never paginate invented dates")
+
+    def test_home_battery_fill_proportional_and_header_bounded(self):
+        self.preview.command("fixture 0")
+        self.settle()
+        reference = None
+        for charge in (-1, 0, 10, 150, 500, 860, 1000):
+            self.preview.command(f"battery {charge}")
+            pixels = self.reader_pixels()
+            filled = (64 * (charge // 10) + 50) // 100 if charge >= 10 else 0
+            # 真实倒置竖屏输出：填充顶沿无字形，像素数精确跟随电量。
+            # Actual inverted-portrait output: the fill's top row has no glyph ink and follows charge exactly.
+            for x in range(571, 635):
+                self.assertEqual(pixels[9 * 684 + x], 0 if x < 571 + filled else 255)
+            if reference is None:
+                reference = pixels
+            else:
+                self.assertEqual(reference[:6 * 684], pixels[:6 * 684])
+                self.assertEqual(reference[34 * 684:], pixels[34 * 684:])
+                for y in range(6, 34):
+                    self.assertEqual(reference[y * 684:y * 684 + 568], pixels[y * 684:y * 684 + 568])
+
     def connect_bluetooth_fixture(self):
         self.page("app_os_bluetooth")
         self.preview.command("tap 540 238")
@@ -158,7 +252,7 @@ class PreviewTests(unittest.TestCase):
         body_hints = strip()
         self.assertEqual(set(body_hints), {255}, "Body does not keep permanent key hints")
         body_pixels = self.reader_pixels()[:684*1096]
-        self.preview.command("hold 180 432")
+        self.preview.command("hold 180 420")
         confirmation = self.preview.png
         self.assertNotEqual(body_hints, strip())
         self.preview.command("key 0")
@@ -166,7 +260,7 @@ class PreviewTests(unittest.TestCase):
         self.assertEqual(body_pixels, self.reader_pixels()[:684*1096])
         self.assertEqual(body_hints, strip())
         body = self.preview.png
-        self.preview.command("hold 180 432")
+        self.preview.command("hold 180 420")
         self.preview.command("quote_fail 1")
         self.preview.command("key 2")
         self.assertEqual(self.state()["quote_count"], 0)
@@ -182,7 +276,7 @@ class PreviewTests(unittest.TestCase):
             self.preview.command(f"key {key}")
             self.settle()
             self.assertEqual(body_hints, strip(), "Prepared page turns retain the current key labels")
-        self.preview.command("hold 180 432")
+        self.preview.command("hold 180 420")
         self.preview.command("key_hold 1")
         self.assertTrue(self.state()["menu"])
         self.assertEqual(self.state()["quote_count"], 1)
@@ -269,7 +363,7 @@ class PreviewTests(unittest.TestCase):
         self.assertEqual(self.state()["lock_style"],5)
         self.assertEqual(self.state()["lock_seq"],2)
 
-    def test_home_sync_uploads_without_opening_book(self):
+    def test_home_syncs_without_opening_book(self):
         self.preview.command("fixture 1")
         self.settle()
         starts = self.state()["sync_starts"]
@@ -280,7 +374,7 @@ class PreviewTests(unittest.TestCase):
         self.assertNotEqual(before, self.preview.png)
         self.preview.command("tick")
         self.assertEqual(self.state()["sync_starts"], starts + 1)
-        self.assertEqual(self.state()["sync_job"], 2)  # OS_SYNC_JOB_PUSH
+        self.assertEqual(self.state()["sync_job"], 4)  # OS_SYNC_JOB_MERGE
         self.settle()
         self.assertEqual(self.state()["page"], self.indices["app_os_home"])
         self.assertEqual(self.state()["sync_starts"], starts + 1)
@@ -333,7 +427,7 @@ class PreviewTests(unittest.TestCase):
         self.preview.command("tap 400 425")
         self.settle()
         first = self.preview.png
-        self.preview.command("hold 180 432")
+        self.preview.command("hold 180 420")
         self.assertTrue(self.state()["reading"])
         self.assertNotEqual(first, self.preview.png)
         self.preview.command("tap 490 974")
@@ -390,9 +484,9 @@ class PreviewTests(unittest.TestCase):
         self.assertEqual(self.state()["page"], self.indices["app_os_settings"])
         self.assertEqual(self.state()["sync_starts"], starts + 2)
 
-    def test_home_upload_progress_accepts_edges_without_stealing_resume(self):
-        # 边缘容差内轻点及小幅移动仍上传；继续阅读与卡片封面仍开书。
-        # Taps and small movement within edge tolerance upload; resume and the cover still open the book.
+    def test_home_sync_progress_accepts_edges_without_stealing_resume(self):
+        # 边缘容差内轻点及小幅移动仍同步；继续阅读与卡片封面仍开书。
+        # Taps and small movement within edge tolerance sync; resume and the cover still open the book.
         for command in ("tap 466 386", "tap 634 484", "tap 490 470", "swipe 476 400 467 394"):
             self.preview.command("fixture 1")
             self.settle()
@@ -402,7 +496,7 @@ class PreviewTests(unittest.TestCase):
             self.assertFalse(self.state()["reading"])
             self.preview.command("tick")
             self.assertEqual(self.state()["sync_starts"], starts + 1)
-            self.assertEqual(self.state()["sync_job"], 2)
+            self.assertEqual(self.state()["sync_job"], 4)
         for x, y in ((425, 440), (200, 380)):
             self.preview.command("fixture 1")
             self.settle()
@@ -730,7 +824,9 @@ class PreviewTests(unittest.TestCase):
         self.assertEqual(self.state()["gc_presents"], cleans + 2)
 
     def test_packed_static_assets_match_portrait_pixels(self):
-        for which, name in enumerate(("loading", "lock")):
+        # 资源0是开机图，资源1是默认图片锁屏；两者按产品要求共用同一插画。
+        # Asset0 is boot and asset1 is the default image lock; both intentionally share one artwork.
+        for which, name in enumerate(("loading", "loading")):
             self.preview.command(f"asset {which}")
             packed = (ROOT / f"main/assets/{name}_4bpp.bin").read_bytes()
             pixels = self.preview.frame.read_bytes()[len(b"P5\n684 1216\n255\n"):]
@@ -853,7 +949,7 @@ class PreviewTests(unittest.TestCase):
         self.assertEqual(before, self.preview.png)
         self.assertEqual(self.state()["page"], self.indices["app_os_home"])
 
-    def test_home_long_title_preserves_upload_and_primary_action(self):
+    def test_home_long_title_preserves_sync_and_primary_action(self):
         self.preview.command("fixture 5")
         self.settle()
         starts = self.state()["sync_starts"]
@@ -903,10 +999,12 @@ class PreviewTests(unittest.TestCase):
         self.page("app_os_settings")
         self.preview.command("tap 300 610")
         self.assertEqual(self.preview.state["page"], self.indices["app_os_sleep"])
-        plain = self.preview.png
-        self.preview.command("tap 136 270")
         light = self.preview.png
-        self.assertNotEqual(plain, light)
+        self.preview.command("tap 340 270")
+        deep = self.preview.png
+        self.assertNotEqual(light, deep)
+        self.preview.command("tap 136 270")
+        self.assertNotEqual(deep, self.preview.png)
         self.preview.command("tap 136 270")
         self.assertEqual(light, self.preview.png)
         self.preview.command("tap 300 456")
@@ -947,7 +1045,7 @@ class PreviewTests(unittest.TestCase):
         self.assertNotEqual(probing, self.preview.png)
         self.preview.command("tap 557 102")
         self.assertEqual(self.preview.state["page"], self.indices["app_os_settings"])
-        self.assertNotEqual(plain, probing)
+        self.assertNotEqual(light, probing)
 
     def test_storage_usb_entry_confirmation_and_failure(self):
         self.page("app_os_storage")
@@ -1036,7 +1134,14 @@ class PreviewTests(unittest.TestCase):
         home = self.preview.png
         self.preview.command("tick")
         self.assertNotEqual(home, self.preview.png)
-        self.preview.command("tap 320 638")
+        ready = self.preview.png
+        self.preview.command("transfer_fixture 4")
+        failed = self.preview.png
+        self.assertNotEqual(ready, failed)
+        self.preview.command("tap 200 544")
+        self.preview.command("tick")
+        self.assertNotEqual(failed, self.preview.png, "Connection-card Retry restarts the current mode")
+        self.preview.command("tap 320 690")
         self.assertEqual(self.preview.state["page"], self.indices["app_transfer"])
         sync = self.preview.png
         self.assertNotEqual(home, sync)
@@ -1045,6 +1150,19 @@ class PreviewTests(unittest.TestCase):
         self.assertNotEqual(sync, keyboard)
         self.preview.command("tap 557 102")
         self.assertEqual(self.preview.state["page"], self.indices["app_transfer"])
+
+    def test_transfer_password_error_reopens_editor(self):
+        self.preview.command("transfer_fixture 6")
+        self.page("app_transfer")
+        self.preview.command("tick")
+        ready = self.preview.png
+        self.preview.command("transfer_fixture 5")
+        failed = self.preview.png
+        self.assertNotEqual(ready, failed)
+        self.preview.command("tap 310 544")
+        self.assertNotEqual(failed, self.preview.png, "Re-enter must open the password editor")
+        self.preview.command("tap 140 1140")
+        self.assertEqual(self.state()["page"], self.indices["app_transfer"])
 
     def test_reader_sync_and_direct_cached_home(self):
         self.preview.command("fixture 1")
@@ -1086,7 +1204,7 @@ class PreviewTests(unittest.TestCase):
         self.settle()
         original = reader_sync()
         self.page("app_transfer")
-        self.preview.command("tap 320 638")
+        self.preview.command("tap 320 690")
         before = account_band()
         # 通过真实账号键盘修改地址和用户名，不引入只供测试的设置入口。
         # Change URL and username through the real account keyboard, without a test-only settings entry.
@@ -1098,7 +1216,7 @@ class PreviewTests(unittest.TestCase):
         self.assertNotEqual(before, configured)
         self.assertEqual(original, reader_sync(), "Reader sync must not reveal configured URL or username")
         self.page("app_transfer")
-        self.preview.command("tap 320 638")
+        self.preview.command("tap 320 690")
         self.assertEqual(configured, account_band(), "Account configuration must survive reader entry")
 
     def test_image_viewer_async_load_and_cached_neighbors(self):
@@ -1582,6 +1700,59 @@ class PreviewTests(unittest.TestCase):
         self.preview.command("lock_quote")
         self.assertEqual(self.reader_pixels()[:1036*684], first[:1036*684])
 
+    def test_gray_balance_opt_in_routing_and_restore(self):
+        self.open_fixture_reader()
+        self.reader_display_settings()
+        self.preview.command("tap 494 340")
+        self.preview.command("tap 320 590")
+        self.preview.command("tap 424 1140")
+        original = self.reader_pixels()[:1096*684]
+        self.reader_display_settings()
+        self.preview.command("tap 300 503")
+        self.preview.command("tap 424 1140")
+        self.assertEqual(original, self.reader_pixels()[:1096*684], "Balance changes drive, not raster or spatial codes")
+        self.preview.command("key 2")
+        self.settle()
+        self.assertEqual(self.state()["refresh_wave"], 10)
+        self.reader_display_settings()
+        self.preview.command("tap 300 503")
+        self.preview.command("tap 424 1140")
+        self.preview.command("key 2")
+        self.settle()
+        self.assertEqual(self.state()["refresh_wave"], 9)
+
+        self.reader_display_settings()
+        self.preview.command("tap 300 503")
+        self.preview.command("tap 424 1140")
+        self.preview.command("key 2")
+        self.settle()
+        self.assertEqual(self.state()["refresh_wave"], 10, "Gray refresh cycles only Fast/Fine")
+
+    def test_gray_speed_full_width_toggle_has_no_edge_comparison(self):
+        self.open_fixture_reader()
+        self.reader_display_settings()
+        self.preview.command("tap 494 340")
+        self.preview.command("tap 320 590")
+        self.preview.command("tap 424 1140")
+        original = self.reader_pixels()[:1096*684]
+        self.reader_display_settings()
+        self.preview.command("tap 500 590")
+        binary_settings = self.preview.png
+        self.preview.command("tap 300 503")
+        self.assertEqual(binary_settings, self.preview.png, "Gray refresh is inactive under binary edges")
+        self.preview.command("tap 424 1140")
+        binary = self.reader_pixels()[:1096*684]
+        self.assertNotEqual(original, binary, "The former right edge selector now toggles the whole gray/binary row")
+        self.reader_display_settings()
+        self.preview.command("tap 500 590")
+        self.preview.command("tap 424 1140")
+        self.assertEqual(self.state()["reader_stroke"], 0)
+        self.assertEqual(original, self.reader_pixels()[:1096*684], "Re-enabling gray always restores original edge rendering")
+        self.reader_display_settings()
+        self.preview.command("tap 100 590")
+        self.preview.command("tap 424 1140")
+        self.assertEqual(binary, self.reader_pixels()[:1096*684], "Both halves operate the same full-width control")
+
     def test_gray_speed_precise_curves_preserve_metrics_and_quality(self):
         self.open_fixture_reader()
         quality = self.reader_pixels()[:1096*684]
@@ -1636,6 +1807,53 @@ class PreviewTests(unittest.TestCase):
         self.assertTrue(self.state()["font_ready"])
         self.page("app_os_settings")
         self.assertEqual(saved, self.preview.png)
+
+    def test_failed_sd_font_switch_keeps_all_pages_legible(self):
+        self.page("app_os_home")
+        home = self.preview.png
+        self.page("app_font_pick")
+        self.preview.command("heap_fail 100")
+        self.preview.command("tap 280 376")
+        self.preview.command("heap_fail 0")
+        self.assertTrue(self.state()["font_ready"], "A failed SD font build must retain the current font")
+        self.assertTrue(self.state()["font_builtin"])
+        self.page("app_os_home")
+        self.assertEqual(home, self.preview.png, "Navigation after a failed font switch must retain text")
+
+    def test_sd_glyph_read_failure_preserves_cache_and_recovers_builtin(self):
+        self.page("app_os_reading")
+        self.preview.command("tap 200 732")
+        self.preview.command("tap 300 370")
+        self.assertFalse(self.state()["font_builtin"])
+        self.preview.command("font_reclaim")
+        self.page("app_os_home")
+        home = self.preview.png
+        self.preview.command("font_io_fail 1")
+        self.page("app_os_reading")
+        self.assertTrue(self.state()["font_io_failed"])
+        self.page("app_os_home")
+        self.assertEqual(home, self.preview.png, "One failed SD read must not drop every cached glyph")
+        self.preview.command("font_builtin")
+        self.assertTrue(self.state()["font_ready"])
+        self.assertTrue(self.state()["font_builtin"])
+        self.assertFalse(self.state()["font_io_failed"])
+        self.page("app_os_home")
+        self.assertGreater(sum(p < 200 for p in self.reader_pixels()[:150*684]), 300)
+
+    def test_sd_glyph_memory_failure_requests_font_recovery(self):
+        self.page("app_os_reading")
+        self.preview.command("tap 200 732")
+        self.preview.command("tap 300 370")
+        self.assertFalse(self.state()["font_builtin"])
+        self.preview.command("font_reclaim")
+        self.preview.command("heap_fail 100")
+        self.page("app_os_home")
+        self.assertTrue(self.state()["font_render_failed"])
+        self.assertFalse(self.state()["font_io_failed"])
+        self.preview.command("heap_fail 0")
+        self.preview.command("font_builtin")
+        self.assertTrue(self.state()["font_builtin"])
+        self.assertFalse(self.state()["font_render_failed"])
 
     def test_boot_fade_uses_real_artwork_and_preserves_brand(self):
         self.preview.command("boot 0")
@@ -1751,10 +1969,12 @@ class PreviewTests(unittest.TestCase):
 
     def test_sleep_effective_mode_and_disabled_pickup(self):
         self.page("app_os_sleep")
-        self.assertEqual(self.state()["lock_mode"], 1)
+        self.assertEqual(self.state()["lock_mode"], 0)
         before = self.preview.png
         self.preview.command("tap 300 456")
-        self.assertEqual(before, self.preview.png)
+        self.assertNotEqual(before, self.preview.png)
+        self.preview.command("tap 340 270")
+        self.assertEqual(self.state()["lock_mode"], 1)
         self.preview.command("tap 136 704")
         self.assertEqual(self.state()["lock_mode"], 0, "Dynamic face retains light sleep under the Deep selection")
         self.preview.command("tap 544 270")
@@ -1815,7 +2035,7 @@ class PreviewTests(unittest.TestCase):
         self.assertEqual(self.state()["page"], self.indices["app_os_today"])
         # 设置 → 时间与时区：步进时区即时重排，返回回到设置。
         self.preview.command("tap 480 1140")
-        self.preview.command("tap 300 550")
+        self.preview.command("tap 300 500")  # 卡片本体；行间空隙已不触发命中 / card body; row gaps no longer hit
         self.assertEqual(self.state()["page"], self.indices["app_os_time"])
         base = self.preview.png
         self.preview.command("tap 424 740")
@@ -1871,10 +2091,10 @@ class PreviewTests(unittest.TestCase):
         for turn in range(1, 13):
             self.preview.command("key 2" if turn % 2 else "key 0")
             self.settle()
-            self.assertEqual(self.state()["gc_presents"], cleans + turn // 5)
-            self.assertEqual(self.state()["refresh_mode"], 2 if turn % 5 == 0 else 5)
+            self.assertEqual(self.state()["gc_presents"], cleans + turn // 10)
+            self.assertEqual(self.state()["refresh_mode"], 2 if turn % 10 == 0 else 5)
             self.preview.command("tick")
-            self.assertEqual(self.state()["gc_presents"], cleans + turn // 5)
+            self.assertEqual(self.state()["gc_presents"], cleans + turn // 10)
 
     def test_reader_direct_profile_and_return_to_gray(self):
         self.preview.command("fixture 1")
@@ -1897,8 +2117,8 @@ class PreviewTests(unittest.TestCase):
                 self.preview.command(f"key {key}")
                 self.settle()
                 turn += 1
-                self.assertEqual(self.state()["refresh_mode"], 2 if turn % 5 == 0 else 5)
-                self.assertEqual(self.state()["gc_presents"], cleans + turn // 5)
+                self.assertEqual(self.state()["refresh_mode"], 2 if turn % 10 == 0 else 5)
+                self.assertEqual(self.state()["gc_presents"], cleans + turn // 10)
                 pixels = self.preview.frame.read_bytes()[len(b"P5\n684 1216\n255\n"):]
                 self.assertEqual(set(pixels), {0, 255})
         # 离页重进仍保留选项，切回灰阶后不留下虚假参考帧。
@@ -1971,6 +2191,10 @@ class PreviewTests(unittest.TestCase):
         experiments = self.preview.png
         self.preview.command("tap 300 452")
         self.assertNotEqual(experiments, self.preview.png)
+        # 选择面板是模态的：先点外部只收起面板，再点标签才切组。
+        # The choice sheet is modal: the first outside tap dismisses it, and the next switches tabs.
+        self.preview.command("tap 260 224")
+        self.assertEqual(experiments, self.preview.png)
         self.preview.command("tap 260 224")
         self.assertNotEqual(experiments, self.preview.png)
 

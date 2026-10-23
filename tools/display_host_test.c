@@ -21,6 +21,7 @@
 const EpdWaveform E0470_WAVEFORM = {0}, E0470_FOLLOW_WAVEFORM = {1}, E0470_FULL_WAVEFORM = {2}, E0470_TEXTTURN_WAVEFORM = {3}, E0470_NAVIGATION_WAVEFORM = {4}, E0470_NAVIGATION_ENTRY_WAVEFORM = {7};
 const EpdWaveform E0470_DIRECT_WAVEFORM = {5}, E0470_WHITE_CLEANUP_WAVEFORM = {6}, E0470_TEXTTURN_NIGHT_WAVEFORM = {8};
 const EpdWaveform E0470_GRAY_DIRECT_WAVEFORM = {10};
+const EpdWaveform E0470_GRAY_BALANCED_WAVEFORM = {15};
 const EpdWaveform E0470_NIGHT_PREWIPE_GL_WAVEFORM = {11}, E0470_DIRECT_PREWIPE_WAVEFORM = {12}, E0470_GRAY_DIRECT_PREWIPE_WAVEFORM = {13};
 static uint8_t target[FB_BYTES], presented[FB_BYTES];
 static uint8_t expected_old[FB_BYTES];
@@ -31,6 +32,7 @@ static bool check_clean_at_clear;
 static int clocks, powerons, clears, draws, full_draws, safe_clock, prefill, poweroffs;
 static bool white_baseline, correct_target_at_draw, fail_power, fail_draw;
 static bool hv_on;
+static read_pico_epd_scan_t last_scan;
 bool read_pico_rails_on(void) { return hv_on && !fail_power; }
 static unsigned cleanup_every = 3;
 static enum EpdDrawMode last_mode;
@@ -38,6 +40,8 @@ static bool last_area;
 static const EpdWaveform* last_waveform;
 int epd_width(void) { return 16; }
 int epd_height(void) { return 16; }
+int epd_rotated_display_width(void) { return 16; }
+int epd_rotated_display_height(void) { return 16; }
 uint8_t app_settings_gc_every(void) { return (uint8_t)cleanup_every; }
 bool app_settings_book_night(void) { return true; }
 // 夜间白预驱开关替身：默认关，检查函数按需翻转。/ Night white pre-drive switch shim: off by default, flipped by checks.
@@ -54,11 +58,18 @@ static int turn_calls;
 static enum EpdDrawError turn_result = EPD_DRAW_SUCCESS;
 static bool turn_forward[8];
 static bool turn_busy;
+static uint8_t animation_style;
+static unsigned soft_gets, soft_releases;
+static const EpdWaveform soft_waveform={14};
+uint8_t app_settings_book_turn_style(void) { return animation_style; }
+const EpdWaveform* display_animation_waveform(void) { ++soft_gets;return fail_draw?&E0470_TEXTTURN_WAVEFORM:&soft_waveform; }
+void display_animation_release(void) { assert(!turn_busy);++soft_releases; }
 void read_pico_epd_set_pclk(int mhz) { ++clocks; safe_clock = mhz; }
 // FAST 现有两条合法路径（跟随 DU、错相揭页），替身无法区分调用者，只拒绝其他值。
 // FAST now has two sanctioned callers (follow DU, staggered page turn); the stub cannot tell them apart and rejects other values only.
 void read_pico_epd_use_scan(read_pico_epd_scan_t scan) {
     assert(scan == READ_PICO_EPD_SCAN_FULL || scan == READ_PICO_EPD_SCAN_FAST);
+    last_scan=scan;
 }
 void epd_lcd_set_prefill_lines(int lines) { prefill = lines; }
 void epd_poweron(void) { ++powerons; hv_on = !fail_power; }
@@ -160,9 +171,11 @@ enum EpdDrawError epd_draw_base(EpdRect area, const uint8_t* data, EpdRect crop,
     return EPD_DRAW_OTHER_ERROR;
 }
 
-void e0470_page_turn_set_tick_us(int us) { assert(us == E0470_TURN_FAST_TICK_US); }
-int e0470_page_turn_tick_us(void) { return E0470_TURN_FAST_TICK_US; }
-void e0470_page_turn_release(void) {}
+static int turn_tick=E0470_TURN_FAST_TICK_US;
+static unsigned turn_releases;
+void e0470_page_turn_set_tick_us(int us) { assert(us == 0 || us == E0470_TURN_FAST_TICK_US || us == E0470_TURN_DEFAULT_TICK_US);turn_tick=us; }
+int e0470_page_turn_tick_us(void) { return turn_tick; }
+void e0470_page_turn_release(void) { assert(!turn_busy);++turn_releases; }
 enum EpdDrawError e0470_page_turn(EpdiyHighlevelState* hl, EpdRect area, e0470_turn_dir_t dir) {
     return e0470_page_turn_with_waveform_compact(hl, area, dir, &E0470_TEXTTURN_WAVEFORM, 16);
 }
@@ -175,7 +188,11 @@ enum EpdDrawError e0470_page_turn_with_waveform_compact(
     EpdiyHighlevelState* hl, EpdRect area, e0470_turn_dir_t dir,
     const EpdWaveform* waveform, unsigned bands) {
     (void)area; (void)waveform;
-    assert(bands == 16 && waveform == &E0470_TEXTTURN_WAVEFORM);
+    if(waveform==&E0470_GRAY_BALANCED_WAVEFORM) {
+        assert(bands==8 && dir==E0470_TURN_RTL && turn_tick==0);
+        assert(area.x==0 && area.y==0 && area.width==16 && area.height==16);
+        assert(last_scan==READ_PICO_EPD_SCAN_FULL && prefill==127);
+    } else assert(bands == 16 && (waveform == &E0470_TEXTTURN_WAVEFORM || (animation_style==2&&waveform==&soft_waveform)));
     if (turn_calls < 8) turn_forward[turn_calls] = dir != E0470_TURN_LTR;
     ++turn_calls;
     turn_busy = true;
@@ -241,7 +258,12 @@ static void assert_night_scan(EpdiyHighlevelState* hl, bool direct, bool clean) 
     assert(night_turn(hl, direct) == EPD_DRAW_SUCCESS);
     check_old_at_draw = false;
     check_clean_at_clear = false;
-    assert(draws == drawn_before + 1 && powerons == on_before + 1 && poweroffs == off_before + 1);
+    // 所有推屏统一闲置保活：推完保持上电，8 秒到期检查才断（电源时序决策变更）。
+    // Every update shares the idle keepalive: rails stay up after the push; only the
+    // 8-second deadline check cuts them.
+    assert(draws == drawn_before + 1 && powerons == on_before + 1 && poweroffs == off_before);
+    rails_idle_check(esp_timer_get_time() / 1000 + 9000);
+    assert(poweroffs == off_before + 1);
     assert(last_mode == (clean ? MODE_GC16 : MODE_GL16));
     assert(last_waveform == (clean ? &E0470_FULL_WAVEFORM : direct ? &E0470_DIRECT_WAVEFORM : &E0470_TEXTTURN_NIGHT_WAVEFORM));
     assert(mask_draws == selected_before + (clean ? 0 : 1) && clears == clears_before + clean);
@@ -508,7 +530,7 @@ static void check_day_product_cycles(EpdiyHighlevelState* hl) {
     EpdRect area = {0, 0, 16, 16};
     for (unsigned i = 0; i < sizeof(intervals) / sizeof(intervals[0]); ++i) {
         cleanup_every = intervals[i];
-        for (int profile = DISPLAY_READER_STANDARD; profile <= DISPLAY_READER_ANIMATED; ++profile) {
+        for (int profile = DISPLAY_READER_STANDARD; profile <= DISPLAY_READER_GRAY_COMPACT; ++profile) {
             assert(update_display_full(hl) == EPD_DRAW_SUCCESS);
             int old_clears = clears;
             for (unsigned turn = 1; turn <= intervals[i] * 2 + 1; ++turn) {
@@ -519,7 +541,14 @@ static void check_day_product_cycles(EpdiyHighlevelState* hl) {
                 if (turn % intervals[i] == 0) {
                     assert(last_mode == MODE_GC16 && last_waveform == &E0470_FULL_WAVEFORM);
                     assert(draws == previous_draws + 1);
-                } else assert(last_mode != MODE_GC16);
+                } else {
+                    assert(last_mode != MODE_GC16);
+                    if(profile>=DISPLAY_READER_GRAY_BALANCED) {
+                        assert(last_waveform==&E0470_GRAY_BALANCED_WAVEFORM);
+                        assert(draws==previous_draws+1);
+                        assert(last_scan==READ_PICO_EPD_SCAN_FULL && prefill==127);
+                    }
+                }
                 assert(clears == old_clears);
                 assert(!memcmp(hl->front_fb, hl->back_fb, FB_BYTES));
                 if (profile == DISPLAY_READER_BINARY)
@@ -541,6 +570,27 @@ static void check_day_product_cycles(EpdiyHighlevelState* hl) {
     assert(update_display_full(hl) == EPD_DRAW_SUCCESS);
     assert(update_display_reader_turn(hl, DISPLAY_READER_STANDARD, area, true) == EPD_DRAW_SUCCESS && last_mode == MODE_GL16);
     cleanup_every = 0;
+    fail_draw=true;
+    assert(update_display_reader_turn(hl,DISPLAY_READER_GRAY_BALANCED,area,true)!=EPD_DRAW_SUCCESS);
+    fail_draw=false;
+    assert(update_display_reader_turn(hl,DISPLAY_READER_GRAY_BALANCED,area,true)==EPD_DRAW_SUCCESS && last_mode==MODE_GC16);
+    int balanced_before=draws;
+    assert(update_display_reader_turn(hl,DISPLAY_READER_GRAY_BALANCED,area,true)==EPD_DRAW_SUCCESS);
+    assert(last_waveform==&E0470_GRAY_BALANCED_WAVEFORM && draws==balanced_before+1);
+    int old_turns=turn_calls,old_draws=draws;
+    assert(update_display_reader_turn(hl,DISPLAY_READER_GRAY_STAGGERED,area,true)==EPD_DRAW_SUCCESS);
+    assert(turn_calls==old_turns && draws==old_draws+1 && last_waveform==&E0470_GRAY_BALANCED_WAVEFORM);
+    assert(update_display_reader_turn(hl,DISPLAY_READER_GRAY_SYNC,area,true)==EPD_DRAW_SUCCESS);
+    assert(turn_calls==old_turns && draws==old_draws+2 && last_waveform==&E0470_GRAY_BALANCED_WAVEFORM);
+    assert(update_display_reader_turn(hl,DISPLAY_READER_GRAY_MILD,area,true)==EPD_DRAW_SUCCESS);
+    assert(turn_calls==old_turns && draws==old_draws+3 && last_waveform==&E0470_GRAY_BALANCED_WAVEFORM);
+    assert(update_display_reader_turn(hl,DISPLAY_READER_GRAY_COMPACT,area,true)==EPD_DRAW_SUCCESS);
+    assert(turn_calls==old_turns && draws==old_draws+4 && last_waveform==&E0470_GRAY_BALANCED_WAVEFORM);
+    fail_draw=true;
+    assert(update_display_reader_turn(hl,DISPLAY_READER_GRAY_COMPACT,area,true)!=EPD_DRAW_SUCCESS);
+    fail_draw=false;
+    assert(update_display_reader_turn(hl,DISPLAY_READER_GRAY_COMPACT,area,true)==EPD_DRAW_SUCCESS && last_mode==MODE_GC16);
+    assert(turn_calls==old_turns && !turn_busy);
     for (int i = 0; i < 64; ++i)
         assert(update_display_reader_turn(hl, DISPLAY_READER_STANDARD, area, true) == EPD_DRAW_SUCCESS && last_mode == MODE_GL16);
     int previous_draws = draws;
@@ -619,10 +669,12 @@ int main(void) {
         assert(hl.waveform == &E0470_WAVEFORM);
     }
     // 双遍扫描是白屏事故根因，禁止回归。/ The double scan caused the white-screen regression; keep it out.
-    // 普通刷新立即下电，空闲检查不能重复下电。/ Ordinary pushes power off immediately; idle checks must not repeat it.
-    assert(draws == 7 && full_draws == 2 && !clears && poweroffs == 7);
-    rails_idle_check(esp_timer_get_time() / 1000 + 4000);
-    assert(poweroffs == 7);
+    // 统一闲置保活：普通刷新不再立即下电，到期检查只断一次且不重复。
+    // Unified idle keepalive: ordinary pushes no longer power off immediately; the deadline
+    // check cuts once and never repeats.
+    assert(draws == 7 && full_draws == 2 && !clears && poweroffs == 0);
+    rails_idle_check(esp_timer_get_time() / 1000 + 9000);
+    assert(poweroffs == 1);
     update_display_full(&hl);
     assert(last_mode == MODE_GC16 && last_waveform == &E0470_FULL_WAVEFORM && !last_area);
     // 按钮不能触发整屏清理，也不能消耗页级周期。/ Buttons never clean the full screen or consume the page cleanup interval.
@@ -847,7 +899,9 @@ int main(void) {
             assert(update_display_text_direct(&hl, false) == EPD_DRAW_SUCCESS);
             check_old_at_draw = false;
             assert(draws == before_draws + 1 && full_draws == before_full + 1);
-            assert(powerons == on_before + 1 && poweroffs == off_before + 1);
+            // 直刷正文翻页同样走闲置保活，不逐页上下电。
+            // Direct body turns share the idle keepalive instead of cycling rails per page.
+            assert(powerons == on_before + 1 && poweroffs == off_before);
             assert(last_waveform == &E0470_DIRECT_WAVEFORM && last_mode == MODE_GL16 && clears == before_clears);
             assert(hl.waveform == &E0470_WAVEFORM && !memcmp(front, back, FB_BYTES));
             assert(!memcmp(presented, expected_direct, FB_BYTES) && !memcmp(back, expected_direct, FB_BYTES));
@@ -882,9 +936,9 @@ int main(void) {
     assert(allocations == 0);
     check_withdrawn_night_tiers(&hl);
     check_night_prewipe(&hl);
-    // 错相揭页：成功提交基准并下电；失败按未知基准整屏恢复；入口补偿不进引擎。
-    // Staggered page turns: success commits the baseline and powers off; failure recovers whole-screen from an unknown
-    // baseline; entry compensation bypasses the engine entirely.
+    // 错相揭页：成功提交基准并交闲置保活；到期断电；失败按未知基准整屏恢复；入口补偿不进引擎。
+    // Staggered page turns: success commits the baseline and defers power-off to the idle deadline;
+    // failure recovers whole-screen from an unknown baseline; entry compensation bypasses the engine entirely.
     {
         int before_turns = turn_calls, before_draws = draws, before_clears = clears, before_offs = poweroffs;
         memset(front, 0x5A, FB_BYTES);
@@ -892,6 +946,8 @@ int main(void) {
         assert(update_display_page_turn(&hl, (EpdRect){0, 0, 16, 16}, true) == EPD_DRAW_SUCCESS);
         assert(turn_calls == before_turns + 1 && turn_forward[turn_calls - 1]);
         assert(!memcmp(front, back, FB_BYTES) && draws == before_draws && clears == before_clears);
+        assert(poweroffs == before_offs);
+        rails_idle_check(esp_timer_get_time() / 1000 + 9000);
         assert(poweroffs == before_offs + 1);
         assert(update_display_page_turn(&hl, (EpdRect){0, 0, 16, 16}, false) == EPD_DRAW_SUCCESS);
         assert(turn_calls == before_turns + 2 && !turn_forward[turn_calls - 1]);
@@ -912,6 +968,18 @@ int main(void) {
         memset(back, 0x77, FB_BYTES);
         assert(update_display_page_turn(&hl, (EpdRect){0, 0, 16, 16}, true) == EPD_DRAW_SUCCESS);
         assert(turn_calls == turns_at_entry && last_waveform == &E0470_FULL_WAVEFORM);
+    }
+    {
+        cleanup_every=0;animation_style=2;
+        unsigned before=soft_gets, released=soft_releases;
+        assert(update_display_page_turn(&hl,(EpdRect){0,0,16,16},true)==EPD_DRAW_SUCCESS);
+        assert(soft_gets==before+1&&soft_releases==released+1);
+        turn_result=EPD_DRAW_OTHER_ERROR;
+        assert(update_display_page_turn(&hl,(EpdRect){0,0,16,16},false)==EPD_DRAW_SUCCESS);
+        assert(soft_gets==before+2&&soft_releases==released+2&&!memcmp(front,back,FB_BYTES));
+        turn_result=EPD_DRAW_SUCCESS;animation_style=1;
+        assert(update_display_page_turn(&hl,(EpdRect){0,0,16,16},true)==EPD_DRAW_SUCCESS&&soft_gets==before+2);
+        animation_style=0;
     }
     check_day_product_cycles(&hl);
     puts("display: physical night cleanup preserves targets and establishes actual white, shared cycles 1/3/5/30/off, excluded day/controls/footer, successful resets, failed retry and underrun recovery passed");

@@ -5,6 +5,8 @@
  * English: A bounded touch queue independent of display scans preserves press/move/release sampling order.
  * 冻结：不解释点击，不在采样任务绘制；读错/溢出丢弃旧队列并取消手势。
  * Frozen: Never interpret taps or draw from the sampler; errors/overflow discard stale queued input and cancel gestures.
+ * 冻结修订：第二批省电让禁用任务阻塞等启用通知；输入信号可提前结束页面的静止心跳，不放慢采样。
+ * Frozen revision: Batch-two power saving blocks a disabled sampler until notified; input signals interrupt page idle heartbeats without slowing sampling.
  * 实机功耗审查：静止时 125Hz 盲轮询是持续的 I2C 与 CPU 唤醒压力；改为触摸中全速、松开转
  * 低速轮询，设备端用 CST836U INT 沿即时唤回（中断不工作时由低速超时兜底，行为不变慢于旧值）。
  * Power review: the idle 125Hz blind poll kept both I2C and the CPU busy; the sampler now runs
@@ -31,6 +33,7 @@ static unsigned s_head, s_count;
 static cst836u_touch_t s_latest;
 static bool s_enabled, s_suppress, s_fault;
 static SemaphoreHandle_t s_mutex;
+static SemaphoreHandle_t s_ready;
 static TaskHandle_t s_task;
 static cst836u_handle_t s_tp;
 
@@ -46,6 +49,7 @@ static void sampler(void* unused) {
     (void)unused;
     for (;;) {
         bool touching = false;
+        bool enabled;
         xSemaphoreTake(s_mutex, portMAX_DELAY);
         if (s_enabled) {
             cst836u_touch_t touch = {0};
@@ -77,10 +81,12 @@ static void sampler(void* unused) {
                 }
             }
             touching = s_latest.touched;
+            if ((s_count || s_fault) && s_ready) xSemaphoreGive(s_ready);
         }
+        enabled = s_enabled;
         xSemaphoreGive(s_mutex);
-        if (!s_enabled) {
-            vTaskDelay(pdMS_TO_TICKS(INPUT_ACTIVE_POLL_MS));
+        if (!enabled) {
+            ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
             continue;
         }
         if (touching) {
@@ -118,6 +124,7 @@ void app_touch_input_init(cst836u_handle_t tp) {
     if (s_task || !tp) return;
     if (!s_mutex) s_mutex = xSemaphoreCreateMutex();
     if (!s_mutex) return;
+    if (!s_ready) s_ready = xSemaphoreCreateBinary();
     s_tp = tp;
     if (xTaskCreatePinnedToCore(sampler, "touch_input", 3072, NULL, 5, &s_task, 1) != pdPASS)
         s_task = NULL;
@@ -127,12 +134,25 @@ void app_touch_input_init(cst836u_handle_t tp) {
 }
 void app_touch_input_enable(bool enabled) {
     if (!s_task) return;
+    bool changed;
     xSemaphoreTake(s_mutex, portMAX_DELAY);
-    if (s_enabled != enabled) {
+    changed = s_enabled != enabled;
+    if (changed) {
         s_enabled = enabled; s_count = s_head = 0; s_fault = false;
         s_suppress = false; memset(&s_latest, 0, sizeof(s_latest));
     }
     xSemaphoreGive(s_mutex);
+    if (changed) xTaskNotifyGive(s_task);
+}
+void app_touch_input_wait(uint32_t timeout_ms) {
+    if (!s_task || !s_ready) { vTaskDelay(pdMS_TO_TICKS(5)); return; }
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    bool enabled = s_enabled;
+    bool pending = s_count || s_fault;
+    xSemaphoreGive(s_mutex);
+    if (!enabled) { vTaskDelay(pdMS_TO_TICKS(5)); return; }
+    if (pending) return;
+    xSemaphoreTake(s_ready, pdMS_TO_TICKS(timeout_ms > 50 ? 50 : timeout_ms));
 }
 void app_touch_input_reset(void) {
     if (!s_task) return;

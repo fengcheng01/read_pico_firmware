@@ -52,6 +52,12 @@
  * after 30 minutes of nothing but timer wakes non-excerpt locks descend to soft sleep
  * (the panel keeps the face; a short press re-powers), while any key or pickup still
  * returns to the page immediately as before.
+ * 用户修订：图片锁屏未选TF壁纸或读取失败时，默认使用与开机一致的PageRest插画。
+ * User revision: Image locks without a readable TF wallpaper use the same PageRest artwork as boot.
+ * 冻结修订：用户批准睡前停用常开外设及引脚；CPU保存区仅浅睡期间持有，拿起唤醒和分钟走时保留。
+ * Frozen revision: User-approved peripheral/pin parking holds CPU retention only during light sleep, retaining pickup wake and minute clocks.
+ * 下电命令失败或ACK后EN未掉必须恢复并回退浅睡，不允许以永久等待冒充下电成功。
+ * Failed power-down or EN remaining high after ACK restores peripherals for light-sleep fallback; an endless wait never counts as success.
  */
 
 #include "sleep.h"
@@ -66,6 +72,7 @@
 #include "driver/gpio.h"
 #include "esp_log.h"
 #include "esp_sleep.h"
+#include "esp_private/sleep_cpu.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -74,6 +81,7 @@
 #include "os_time.h"
 #include "pmu_selftest.h"
 #include "read_pico_board.h"
+#include "read_pico_buzzer.h"
 #include "read_pico_pmu.h"
 #include "sc7a20h_lab.h"
 #include "settings.h"
@@ -83,15 +91,77 @@
 #include "ui/product/ui_product.h"
 #include "book_quotes.h"
 #include "book_stats.h"
+#include "book_cover.h"
+#include "os_sync.h"
 
 static const char* TAG = "read_pico";
+static cst836u_handle_t s_sleep_tp;
+static sc7a20h_handle_t s_sleep_acc;
+static bool s_touch_resume, s_acc_resume, s_peripherals_parked;
 
-extern const uint8_t lock_4bpp_pack_start[] asm("_binary_lock_4bpp_pack_start");
-extern const uint8_t lock_4bpp_pack_end[] asm("_binary_lock_4bpp_pack_end");
+void app_sleep_bind(cst836u_handle_t tp, sc7a20h_handle_t acc) {
+    s_sleep_tp = tp;
+    s_sleep_acc = acc;
+}
+
+static esp_err_t sleep_peripherals_resume(void) {
+    esp_err_t err = read_pico_ioe_wake();
+    if (err != ESP_OK) return err;
+    if (s_touch_resume) {
+        esp_err_t next = cst836u_wake(s_sleep_tp);
+        if (err == ESP_OK) err = next;
+        if (next == ESP_OK) s_touch_resume = false;
+    }
+    if (s_acc_resume) {
+        esp_err_t next = sc7a20h_power_up(s_sleep_acc);
+        if (err == ESP_OK) err = next;
+        if (next == ESP_OK) s_acc_resume = false;
+    }
+    if (err == ESP_OK) s_peripherals_parked = false;
+    return err;
+}
+
+static esp_err_t sleep_peripherals_suspend(bool host_off) {
+    if (s_peripherals_parked) {
+        esp_err_t err = sleep_peripherals_resume();
+        if (err != ESP_OK) return err;
+    }
+    s_touch_resume = s_sleep_tp && cst836u_get_mode(s_sleep_tp) != CST836U_MODE_DEEPSLEEP;
+    s_acc_resume = s_sleep_acc && sc7a20h_powered(s_sleep_acc);
+    s_peripherals_parked = true;
+    esp_err_t err = ESP_OK;
+    if (read_pico_buzzer_score_busy()) err = read_pico_buzzer_score_stop();
+    if (err == ESP_OK && s_touch_resume) err = cst836u_set_mode(s_sleep_tp, CST836U_MODE_DEEPSLEEP);
+    if (err == ESP_OK && s_acc_resume) err = sc7a20h_power_down(s_sleep_acc);
+    if (err == ESP_OK) err = read_pico_ioe_sleep(host_off);
+    if (err != ESP_OK) (void)sleep_peripherals_resume();
+    return err;
+}
+
+// IDF未启用自动PM时显式准备CPU保存区；失败释放部分分配，唤醒即归还内部内存给联网与封面。
+// Prepare CPU retention explicitly without automatic PM; free partial allocations on failure and release internal memory for radio/covers on wake.
+static void sleep_cpu_prepare(void) {
+#if CONFIG_PM_ESP_SLEEP_POWER_DOWN_CPU
+    esp_err_t err = sleep_cpu_configure(true);
+    if (err != ESP_OK) {
+        (void)sleep_cpu_configure(false);
+        ESP_LOGW(TAG, "CPU retention unavailable: %s", esp_err_to_name(err));
+    }
+#endif
+}
+
+static void sleep_cpu_release(void) {
+#if CONFIG_PM_ESP_SLEEP_POWER_DOWN_CPU
+    (void)sleep_cpu_configure(false);
+#endif
+}
+
+extern const uint8_t loading_4bpp_pack_start[] asm("_binary_loading_4bpp_pack_start");
+extern const uint8_t loading_4bpp_pack_end[] asm("_binary_loading_4bpp_pack_end");
 
 static void draw_static_lock(uint8_t* fb) {
-    ui_draw_packed_full_image(fb, lock_4bpp_pack_start,
-                             (size_t)(lock_4bpp_pack_end - lock_4bpp_pack_start));
+    ui_draw_packed_full_image(fb, loading_4bpp_pack_start,
+                             (size_t)(loading_4bpp_pack_end - loading_4bpp_pack_start));
 }
 
 static void lock_arm_ioe_wakeup(void) {
@@ -218,6 +288,12 @@ void app_sleep_alarm_clock(bool on) {
 }
 
 app_wake_source_t app_light_sleep_wait(sc7a20h_handle_t acc) {
+    book_cover_join();
+    os_sync_job_cancel();
+    epd_poweroff();
+    esp_err_t park_err = sleep_peripherals_suspend(false);
+    if (park_err != ESP_OK) ESP_LOGW(TAG, "sleep peripherals: %s", esp_err_to_name(park_err));
+    sleep_cpu_prepare();
     bool pickup = acc != NULL && app_settings_pickup_wake();
     bool acc_armed = false;
     lock_arm_ioe_wakeup();
@@ -334,21 +410,49 @@ app_wake_source_t app_light_sleep_wait(sc7a20h_handle_t acc) {
         sc7a20h_power_down(acc);
         sc7a20h_int1_begin(acc);
     }
+    sleep_cpu_release();
+    park_err = sleep_peripherals_resume();
+    if (park_err != ESP_OK) ESP_LOGW(TAG, "wake peripherals: %s", esp_err_to_name(park_err));
     app_settings_set_last_wake((uint8_t)wake);
     return wake;
 }
 
-void app_enter_host_sleep(app_sleep_mode_t mode) {
+esp_err_t app_enter_host_sleep(app_sleep_mode_t mode) {
+    if (mode != APP_SLEEP_OFF && mode != APP_SLEEP_DEEP) return ESP_ERR_INVALID_ARG;
+    if (!os_page_turner_pause()) return ESP_ERR_INVALID_STATE;
+    book_cover_join();
+    os_sync_job_cancel();
     // 先放掉可能保活的高压轨再交给 PMU 下电，避免停留在 HALT 循环时轨道常开。
     // Release any held HV rails before handing off to the PMU so they never stay on through the halt loop.
     epd_poweroff();
     pmu_selftest_prepare_powerdown();
-    if (mode == APP_SLEEP_OFF) {
-        ESP_LOGI(TAG, "power off %s", esp_err_to_name(read_pico_pmu_power_off()));
-    } else {
-        ESP_LOGI(TAG, "SOFT_SLEEP %s", esp_err_to_name(read_pico_pmu_report_sleep()));
+    esp_err_t err = sleep_peripherals_suspend(true);
+    if (err != ESP_OK) return err;
+    unsigned attempts = mode == APP_SLEEP_OFF ? 1 : 3;
+    for (unsigned attempt = 0; attempt < attempts; ++attempt) {
+        if (mode == APP_SLEEP_OFF) {
+            err = read_pico_pmu_power_off();
+            ESP_LOGI(TAG, "power off %s", esp_err_to_name(err));
+        } else {
+            err = read_pico_pmu_report_sleep();
+            ESP_LOGI(TAG, "SOFT_SLEEP %s", esp_err_to_name(err));
+        }
+        if (err == ESP_OK) {
+            // EN正常下降后不会继续执行；应答后仍运行说明下电未兑现。
+            // Normal EN loss never resumes this task; running after the ACK deadline means power-down failed.
+            vTaskDelay(pdMS_TO_TICKS(1500));
+            err = ESP_ERR_TIMEOUT;
+            break;
+        }
+        if (attempt + 1 < attempts) vTaskDelay(pdMS_TO_TICKS(200));
     }
-    while (true) vTaskDelay(pdMS_TO_TICKS(1000));
+    // 先恢复CW_INT再读PMU；撤销已受理但未掉电的软睡状态，保留页面和阅读内存。
+    // Restore CW_INT before reading the PMU; cancel a latched-but-powered soft sleep, retaining the page and reading memory.
+    esp_err_t resume_err = sleep_peripherals_resume();
+    if (resume_err != ESP_OK) ESP_LOGW(TAG, "wake peripherals: %s", esp_err_to_name(resume_err));
+    (void)read_pico_pmu_report_ready();
+    ESP_LOGW(TAG, "host power-down failed: %s", esp_err_to_name(err));
+    return err;
 }
 
 // 时钟锁屏：整屏铺白打底，时钟超大居中。/ Clock face: white ground, extra-large centered digits.
@@ -655,7 +759,9 @@ lock_again:
             // it; the reading marker is set by the page's sleep callback when applicable.
             app_settings_set_lock_origin(origin_app);
             app_enter_host_sleep(mode);
-            break;
+            // 下电失败仍留在锁屏，按原唤醒和PIN流程回退浅睡。
+            // Failed power-down stays locked, falling back to the original light-sleep wake/PIN flow.
+            __attribute__((fallthrough));
         case APP_SLEEP_LIGHT:
         default: {
             // 分钟更新不离开锁屏；只按键/拿起返回页面。/ Minute updates stay locked; only keys/pickup return to the page.
@@ -678,7 +784,15 @@ lock_again:
                 // 锁屏久置降级：只剩分钟唤醒累计满30分钟说明是误锁后被搁置，转软睡省电。
                 // Long-idle descent: thirty minutes of nothing but timer wakes means an
                 // accidental lock left sitting; descend to soft sleep to save battery.
-                if (lock_idle_tick(&idle_minutes)) break;
+                if (lock_idle_tick(&idle_minutes)) {
+                    app_sleep_alarm_clock(false);
+                    app_sleep_disarm_minute_wake();
+                    app_settings_set_lock_origin(origin_app);
+                    ESP_LOGI(TAG, "lock idle %u min, soft sleep", idle_minutes);
+                    app_enter_host_sleep(APP_SLEEP_DEEP);
+                    idle_minutes = 0;
+                    continue;
+                }
                 os_time_poll(esp_timer_get_time() / 1000);
                 // 静态与壁纸锁屏只维护时间；画面未改变，不重复推屏。
                 // Static and wallpaper locks maintain time only; their unchanged frames need no extra presentation.
@@ -698,16 +812,6 @@ lock_again:
                 } else {
                     guard_draw_result(hl, update_display_area_quiet(hl, band));
                 }
-            }
-            if (idle_minutes >= LOCK_IDLE_SOFT_SLEEP_MIN) {
-                app_sleep_alarm_clock(false);
-                app_sleep_disarm_minute_wake();
-                // 降级同样断电：记录锁屏来源，开机回到锁屏那一刻的页面。
-                // The descent also cuts power: record the lock origin so boot
-                // returns to the page showing when locking happened.
-                app_settings_set_lock_origin(origin_app);
-                ESP_LOGI(TAG, "lock idle %u min, soft sleep", idle_minutes);
-                app_enter_host_sleep(APP_SLEEP_DEEP);
             }
             app_sleep_alarm_clock(false);
             app_sleep_disarm_minute_wake();

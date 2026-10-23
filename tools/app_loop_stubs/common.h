@@ -30,6 +30,7 @@ void vTaskDelay(int);
 #define pdMS_TO_TICKS(x) (x)
 #define ESP_LOGI(...) ((void)0)
 #define ESP_LOGE(...) ((void)0)
+#define ESP_LOGW(...) ((void)0)
 void guard_draw_result(EpdiyHighlevelState*, enum EpdDrawError);
 enum EpdDrawError update_display_area_with(EpdiyHighlevelState*, const void*, int, EpdRect);
 void display_request_navigation_settle(void);
@@ -46,10 +47,13 @@ const char* app_settings_font_path(void);
 uint8_t app_settings_idle_lock_min(void);
 bool ttf_font_path_is_builtin(const char*);
 bool ttf_font_ready(void);
+bool ttf_font_io_failed(void);
+bool ttf_font_render_failed(void);
 bool ttf_font_is_builtin(void);
 const char* ttf_font_path(void);
 int ttf_font_open(const char*);
 int ttf_font_open_builtin(void);
+void ttf_font_unload(void);
 typedef struct { bool mounted; } read_pico_sd_info_t;
 int read_pico_sd_get_info(read_pico_sd_info_t*);
 void read_pico_sd_start_probe(void);

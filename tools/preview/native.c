@@ -73,6 +73,7 @@ const EpdWaveform E0470_TEXTTURN_NIGHT_WAVEFORM = {5};
 const EpdWaveform E0470_TEXTTURN_WAVEFORM = {7};
 const EpdWaveform E0470_DIRECT_WAVEFORM = {6};
 const EpdWaveform E0470_GRAY_DIRECT_WAVEFORM = {9};
+const EpdWaveform E0470_GRAY_BALANCED_WAVEFORM = {10};
 static int64_t s_time_bias_ms;
 
 int64_t esp_timer_get_time(void) {
@@ -189,7 +190,7 @@ enum EpdDrawError update_display_text_gray_direct(EpdiyHighlevelState* state, bo
 // White-clear repaint records actions and intervals only, never treating preview pixels as evidence of panel cleanliness.
 enum EpdDrawError update_display_reader_turn(EpdiyHighlevelState* hl, display_reader_mode_t mode,
                                             EpdRect area, bool forward) {
-    if (mode < DISPLAY_READER_STANDARD || mode > DISPLAY_READER_ANIMATED) return EPD_DRAW_INVALID_CROP;
+    if (mode < DISPLAY_READER_STANDARD || mode > DISPLAY_READER_GRAY_COMPACT) return EPD_DRAW_INVALID_CROP;
     unsigned every = app_settings_gc_every();
     bool due = every && s_day_body_turns >= every - 1;
     uint32_t generation = s_clean_generation;
@@ -204,6 +205,17 @@ enum EpdDrawError update_display_reader_turn(EpdiyHighlevelState* hl, display_re
         case DISPLAY_READER_STANDARD: result = update_display_text_turn(hl, false); break;
         case DISPLAY_READER_BINARY: result = update_display_text_direct(hl, false); break;
         case DISPLAY_READER_GRAY: result = update_display_text_gray_direct(hl, false); break;
+        case DISPLAY_READER_GRAY_BALANCED:
+            result = record_body(false, false);
+            if (refresh_mode == MODE_GL16) refresh_wave = E0470_GRAY_BALANCED_WAVEFORM.unused;
+            break;
+        case DISPLAY_READER_GRAY_STAGGERED:
+        case DISPLAY_READER_GRAY_SYNC:
+        case DISPLAY_READER_GRAY_MILD:
+        case DISPLAY_READER_GRAY_COMPACT:
+            result = record_body(false, false);
+            if (refresh_mode == MODE_GL16) refresh_wave = 10;
+            break;
         default: result = update_display_page_turn(hl, area, forward); break;
     }
     // 成功的手动/入口/故障恢复全刷已统一清零；失败不推进，到期失败留给下一次重试。
@@ -368,7 +380,7 @@ static void key(int key) {
 }
 
 static bool load_asset(int which) {
-    const char* path = which == 1 ? "main/assets/lock_4bpp.pack" : "main/assets/loading_4bpp.pack";
+    const char* path = "main/assets/loading_4bpp.pack";
     FILE* f = fopen(path, "rb");
     if (!f) return false;
     if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return false; }
@@ -407,6 +419,8 @@ static bool export_frame(const char* path) {
 
 int main(int argc, char** argv) {
     if (argc != 2) { fprintf(stderr, "Usage: preview FRAME.pgm\n"); return 1; }
+    extern void preview_history_directory(const char*);
+    preview_history_directory(argv[1]);
     epd_set_rotation(EPD_ROT_INVERTED_PORTRAIT);
     if (ttf_font_init() != ESP_OK) { fprintf(stderr, "Cannot load built-in font\n"); return 1; }
     choose_page(app_index_of(app_home_page()));
@@ -420,14 +434,26 @@ int main(int argc, char** argv) {
         static book_quote_t lock_snapshot;
         unsigned lock_seq=book_quotes_lock_get(&lock_snapshot)?lock_snapshot.seq:0;
         const os_page_turner_info_t* ble = os_page_turner_info();
-        printf("{\"font_ready\":%s,\"font_builtin\":%s,\"daily_goal\":%u,\"reader_stroke\":%d,\"ble_enabled\":%s,\"ble_saved\":%s,\"ble_phase\":%d,\"ble_learning\":%d,\"ble_bound_lock\":%s,\"lock_requests\":%u,\"page\":%d,\"menu\":%s,\"menu_leaf\":%d,\"leaf\":%d,\"asset\":%d,\"unsupported\":%d,\"refresh_mode\":%d,\"presents\":%d,\"gc_presents\":%d,\"refresh_wave\":%d,\"night_turns\":%u,\"body_presents\":%u,\"quiet_presents\":%u,\"night_area_presents\":%u,\"reading\":%s,\"sync_starts\":%u,\"sync_job\":%d,\"quote_count\":%u,\"history_page\":%u,\"history_count\":%u,\"physical_clears\":%u,\"shelf_grid\":%s,\"lock_seq\":%u,\"lock_style\":%u,\"lock_mode\":%d,\"time_state\":%d,\"refresh_area\":[%d,%d,%d,%d]}\n",
-               ttf_font_ready()?"true":"false", ttf_font_is_builtin()?"true":"false", app_settings_daily_goal(), app_settings_book_stroke(), ble->enabled ? "true" : "false", ble->saved ? "true" : "false", ble->radio.phase, ble->learning, ble->bound_lock ? "true" : "false", preview_lock_requests, app_index_of(current), menu_open ? "true" : "false", menu_leaf, ctx.leaf, asset, unsupported, refresh_mode, presents, gc_presents, refresh_wave, s_night_body_turns, body_presents, quiet_presents, night_area_presents,
+        printf("{\"font_ready\":%s,\"font_builtin\":%s,\"font_io_failed\":%s,\"font_render_failed\":%s,\"daily_goal\":%u,\"reader_stroke\":%d,\"ble_enabled\":%s,\"ble_saved\":%s,\"ble_phase\":%d,\"ble_learning\":%d,\"ble_bound_lock\":%s,\"lock_requests\":%u,\"page\":%d,\"menu\":%s,\"menu_leaf\":%d,\"leaf\":%d,\"asset\":%d,\"unsupported\":%d,\"refresh_mode\":%d,\"presents\":%d,\"gc_presents\":%d,\"refresh_wave\":%d,\"night_turns\":%u,\"body_presents\":%u,\"quiet_presents\":%u,\"night_area_presents\":%u,\"reading\":%s,\"sync_starts\":%u,\"sync_job\":%d,\"quote_count\":%u,\"history_page\":%u,\"history_count\":%u,\"physical_clears\":%u,\"shelf_grid\":%s,\"lock_seq\":%u,\"lock_style\":%u,\"lock_mode\":%d,\"time_state\":%d,\"refresh_area\":[%d,%d,%d,%d]}\n",
+               ttf_font_ready()?"true":"false", ttf_font_is_builtin()?"true":"false", ttf_font_io_failed()?"true":"false", ttf_font_render_failed()?"true":"false", app_settings_daily_goal(), app_settings_book_stroke(), ble->enabled ? "true" : "false", ble->saved ? "true" : "false", ble->radio.phase, ble->learning, ble->bound_lock ? "true" : "false", preview_lock_requests, app_index_of(current), menu_open ? "true" : "false", menu_leaf, ctx.leaf, asset, unsupported, refresh_mode, presents, gc_presents, refresh_wave, s_night_body_turns, body_presents, quiet_presents, night_area_presents,
                current == app_by_id(OS_APP_LIBRARY) && book_chapter_count() > 0 ? "true" : "false",
                preview_sync_starts(), preview_sync_job(), (unsigned)quote_count, book_home_snapshot()->recent_page, book_home_snapshot()->history_count,
                physical_clears, app_settings_shelf_grid() ? "true" : "false", lock_seq, app_settings_lock_style(), app_settings_effective_lock_mode(), os_time_info()->state, refresh_area.x, refresh_area.y, refresh_area.width, refresh_area.height);
         fflush(stdout);
         if (!fgets(command, sizeof(command), stdin)) break;
         int value, x, y, x1, y1;
+        if (!strncmp(command,"history_fixture",15)) {
+            extern void preview_history_fixture(int64_t);
+            preview_history_fixture(preview_now_ms());
+            if(current&&current->on_enter)current->on_enter(&ctx);
+            present(APP_REDRAW_PAGE);continue;
+        }
+        if (sscanf(command, "history_media %d", &value) == 1) {
+            extern void os_history_service_poll(int64_t,bool);
+            os_history_service_poll(preview_now_ms(),value!=0);
+            if(current&&current->on_enter)current->on_enter(&ctx);
+            present(APP_REDRAW_PAGE);continue;
+        }
         if (sscanf(command, "time_valid %d", &value) == 1) {
             preview_time_valid(value != 0); ctx.consumed = false; ctx.now_ms = preview_now_ms();
             os_time_poll(ctx.now_ms);
@@ -435,6 +461,8 @@ int main(int argc, char** argv) {
             continue;
         }
         if (!strncmp(command, "font_reclaim", 12)) { ttf_font_reclaim(); continue; }
+        if (sscanf(command, "font_io_fail %d", &value) == 1) { ttf_font_test_fail_reads(value != 0); continue; }
+        if (!strncmp(command, "font_builtin", 12)) { ttf_font_open_builtin(); continue; }
         if (sscanf(command, "heap_fail %d", &value) == 1) { preview_heap_fail(value); continue; }
         if (sscanf(command, "quote_fixture %d", &value) == 1 && (value==-1 || (value>=1 && value<=32))) {
             for(int i=1;i<=(value==-1?1:value);++i){
@@ -477,6 +505,10 @@ int main(int argc, char** argv) {
         unsupported = -1;
         if (sscanf(command, "page %d", &value) == 1) choose_page(value);
         else if (sscanf(command, "sd %d", &value) == 1) s_sd_fixture = value == 1;
+        else if (sscanf(command, "battery %d", &value) == 1) {
+            preview_battery_fixture(value);
+            present(APP_REDRAW_PAGE);
+        }
         else if (sscanf(command, "tap %d %d", &x, &y) == 2) tap(x, y);
         else if (sscanf(command, "clock %d", &x) == 1) {
             os_time_apply((uint32_t)x, 32);

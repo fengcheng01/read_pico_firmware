@@ -49,8 +49,10 @@ static void xTaskNotifyGive(void* handle){(void)handle;pthread_mutex_lock(&notif
 static pthread_t thread;
 static void* run(void* fn){((void(*)(void*))fn)(NULL);return NULL;}
 static int xTaskCreatePinnedToCore(void(*fn)(void*),const char* name,int stack,void* arg,int priority,void** handle,int core){(void)name;(void)stack;(void)arg;(void)priority;(void)core;assert(!pthread_create(&thread,NULL,run,(void*)fn));*handle=&thread;return 1;}
+static void vTaskDelete(void* handle){assert(handle);pthread_mutex_lock(&notify_lock);quit=true;pthread_cond_signal(&notify_changed);pthread_mutex_unlock(&notify_lock);pthread_join(thread,NULL);quit=false;notified=false;}
 static void *s_draw_lock,*s_prep_done,*s_prep_task;
 static atomic_bool s_prep_stop;
+static bool s_prep_sync_suspended;
 static book_layout_cursor_t s_prep_cursor;
 static uint8_t* s_next_fb;
 static int s_next_page=-1,s_prep_page=-1;
@@ -59,6 +61,10 @@ static const char* s_text;
 static int s_px=10,s_view;
 enum {READING};
 static bool s_image_open,s_toolbar,s_clear_confirm,s_quote_selecting,s_ended;
+static bool s_shake_enabled,s_scrub,test_sync_busy;
+static unsigned s_du_count;
+static int64_t s_size_settle_ms;
+static bool os_sync_job_busy(void){return test_sync_busy;}
 typedef struct {bool touched;} touch_t;
 typedef struct {bool consumed,request_app,request_menu;touch_t* touch;} app_ctx_t;
 static EpdRect body_rect(void){return (EpdRect){0,0,100,600};}
@@ -67,6 +73,7 @@ static void ui_clear_page(uint8_t* fb){memset(fb,255,fb_bytes());}
 static void apply_typography(void){}
 static int app_settings_book_stroke(void){return 0;}
 static bool reader_gray_direct_enabled(void){return false;}
+static void ttf_set_edge_style(uint8_t style){assert(style==0);}
 static void ttf_set_precise_curves(bool precise){(void)precise;}
 void ttf_set_stroke(int step){(void)step;}
 int ttf_get_stroke(void){return 0;}
@@ -85,7 +92,7 @@ void ttf_draw_text_px(uint8_t* fb,int x,int y,int px,const char* text,enum EpdFo
 void epd_fill_rect(EpdRect rect,uint8_t color,uint8_t* fb){for(int y=rect.y;y<rect.y+rect.height;++y)memset(fb+y*100+rect.x,color,rect.width);}
 void epd_draw_pixel(int x,int y,uint8_t c,uint8_t* fb){fb[y*100+x]=c;}
 '''
-unit += '\n'.join(function(n) for n in ['reader_body_font','invalidate_prep','prep_step','prep_task','ensure_prep','prep_allowed','prep_target','kick_prep','prep_end','prep_resume','prep_idle'])
+unit += '\n'.join(function(n) for n in ['reader_body_font','invalidate_prep','prep_step','prep_task','ensure_prep','prep_suspend_for_sync','prep_resume_after_sync','prep_allowed','prep_target','kick_prep','prep_end','prep_resume','prep_idle','idle_wait_ms'])
 unit += r'''
 int main(void){
  char text[1200];memset(text,'a',sizeof(text));s_text=text;EpdRect rect=body_rect();
@@ -105,7 +112,16 @@ int main(void){
  ctx.consumed=true;before=atomic_load(&rows_drawn);prep_idle(&ctx);assert(atomic_load(&rows_drawn)==before);ctx.consumed=false;
  ctx.request_menu=true;prep_idle(&ctx);assert(atomic_load(&rows_drawn)==before);ctx.request_menu=false;
  assert(prep_resume(1));assert(!memcmp(full,s_next_fb,fb_bytes()));
- pthread_mutex_lock(&notify_lock);quit=true;pthread_cond_signal(&notify_changed);pthread_mutex_unlock(&notify_lock);pthread_join(thread,NULL);
+ assert(idle_wait_ms(&ctx)==50);
+ s_next_page=-1;assert(!idle_wait_ms(&ctx));assert(prep_resume(1));
+ s_toolbar=true;assert(!idle_wait_ms(&ctx));s_toolbar=false;
+ s_du_count=1;assert(!idle_wait_ms(&ctx));s_du_count=0;
+ s_size_settle_ms=1;assert(!idle_wait_ms(&ctx));s_size_settle_ms=0;
+ s_shake_enabled=true;assert(!idle_wait_ms(&ctx));s_shake_enabled=false;
+ test_sync_busy=true;assert(!idle_wait_ms(&ctx));test_sync_busy=false;
+ assert(s_prep_task);prep_suspend_for_sync();assert(s_prep_sync_suspended&&!s_prep_task);
+ prep_resume_after_sync();assert(!s_prep_sync_suspended&&!s_prep_task);
+ ensure_prep();assert(s_prep_task);vTaskDelete(s_prep_task);s_prep_task=NULL;
  free(full);free(s_next_fb);sem_free(s_prep_done);sem_free(s_draw_lock);book_layout_free();
  puts("prefetch: real worker stops after one row, partial/full pixels equal, generation invalidation, overlay gates, four-row idle budget and low-memory fallback PASS");
 }

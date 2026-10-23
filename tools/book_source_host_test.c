@@ -29,7 +29,7 @@ static void roundtrip(const char *s, size_t n) {
 int main(int argc, char **argv) {
     const char *s = "Chapter 1 Start\nhello\nChapter 2 End\nworld\n";
     write_bytes(s, strlen(s)); assert(book_open(path) == ESP_OK);
-    assert(book_chapter_count() == 2); char title[41];
+    assert(book_chapter_count() == 2); char title[97];
     assert(book_chapter_title(1, title, sizeof(title)) == ESP_OK);
     assert(strcmp(title, "Chapter 2 End") == 0); book_close(); roundtrip(s, strlen(s));
     s = "第一章 开始\n你好\n第二章 结束\n再见\n";
@@ -69,6 +69,17 @@ int main(int argc, char **argv) {
     assert(book_chapter_count() == 2);
     assert(book_chapter_title(0, title, sizeof(title)) == ESP_OK && !strcmp(title, "洪武大帝 第一章 童年"));
     assert(book_chapter_title(1, title, sizeof(title)) == ESP_OK && !strcmp(title, "永乐大帝 第二章 苦难"));
+    book_close(); roundtrip(s, strlen(s));
+    // 40 字节旧上限会把“陈友谅”末字整体截掉；冷建与缓存重开都须保留完整标题。
+    // The former 40-byte limit dropped the last scalar in “陈友谅”; both a cold build
+    // and a cache-backed reopen must retain the full title.
+    s = "洪武大帝 第八章 可怕的陈友谅\n正文\n洪武大帝 第九章 决战前夜\n正文\n";
+    write_bytes(s, strlen(s)); assert(book_open(path) == ESP_OK);
+    assert(book_chapter_count() == 2);
+    assert(book_chapter_title(0, title, sizeof(title)) == ESP_OK && !strcmp(title, "洪武大帝 第八章 可怕的陈友谅"));
+    book_close();
+    assert(book_open(path) == ESP_OK);
+    assert(book_chapter_title(0, title, sizeof(title)) == ESP_OK && !strcmp(title, "洪武大帝 第八章 可怕的陈友谅"));
     book_close(); roundtrip(s, strlen(s));
     // 17k 导出格式：“N-M 标题　[本章字数：…最新更新时间…]”长尾不否决标记行，标题截到标记前。
     // The 17k export: “N-M title　[本章字数：… latest…]” — long tails never reject the

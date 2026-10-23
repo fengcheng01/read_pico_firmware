@@ -10,6 +10,8 @@
  * 实机灰底反馈后消除扫描末尾 MODE 低脉冲；保持本板 MODE=1 下电顺序。
  * Frozen: Board power sequencing alone owns MODE/XOE; generic scan mode callbacks never switch them.
  * Device gray-background feedback requires removing the scan-end MODE low pulse while retaining this board's MODE=1 shutdown order.
+ * 用户批准第一批功耗优化：仅在高压轨关闭后的睡眠边界停放MODE；唤醒先恢复，扫描回调与上下电顺序不变。
+ * User-approved power batch one: park MODE only at sleep boundaries after rails are off; restore on wake without changing scan callbacks or power sequencing.
  */
 
 #include <stdbool.h>
@@ -64,6 +66,9 @@
 // P0.2 CW_INT / P0.5 PGOOD / P0.6 SD_CD 为输入，其余为输出。
 // / P0.2 CW_INT / P0.5 PGOOD / P0.6 SD_CD are inputs; the rest are outputs.
 #define IOE_CONFIG_PORT0 0x64
+#define IOE_CONFIG_PORT0_HOST_OFF (IOE_CONFIG_PORT0 & (uint8_t)~IOE_CW_INT)
+#define IOE_CONFIG_PORT1 0xFF
+#define IOE_CONFIG_PORT1_SLEEP 0x00
 #define IOE_REG_COUNT 8
 
 #define D0 GPIO_NUM_4
@@ -88,12 +93,15 @@
 #define EPD_XCL GPIO_NUM_21
 #define EPD_SPV GPIO_NUM_47
 #define EPD_CKV GPIO_NUM_48
+#define SD_CLK_GPIO GPIO_NUM_38
 
 static uint8_t ioe_output;
 static bool rails_on;
 static i2c_master_bus_handle_t s_i2c_bus;
 static sy7636a_handle_t s_sy;
 static fca9555_handle_t s_ioe;
+static bool s_ioe_sleeping;
+static uint8_t s_ioe_resume_output;
 
 static esp_err_t ioe_set(uint8_t mask, bool high);
 
@@ -378,6 +386,21 @@ static void board_set_ctrl(epd_ctrl_state_t* state, const epd_ctrl_state_t* cons
     (void)mask;
 }
 
+// 常开电源上的面板输入与TF时钟在浅睡中下拉；运行时的引脚复用和时序不变。
+// Pull always-powered panel inputs and TF clock down during light sleep, retaining active pin routing and timing.
+static void sleep_pulldown_pins(void) {
+    const gpio_num_t pins[] = {
+        EPD_XCL, EPD_CKV, EPD_XLE, EPD_XSTL, EPD_SPV,
+        D0, D1, D2, D3, D4, D5, D6, D7, D8, D9, D10, D11, D12, D13, D14, D15,
+        SD_CLK_GPIO,
+    };
+    for (size_t i = 0; i < sizeof(pins) / sizeof(pins[0]); ++i) {
+        gpio_sleep_set_direction(pins[i], GPIO_MODE_INPUT);
+        gpio_sleep_set_pull_mode(pins[i], GPIO_PULLDOWN_ONLY);
+        gpio_sleep_sel_en(pins[i]);
+    }
+}
+
 static void board_init(uint32_t epd_row_width) {
     i2c_bus_recover();
 
@@ -411,6 +434,7 @@ static void board_init(uint32_t epd_row_width) {
     // / P0.7 is the CST836U active-low reset output.
     ESP_ERROR_CHECK(fca9555_set_config(s_ioe, 0, IOE_CONFIG_PORT0));
     ioe_output = IOE_MODE | IOE_TP_RST;
+    s_ioe_sleeping = false;
     ESP_ERROR_CHECK(ioe_commit());
 
     ESP_ERROR_CHECK(ioe_set(IOE_TP_RST, false));
@@ -430,11 +454,13 @@ static void board_init(uint32_t epd_row_width) {
     read_pico_epd_scan_t scan;
     read_pico_epd_scan(init_pclk_mhz, READ_PICO_EPD_SCAN_FULL, &scan);
     read_pico_epd_init_lcd(&lcd_config, display->bus_width, display->width, display->height, &scan);
+    sleep_pulldown_pins();
     ESP_LOGI(TAG, "EPD bus initialized, SY7636A address 0x%02X", SY7636A_ADDR_DEFAULT);
 }
 
 static void board_poweron(epd_ctrl_state_t* state) {
     if (rails_on) return;
+    if (s_ioe_sleeping && read_pico_ioe_wake() != ESP_OK) return;
 
     esp_rom_gpio_connect_out_signal(EPD_XSTL, BOARD_LCD_DE_SIG, false, false);
 
@@ -665,6 +691,41 @@ bool read_pico_sd_present(void) {
 
 void read_pico_clear_ioe_int(void) {
     (void)fca9555_clear_int(s_ioe);
+}
+
+esp_err_t read_pico_ioe_wake(void) {
+    if (s_ioe == NULL) return ESP_ERR_INVALID_STATE;
+    // 先恢复CW_INT输入，再恢复输出值；局部失败保留快照供下一次恢复重试。
+    // Restore CW_INT input before outputs; keep the snapshot after partial failure for another recovery attempt.
+    esp_err_t err = fca9555_set_config(s_ioe, 0, IOE_CONFIG_PORT0);
+    esp_err_t next = fca9555_set_config(s_ioe, 1, IOE_CONFIG_PORT1);
+    if (err == ESP_OK) err = next;
+    if (s_ioe_sleeping) {
+        ioe_output = s_ioe_resume_output;
+        next = ioe_commit();
+        if (err == ESP_OK) err = next;
+    }
+    next = fca9555_clear_int(s_ioe);
+    if (err == ESP_OK) err = next;
+    if (err == ESP_OK) s_ioe_sleeping = false;
+    return err;
+}
+
+esp_err_t read_pico_ioe_sleep(bool host_off) {
+    if (s_ioe == NULL || rails_on || s_ioe_sleeping) return ESP_ERR_INVALID_STATE;
+    s_ioe_resume_output = ioe_output;
+    s_ioe_sleeping = true;
+    // 悬空Port1先写高再改输出；浅睡保留CW_INT输入，只有主机下电才将其拉低。
+    // Set floating Port1 high before making it output; keep CW_INT input in light sleep, driving it low only for host power-down.
+    esp_err_t err = fca9555_set_output(s_ioe, 1, 0xFF);
+    if (err == ESP_OK) err = fca9555_set_config(s_ioe, 1, IOE_CONFIG_PORT1_SLEEP);
+    ioe_output &= (uint8_t)~IOE_MODE;
+    if (host_off) ioe_output &= (uint8_t)~IOE_CW_INT;
+    if (err == ESP_OK) err = ioe_commit();
+    if (err == ESP_OK && host_off) err = fca9555_set_config(s_ioe, 0, IOE_CONFIG_PORT0_HOST_OFF);
+    if (err == ESP_OK) err = fca9555_clear_int(s_ioe);
+    if (err != ESP_OK) (void)read_pico_ioe_wake();
+    return err;
 }
 
 esp_err_t read_pico_tp_rst(bool high) {

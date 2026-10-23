@@ -6,9 +6,10 @@
  * Per-path NVS reading progress, independent of UI and SD.
  *
  * 冻结：文件大小不同不恢复；失败返回调用方并告警，不擦除其他记录。
- * 为无 RTC 的最近阅读排序，v2 使用持久序号；v1 保留续读但排序置零。
+ * 为无 RTC 的最近阅读排序，v2 使用持久序号；v1 保留续读但排序置零；v3 保留百分比小数。
  * Frozen: do not restore changed file sizes; report and warn on failures, never erase other records.
- * Recent ordering without an RTC uses persistent v2 sequences; v1 retains resume data with order zero.
+ * Recent ordering without an RTC uses persistent v2 sequences; v1 retains resume data with order zero;
+ * v3 retains fractional percentages.
  */
 #pragma once
 
@@ -22,12 +23,12 @@
 #define BOOK_PROGRESS_PX_MIN 36
 #define BOOK_PROGRESS_PX_MAX 80
 
-/// 调用方须串行化所有进度写入与遗忘；HTTP 退出并 join 后才交回阅读页。
-/// Callers serialize progress writes and forget operations; HTTP stops and joins before returning to reading.
+/// 调用方须串行化所有进度写入与遗忘；同步请求结束或取消收齐后才交回阅读页。
+/// Callers serialize progress writes and forget operations; return to reading only after sync completion or joined cancellation.
 
 typedef struct book_progress_watch book_progress_watch_t;
-/// 为待保存进度创建路径监视；内存不足返回 NULL。注册/注销仅在 HTTP 停止并 join 后调用。
-/// Watch pending progress for one path; return NULL on allocation failure. Register/unregister only while HTTP is stopped and joined.
+/// 为待保存进度创建路径监视；内存不足返回 NULL。注册/注销仅在同步请求结束或取消收齐后调用。
+/// Watch pending progress for one path; return NULL on allocation failure. Register/unregister only after sync completion or joined cancellation.
 book_progress_watch_t* book_progress_watch_create(const char* path);
 /// HTTP 可将失效位置位；原子读取，直到注销都不复位。/ HTTP may invalidate; read atomically, never reset before destruction.
 bool book_progress_watch_invalidated(const book_progress_watch_t* watch);
@@ -45,6 +46,8 @@ typedef struct {
     uint8_t px;
     /// 全书百分比。/ Whole-book percentage.
     uint8_t pct;
+    /// 全书百分比的小数百分位（0..99）。/ Hundredths within the whole-book percentage (0..99).
+    uint8_t pct_frac;
     /// 远端仅提供比例，开书时按全书字节近似定位。/ Remote percentage only; opening approximates by whole-book bytes.
     bool approximate;
     /// 持久阅读顺序；保留旧字段名，v1 记录读取为 0。/ Persistent reading order; legacy field name, v1 records load as zero.
@@ -57,8 +60,8 @@ typedef struct {
 
 /// 校验版本、完整路径与文件大小后恢复；失败不改 out。/ Restore after version, full-path and size validation; leave out unchanged on failure.
 bool book_progress_load(const char* path, uint32_t size, book_progress_t* out);
-/// 保存 v2 进度，忽略输入 last_open_s 并预留持久单调序号；路径最长 287 字节，碰撞拒绝覆盖。
-/// Save v2 progress, replacing input last_open_s with a reserved persistent sequence; paths up to 287 bytes, reject collision overwrites.
+/// 保存 v3 进度，忽略输入 last_open_s 并预留持久单调序号；路径最长 287 字节，碰撞拒绝覆盖。
+/// Save v3 progress, replacing input last_open_s with a reserved persistent sequence; paths up to 287 bytes, reject collision overwrites.
 esp_err_t book_progress_save(const char* path, const book_progress_t* progress);
 /// 清除此路径的进度，不删除碰撞记录。/ Clear this path without deleting colliding records.
 esp_err_t book_progress_clear(const char* path);

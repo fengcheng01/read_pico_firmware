@@ -7,6 +7,18 @@
  *
  * E0470A01 waveform assembly: complete vendor default, 8-gray, follow DU.
  * Changing panel waveforms voids the warranty.
+ * 决策修订（2026-10-22）：短程对照无可感知收益，用户要求0.7.0仅保留当前快速/细腻灰阶。
+ * 删除短程常驻表，原21相与原均衡28相逐相保留，不重新估算剂量，不把改名当作光学校准。
+ * Decision revision (2026-10-22): short excursion offers no perceptible benefit; user-approved0.7.0 retains
+ * current Fast/Fine Gray only. Remove the short-excursion resident table, preserving every original21/28-phase
+ * action without new dose estimates or implying optical calibration through naming.
+ * 决策修订（2026-10-22）：用户明确授权单次刷新灰阶均衡对照；独立28相档保留厂家灰8/DU有效
+ * 动作及内部空等，只移除首尾空等并对齐最后主动相26，末相27中性。所有对角线保持。
+ * 旧21相及硬件设置不变；厂家灰8曾有终态收益和过冲闪动，本档不默认启用，不承诺无闪或已校准。
+ * Decision revision (2026-10-22): the user explicitly authorizes a single-scan balanced-gray comparison.
+ * Separate28 phases preserve effective vendor gray8/DU actions and internal holds, removing only exterior
+ * holds to align the last active phase at26 with neutral phase27. All diagonals hold. Retain21 phases and
+ * hardware settings; gray8 previously improved final tones but flashed, so opt in without optical guarantees.
  *
  * 冻结：0.5.19单向灰阶估算、18相统一擦白和三相入口推白已被实机退化否定，保留厂家灰阶路径；单相入口表仅留诊断对照。
  * Frozen: Device regression rejects 0.5.19 estimated monotonic gray, uniform 18-tick whitening and three entry ticks; retain vendor gray paths, with the single-tick entry table for diagnostics only.
@@ -315,6 +327,42 @@ const EpdWaveform E0470_GRAY_DIRECT_WAVEFORM = {
     .mode_data = e0470_gray_direct_modes, .temp_intervals = e0470_intervals,
 };
 
+/* ---- 灰阶均衡对照 / Balanced gray comparison ---- */
+static uint8_t e0470_gray_balanced_data[E0470_GRAY_BALANCED_FRAMES][16][4];
+static const EpdWaveformPhases e0470_gray_balanced_phases = {
+    .phases = E0470_GRAY_BALANCED_FRAMES, .phase_times = NULL,
+    .luts = (const uint8_t*)e0470_gray_balanced_data,
+};
+static const EpdWaveformPhases* e0470_gray_balanced_ranges[] = { &e0470_gray_balanced_phases };
+static const EpdWaveformMode e0470_gray_balanced_mode = {
+    .type = 5, .temp_ranges = 1, .range_data = e0470_gray_balanced_ranges,
+};
+static const EpdWaveformMode* e0470_gray_balanced_modes[] = { &e0470_gray_balanced_mode };
+const EpdWaveform E0470_GRAY_BALANCED_WAVEFORM = {
+    .num_modes = 1, .num_temp_ranges = 1,
+    .mode_data = e0470_gray_balanced_modes, .temp_intervals = e0470_intervals,
+};
+
+static void e0470_gray_balanced_build(void) {
+    memset(e0470_gray_balanced_data, 0, sizeof(e0470_gray_balanced_data));
+    for (int to = 0; to < 16; ++to) for (int from = 0; from < 16; ++from) {
+        if (to == from) continue;
+        const bool endpoint = to == 0 || to == 15;
+        const uint8_t (*source)[16][4] = endpoint ? e0470_full_du_data : e0470_gray8_gl16_data;
+        const int frames = endpoint ? E0470_FULL_DU_FRAMES : E0470_GRAY8_GL16_FRAMES;
+        int first = 0, last = frames - 1;
+        while (first < frames && lut_get(source, first, to, from) == 0) ++first;
+        while (last >= first && lut_get(source, last, to, from) == 0) --last;
+        if (first > last) continue;
+        const int length = last - first + 1;
+        assert(length < E0470_GRAY_BALANCED_FRAMES);
+        const int start = E0470_GRAY_BALANCED_FRAMES - 1 - length;
+        for (int phase = first; phase <= last; ++phase)
+            lut_set(e0470_gray_balanced_data, start + phase - first, to, from,
+                    lut_get(source, phase, to, from));
+    }
+}
+
 /* ---- 夜间白预驱 / Night white pre-drive ---- */
 // 夜间旧白字回黑底（15→0）借用厂家0→0对角线的先白后黑满剂量往返：白像素加白光学不可见，
 // 黑脉冲从重饱和白出发；保持黑底（0→0）再走一次W2+B18微洗，每翻一页重饱和一遍，
@@ -549,6 +597,7 @@ int e0470_phase_action(const EpdWaveformPhases* phases, int phase, int to, int f
 }
 
 void e0470_waveform_init(void) {
+    e0470_gray_balanced_build();
     e0470_follow_lut_build(E0470_FOLLOW_FRAMES, e0470_follow_data);
     e0470_complete_du_build();
     e0470_gray_direct_build();

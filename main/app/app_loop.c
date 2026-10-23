@@ -31,8 +31,11 @@
  * Frozen: Pages prepare explicit menu entry through on_menu_select, exiting/reentering even the same page; the loop does not interpret shelf/business state.
  * 冻结修订：正文可请求共用锁屏事务，仍由UI任务停止无线/保存/睡眠；导航取消待办，不解释BLE报告。
  * Frozen revision: Body pages may request the shared lock transaction; the UI task still stops radio/saves/sleeps, navigation cancels pending work, and this loop never interprets BLE reports.
+ * 冻结修订：第二批省电允许页面声明最多50ms静止心跳，输入提前唤醒；触摸、菜单和长按仍保持快速调度。
+ * Frozen revision: Batch-two power saving allows page-declared idle heartbeats up to50ms, interrupted by input; touch, menus and held keys retain fast scheduling.
  */
 
+// 历史维护只消费现有缓存，不新增轮询或休眠唤醒。/ History maintenance consumes existing caches without extra polls or sleep wakes.
 #include "app_loop.h"
 #include "app_touch_input.h"
 
@@ -53,6 +56,7 @@
 #include "read_pico_sd.h"
 #include "settings.h"
 #include "os_time.h"
+#include "os_history_service.h"
 #include "sleep.h"
 #include "ttf_font.h"
 #include "ui_kit.h"
@@ -303,6 +307,8 @@ void app_loop_run(const app_loop_config_t* config) {
     int64_t held_since_ms = 0;
     int64_t last_lock_poll_ms = 0;
     int64_t last_font_retry_ms = 0;
+    int64_t last_font_recovery_ms = -FONT_RETRY_INTERVAL_MS;
+    int64_t font_retry_after_ms = 0;
     int64_t last_media_poll_ms = 0;
     bool media_mounted = ttf_font_ready() && !ttf_font_is_builtin();
     bool media_invalidated = false;
@@ -357,6 +363,36 @@ void app_loop_run(const app_loop_config_t* config) {
                 vTaskDelay(pdMS_TO_TICKS(LOOP_TICK_MS));
                 continue;
             }
+        }
+
+        // 卡字形读取失败时等本次绘制结束再换内置字库；失败会在后续轮次重试。
+        // Switch to built-in only after a failed SD glyph render; retry later if memory is still tight.
+        if ((ttf_font_render_failed() || !ttf_font_ready()) &&
+            ctx.now_ms - last_font_recovery_ms >= FONT_RETRY_INTERVAL_MS) {
+            last_font_recovery_ms = ctx.now_ms;
+            bool unreadable = ttf_font_render_failed();
+            book_cover_join();
+            esp_err_t font_err = ttf_font_open_builtin();
+            if (font_err != ESP_OK && unreadable) {
+                // 原卡字体已不可读，归还其工作表后再试，避免整机持续只剩线框。
+                // The SD source is unreadable: release its working tables before one final built-in attempt.
+                ttf_font_unload();
+                font_err = ttf_font_open_builtin();
+            }
+            if (font_err == ESP_OK) {
+                ESP_LOGW(TAG, "font recovered with built-in fallback");
+                font_retry_after_ms = ctx.now_ms + 30000;
+                last_font_retry_ms = ctx.now_ms;
+                held_key = -1;
+                cancel_gesture(&ctx, current, &gesture);
+                menu_pressed = UI_MENU_HIT_NONE;
+                was_touched = touch.touched;
+                if (menu_open) present_menu(&ctx, current, menu_leaf, &feedback);
+                else app_present(&ctx, current, APP_REDRAW_FULL);
+                vTaskDelay(pdMS_TO_TICKS(LOOP_TICK_MS));
+                continue;
+            }
+            ESP_LOGE(TAG, "font recovery failed: %s", esp_err_to_name(font_err));
         }
 
         if (err != ESP_OK) {
@@ -468,6 +504,7 @@ void app_loop_run(const app_loop_config_t* config) {
 
         ctx.now_ms = esp_timer_get_time() / 1000;
         rails_idle_check(ctx.now_ms);
+        os_history_service_poll(ctx.now_ms, media_mounted);
 
         // 空闲自动锁屏：任何触摸都刷新活动时间，页面可用 stay-awake 报告无触摸活动。
         // Idle auto-lock: any touch refreshes activity; pages report touchless activity via stay-awake.
@@ -516,7 +553,8 @@ void app_loop_run(const app_loop_config_t* config) {
         // 设置里存的字体在 SD 卡上，开机时卡可能还没挂好，这里定期重试。
         // The saved font lives on the card; retry until the mount is ready.
         // The saved font lives on the card; retry until the mount is ready.
-        if (ctx.now_ms - last_font_retry_ms >= FONT_RETRY_INTERVAL_MS) {
+        if (ctx.now_ms >= font_retry_after_ms &&
+            ctx.now_ms - last_font_retry_ms >= FONT_RETRY_INTERVAL_MS) {
             last_font_retry_ms = ctx.now_ms;
             if (try_load_saved_sd_font(!media_invalidated)) {
                 held_key = -1;
@@ -610,6 +648,11 @@ void app_loop_run(const app_loop_config_t* config) {
                 present_menu(&ctx, current, menu_leaf, &feedback);
             }
         }
-        vTaskDelay(pdMS_TO_TICKS(LOOP_TICK_MS));
+        uint32_t idle_ms = !menu_open && !touch.touched && !gesture.active && held_key < 0 &&
+                           current->on_gesture && current->idle_wait_ms
+                           ? current->idle_wait_ms(&ctx) : 0;
+        if (idle_ms > 50) idle_ms = 50;
+        if (idle_ms > LOOP_TICK_MS) app_touch_input_wait(idle_ms);
+        else vTaskDelay(pdMS_TO_TICKS(LOOP_TICK_MS));
     }
 }

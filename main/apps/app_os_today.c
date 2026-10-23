@@ -151,6 +151,7 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
     const book_home_snapshot_t* data = book_home_snapshot();
     ui_clear_page(fb);
     ui_product_header(fb, "手帐", "阅读足迹 · 统计 · 打卡");
+    ui_draw_button(fb,ui_product_back_rect(),"阅读记录",false);
 
     const os_time_info_t* info = os_time_info();
     uint32_t today_key = 0;
@@ -461,6 +462,7 @@ static int control_at(uint16_t x, uint16_t y, EpdRect* rect) {
         }
         return -1;
     }
+    if (ui_rect_hit(ui_product_back_rect(),x,y)) { if(rect)*rect=ui_product_back_rect();return 9; }
     if (ui_rect_hit(goal_entry_rect(), x, y)) { if (rect) *rect = goal_entry_rect(); return 8; }
     for (int t = 0; t < 3; ++t)
         if (ui_rect_hit(tab_rect(t), x, y)) { if (rect) *rect = tab_rect(t); return t; }
@@ -510,6 +512,8 @@ static app_redraw_t gesture(app_ctx_t* ctx, const ui_gesture_event_t* ev) {
                 else s_goal_error = true;
             }
             result = APP_REDRAW_PAGE;
+        } else if (id == 9) {
+            ctx->request_app=app_by_id(OS_APP_HISTORY);
         } else if (id == 8) {
             s_goal_candidate = app_settings_daily_goal(); s_goal_open = true; s_goal_error = false;
             result = APP_REDRAW_PAGE;

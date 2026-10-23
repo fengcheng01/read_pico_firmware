@@ -10,8 +10,8 @@
  *
  * 冻结：render 纯绘图；无示例书或假统计；封面后台有界提取，tick 领取完整结果；显式点击才开书。
  * Frozen: Render only paints; no demo books or fake stats; covers load in a bounded worker and ticks collect complete results; open only on explicit action.
- * 冻结：用户反馈上传难点；上传进度按钮扩大并保留边缘容差，独立于继续阅读命中，上传已保存进度并在首页反馈，离页取消。
- * Frozen: The reported upload hit difficulty requires a larger upload-progress button with edge tolerance, separate from resume; upload saved progress with home feedback and cancel on exit.
+ * 冻结修订：用户要求首页按钮先拉取远端进度，按百分比保留更远位置，远端缺失或不更远时才上传本地；按钮保留边缘容差，离页取消。
+ * Frozen revision: The user requests a pull-first home action that keeps the larger percentage, pushing local progress only when remote is absent or not ahead; retain the hit tolerance and cancel on exit.
  * 冻结修订：用户批准第一批 UI 改进；旧空态按钮被统计栏覆盖且续读过窄，现主按钮独占一行，统计只显示一次；上传保持 176×88 与 8px 容差。
  * Frozen revision: The user approves batch-one UI changes: overlapping empty actions and narrow resume require a separate full-width action and nonduplicated stats; upload retains 176×88 and 8px tolerance.
  * 冻结：用户拒绝Tab黑闪；根页保留厂家GL16迁移，布局入口补偿一次白底，不强制GC16进页。
@@ -38,9 +38,11 @@
 static bool s_started, s_loading;
 // 已上屏的 HH:MM；分钟跳变只推顶部状态条。/ HH:MM on panel; a minute flip pushes the status row only.
 static char s_status_clock[8];
+static int s_status_battery = -1;
 static const char* s_notice;
 static bool s_sync_requested;
 static char s_sync_note[192];
+static char s_sync_path[BOOK_STORE_PATH_MAX];
 static unsigned s_revision;
 static int64_t s_probe_ms;
 static uint8_t* s_cover;
@@ -82,7 +84,7 @@ static EpdRect sync_rect(void) {
     return (EpdRect){card.x + card.width - 192, card.y + 242, 176, 88};
 }
 
-// 容差只覆盖上传按钮周围，不跨越下方主按钮。/ Upload tolerance stays clear of the primary action below.
+// 容差只覆盖同步按钮周围，不跨越下方主按钮。/ Sync tolerance stays clear of the primary action below.
 static EpdRect sync_hit_rect(void) {
     EpdRect button = sync_rect();
     return (EpdRect){button.x - 8, button.y - 8, button.width + 16, button.height + 16};
@@ -184,12 +186,14 @@ static void on_enter(app_ctx_t* ctx) {
     app_sleep_prepare_unregister(home_prepare_sleep);
     app_sleep_prepare_register(home_prepare_sleep);
     os_time_format_clock(s_status_clock, sizeof(s_status_clock));
+    s_status_battery = os_time_battery_permille();
     s_started = book_home_cached();
     s_loading = !s_started;
     s_notice = NULL;
     s_sync_requested = false;
     s_cover_retry_ms = 0;
     s_sync_note[0] = 0;
+    s_sync_path[0] = 0;
     ui_press_reset(&s_press);
     s_revision = book_store_revision();
     s_probe_ms = ctx->now_ms;
@@ -225,12 +229,11 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
     ui_draw_round_rect(fb, tag, 4, UI_GRAY_BLACK);
     ui_text_vc(fb, tag.x + tag.width / 2, tag.y + tag.height / 2, 16,
                s_loading ? "检测" : data->degraded ? "内置" : "TF 卡", EPD_DRAW_ALIGN_CENTER, false);
-    char clock[16], status[48];
+    char clock[16];
     os_time_format_clock(clock, sizeof(clock));
     int battery = os_time_battery_permille();
-    if (battery > 0) snprintf(status, sizeof(status), "%s · %d%%", clock, battery / 10);
-    else snprintf(status, sizeof(status), "%s", clock);
-    ui_text(fb, ui_content_right(), 10, 22, status, EPD_DRAW_ALIGN_RIGHT, false);
+    ui_text(fb, ui_content_right() - 92, 10, 22, clock, EPD_DRAW_ALIGN_RIGHT, false);
+    ui_product_battery(fb, ui_content_right() - 76, 6, battery);
     ui_hairline(fb, 38, 0, UI_LOCK_WIDTH, UI_GRAY_LIGHT);
     ui_text(fb, UI_MARGIN, 48, 50, "正在读", EPD_DRAW_ALIGN_LEFT, false);
     ui_text(fb, UI_MARGIN, 108, 24, "继续上次，或开始一本新的书", EPD_DRAW_ALIGN_LEFT, false);
@@ -258,7 +261,7 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
         if (pressed_id(200)) ui_draw_pressed_round_rect(fb, sync, 6);
         else ui_draw_round_rect(fb, sync, 6, UI_GRAY_BLACK);
         ui_text_vc(fb, sync.x + sync.width / 2, sync.y + sync.height / 2, 26,
-                   s_sync_requested || os_sync_job_busy() ? "停止" : "上传进度", EPD_DRAW_ALIGN_CENTER, false);
+                   s_sync_requested || os_sync_job_busy() ? "停止" : "同步进度", EPD_DRAW_ALIGN_CENTER, false);
         primary = "继续阅读";
         primary_id = 210;
     } else {
@@ -348,8 +351,8 @@ static int hit(uint16_t x, uint16_t y) {
     if (data->recent_page && ui_rect_hit(recent_nav_rect(false), x, y)) return 201;
     if (data->recent_more && ui_rect_hit(recent_nav_rect(true), x, y)) return 202;
     if (data->current.path[0] && ui_rect_hit(sync_hit_rect(), x, y)) return 200;
-    // 上传容差先命中；统计不命中，主按钮在各状态下独占槽位。
-    // Upload tolerance wins first; stats stay inert and the primary slot is separate in every state.
+    // 同步容差先命中；统计不命中，主按钮在各状态下独占槽位。
+    // Sync tolerance wins first; stats stay inert and the primary slot is separate in every state.
     if (data->current.path[0] && ui_rect_hit(hero_rect(), x, y)) return 0;
     if (ui_rect_hit(continue_rect(), x, y)) return 0;
     if (ui_rect_hit(all_books_rect(), x, y)) return 100;
@@ -399,7 +402,8 @@ static app_redraw_t on_gesture(app_ctx_t* ctx, const ui_gesture_event_t* event) 
             snprintf(s_sync_note, sizeof(s_sync_note), "已停止同步");
         } else {
             s_sync_requested = true;
-            snprintf(s_sync_note, sizeof(s_sync_note), "正在同步已保存的阅读进度…");
+            snprintf(s_sync_path, sizeof(s_sync_path), "%s", data->current.path);
+            snprintf(s_sync_note, sizeof(s_sync_note), "正在比对本地与远端阅读进度…");
         }
         s_notice = s_sync_note;
         return APP_REDRAW_PAGE;
@@ -430,7 +434,7 @@ static app_redraw_t on_tick(app_ctx_t* ctx) {
     if (s_sync_requested) {
         s_sync_requested = false;
         s_sync_note[0] = 0;
-        if (!os_sync_job_start(OS_SYNC_JOB_PUSH, s_sync_note, sizeof(s_sync_note)) && !s_sync_note[0])
+        if (!os_sync_job_start_book(s_sync_path, s_sync_note, sizeof(s_sync_note)) && !s_sync_note[0])
             snprintf(s_sync_note, sizeof(s_sync_note), "同步未启动，请稍后重试");
         s_notice = s_sync_note;
         return APP_REDRAW_PAGE;
@@ -449,8 +453,11 @@ static app_redraw_t on_tick(app_ctx_t* ctx) {
         // from the ghost-cleanup tier).
         char clock[8];
         os_time_format_clock(clock, sizeof(clock));
-        if (strcmp(clock, s_status_clock)) {
+        int battery = os_time_battery_permille();
+        if (strcmp(clock, s_status_clock) || battery / 10 != s_status_battery / 10 ||
+            (battery < 0) != (s_status_battery < 0)) {
             strcpy(s_status_clock, clock);
+            s_status_battery = battery;
             render(ctx, ctx->fb);
             guard_draw_result(ctx->hl, update_display_area_quiet(
                 ctx->hl, (EpdRect){0, 0, UI_LOCK_WIDTH, 44}));
